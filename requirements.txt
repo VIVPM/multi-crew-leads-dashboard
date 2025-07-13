@@ -1,0 +1,7 @@
+crewai
+crewai-tools
+pyyaml 
+python-dotenv
+streamlit
+pydantic 
+pandas 
