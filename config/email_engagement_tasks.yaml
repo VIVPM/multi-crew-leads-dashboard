@@ -1,0 +1,81 @@
+email_drafting:
+  description: >
+    Write a concise, business‐style follow‐up email using the information below.
+    Your output **must** include:
+
+    1. **Subject line:**  
+       Begin with `Subject:` followed by a value-driven subject.
+
+    2. **Greeting:**  
+       Use “Hi {personal_info.name},”
+
+    3. **Body:**  
+       - **Para 1:** Reference their role and company, and thank them for their interest.  
+       - **Para 2:** Explain how CrewAI solves their specific use_case or need.
+
+    4. **CTA:**  
+       One sentence asking to schedule a call:  
+       “Can we schedule a 15-minute call next week? [Schedule here](#)”
+
+    5. **Sign-off:**  
+       ```
+       Best regards,
+       [Your Name]
+       CrewAI
+       ```
+
+    **Data to use (all placeholders):**  
+    - Name: `{personal_info.name}`  
+    - Job Title: `{personal_info.job_title}`  
+    - Role Relevance: `{personal_info.role_relevance}`  
+    - Professional Background: `{personal_info.professional_background}`  
+    - Company Name: `{company_info.company_name}`  
+    - Industry: `{company_info.industry}`  
+    - Company Size: `{company_info.company_size}`  
+    - Revenue: `{company_info.revenue}`  
+    - Market Presence: `{company_info.market_presence}`  
+    - Lead Score: `{lead_score.score}`  
+    - Scoring Criteria: `{lead_score.scoring_criteria}`  
+    - Validation Notes: `{lead_score.validation_notes}`  
+    - Use Case: `{lead_data.use_case}`
+
+  expected_output: >
+    A fully formatted follow‐up email with a subject, greeting, two paragraphs,
+    clear CTA, and sign‐off.
+
+
+
+engagement_optimization:
+  description: >
+    Review the personalized email draft and optimize it with strong CTAs
+    and engagement hooks.
+    Keep in mind they reached out and filled a lead form.
+    Keep it short and to the point.
+    Don't use any salutations or closing remarks, nor too complex sentences.
+    Ensure the email encourages the lead to schedule a meeting or take
+    another desired action immediately.
+
+    Our Company and Product:
+    - Company Name: CrewAI
+    - Product: Multi-Agent Orchestration Platform
+    - ICP: Enterprise companies looking into Agentic automation.
+    - Pitch: We are a platform that allows you to orchestrate AI Agents
+    for automations to any vertical.
+  expected_output: >
+    An optimized email ready for sending, complete with:
+    - Strong CTAs
+    - Strategically placed engagement hooks that encourage immediate action
+
+
+
+
+
+
+
+
+
+
+
+
+
+
