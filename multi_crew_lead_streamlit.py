@@ -135,13 +135,14 @@ email_drafting = Task(
 
 engagement_optimization = Task(
     config=email_tasks_config['engagement_optimization'],
+    context = [email_drafting],
     agent=engagement_strategist
 )
 
 # Creating Email Writing Crew
 email_writing_crew = Crew(
-    agents=[email_content_specialist],
-    tasks=[email_drafting],
+    agents=[email_content_specialist,engagement_strategist],
+    tasks=[email_drafting,engagement_optimization],
     verbose=True
 )
 
