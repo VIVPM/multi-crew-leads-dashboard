@@ -4,9 +4,6 @@ import yaml
 import os
 import asyncio
 from dotenv import load_dotenv
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai_tools import SerperDevTool, ScrapeWebsiteTool
 from crewai.flow.flow import listen, start
@@ -181,7 +178,6 @@ class SalesPipeline(Flow):
 
 # Streamlit Application
 
-
 async def process_leads(leads):
     flow = SalesPipeline(leads)  # Pass leads when creating the flow
     await flow.kickoff_async()   # No arguments needed here
@@ -231,6 +227,7 @@ if st.session_state.leads:
         st.write(f"Lead {i+1}: {lead['lead_data']['name']} - {lead['lead_data']['company']}")
 
 # Button to process leads
+costs = 0
 if st.button("Process Leads"):
     if st.session_state.leads:
         with st.spinner("Processing leads..."):
@@ -246,7 +243,7 @@ if st.button("Process Leads"):
                     data = []
                     for i in range(len(scores)):
                         score = scores[i].pydantic
-                        data.append({
+                        data = {
                             'Name': score.personal_info.name,
                             'Job Title': score.personal_info.job_title,
                             'Role Relevance': score.personal_info.role_relevance,
@@ -259,21 +256,36 @@ if st.button("Process Leads"):
                             'Lead Score': score.lead_score.score,
                             'Scoring Criteria': ', '.join(score.lead_score.scoring_criteria),
                             'Validation Notes': score.lead_score.validation_notes
-                        })
-                    df = pd.DataFrame(data)
-                    st.dataframe(df, width=1000, height=400, use_container_width=True)
+                        }
+                        df_usage_metrics = pd.DataFrame([scores[i].token_usage.model_dump()])
+                        costs += (0.150 * df_usage_metrics['total_tokens'].sum() / 1_000_000)
+                        df = pd.DataFrame.from_dict(data, orient='index', columns=['Value'])
+
+                        # Reset the index to turn the original column names into a regular column
+                        df = df.reset_index()
+
+                        # Rename the index column to 'Attribute'
+                        df = df.rename(columns={'index': 'Attribute'})
+                        html_table = df.style.set_properties(**{'text-align': 'left'}) \
+                        .format({'Attribute': lambda x: f'<b>{x}</b>'}) \
+                        .hide(axis='index') \
+                        .to_html()
+                        st.markdown(html_table, unsafe_allow_html=True)
+                    # df = pd.DataFrame(data)
+                    st.dataframe(df_usage_metrics, width=1000, height=400, use_container_width=True)
+                    st.write(f"Total costs: ${costs:.4f}")
                     st.write("Generated Emails:")
                     if emails:
+                        costs = 0
                         for i, email in enumerate(emails):
                             st.subheader(f"Email {i+1}")
                             st.text(email)
-                
-                # Display generated emails
-                # if emails:
-                #     st.write("Generated Emails:")
-                #     for i, email in enumerate(emails):
-                #         st.subheader(f"Email {i+1}")
-                #         st.text(email)
+                            df_usage_metrics = pd.DataFrame([emails[i].token_usage.model_dump()])
+
+                            # Calculate total costs
+                            costs += 0.150 * df_usage_metrics['total_tokens'].sum() / 1_000_000
+                        st.dataframe(df_usage_metrics, width=1000, height=400, use_container_width=True)
+                        st.write(f"Total costs: ${costs:.4f}")
                     
                     
             except Exception as e:
