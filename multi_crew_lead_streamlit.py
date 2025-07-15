@@ -141,8 +141,8 @@ engagement_optimization = Task(
 
 # Creating Email Writing Crew
 email_writing_crew = Crew(
-    agents=[email_content_specialist,engagement_strategist],
-    tasks=[email_drafting,engagement_optimization],
+    agents=[email_content_specialist],
+    tasks=[email_drafting],
     verbose=True
 )
 
