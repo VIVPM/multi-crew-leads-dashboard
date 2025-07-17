@@ -21,6 +21,7 @@ email_drafting:
     Lead Score: {lead_score}
   expected_output: >
     A personalized email draft that:
+    - Include subject line, greeting, body, closing line and sign off.
     - Addresses the lead by name
     - Acknowledges their role and company
     - Highlights how CrewAI can meet their specific needs or interests
