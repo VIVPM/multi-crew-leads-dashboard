@@ -370,10 +370,10 @@ if st.session_state.leads:
                         st.session_state["Use Case"]  = lead["use_case"]
                         st.session_state.adding_lead  = True
                         
-if st.button("Train Leads"):
-    email_writing_crew.train(n_iterations=1, filename="training.pkl")
-    # # email_expected_outputs = [lead["email_draft"] for lead in processed_leads]
-    email_writing_crew.test(n_iterations=2,eval_llm=llm3)
+# if st.button("Train Leads"):
+#     email_writing_crew.train(n_iterations=1, filename="training.pkl")
+#     # # email_expected_outputs = [lead["email_draft"] for lead in processed_leads]
+#     email_writing_crew.test(n_iterations=2,eval_llm=llm3)
                          
 # if st.button("Export Leads to CSV"):
 #         # Prepare data for CSV
