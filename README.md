@@ -105,7 +105,7 @@ SUPABASE_KEY=your_supabase_api_key
 Start the Streamlit app using:
 
 ```bash
-streamlit run app.py
+streamlit run multi_crew_lead_streamlit.py
 ```
 
 The app will launch in your default browser.
@@ -165,7 +165,7 @@ pip install -r requirements.txt
 
 **Run Streamlit app:**  
 ```bash
-streamlit run app.py
+streamlit run multi_crew_lead_streamlit.py
 ```
 
 **Deactivate virtualenv:**  
