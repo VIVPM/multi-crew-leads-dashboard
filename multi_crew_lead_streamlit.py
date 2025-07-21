@@ -23,8 +23,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-csv_tool = FileReadTool(file_path='./leads.csv')
-
 # Define Pydantic models
 class LeadPersonalInfo(BaseModel):
     name: str = Field(..., description="The full name of the lead.")
@@ -127,7 +125,6 @@ lead_scoring_crew = Crew(
 # Creating Email Writing Agents
 email_content_specialist = Agent(
     config=email_agents_config['email_content_specialist'],
-    tools=[csv_tool],
     llm=llm3
 )
 
