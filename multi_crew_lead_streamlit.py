@@ -101,22 +101,13 @@ if 'user_id' not in st.session_state:
 if 'show_signup' not in st.session_state:
     st.session_state.show_signup = False
 if 'show_login' not in st.session_state:
-    st.session_state.show_login = False
+    st.session_state.show_login = True
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 if not st.session_state.logged_in:
     st.title("Welcome to the Sales Pipeline Lead Scoring and Email Generation")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Signup"):
-            st.session_state.show_signup = True
-            st.session_state.show_login = False
-    with col2:
-        if st.button("Login"):
-            st.session_state.show_login = True
-            st.session_state.show_signup = False
 
     if st.session_state.show_signup:
         st.subheader("Signup")
@@ -137,6 +128,8 @@ if not st.session_state.logged_in:
                         }).execute()
                         st.success("Signup successful! Please login.")
                         st.session_state.show_signup = False
+                        st.session_state.show_login = True
+                        st.rerun()
                 else:
                     st.error("Please fill in all fields.")
 
@@ -159,6 +152,10 @@ if not st.session_state.logged_in:
                         st.error("Invalid username or password.")
                 else:
                     st.error("Please fill in all fields.")
+        if st.button("Create new account"):
+            st.session_state.show_login = False
+            st.session_state.show_signup = True
+            st.rerun()
 else:
     # Main app content starts here
     st.title("Sales Pipeline Lead Scoring and Email Generation")
@@ -171,6 +168,8 @@ else:
         st.session_state.logged_in = False
         st.session_state.user_id = None
         st.session_state.leads = []
+        st.session_state.show_login = True
+        st.rerun()
 
     if not sambana_key:
         st.sidebar.warning("Please enter Sambanova API Key above to continue")
@@ -368,6 +367,7 @@ else:
                     st.session_state.leads.append(resp.data[0])
                     st.success("Leads added Successfully!")
                 st.session_state.adding_lead = False
+                st.rerun()
                    
     # Button to process leads
     if st.button("Process Leads"):
@@ -413,7 +413,8 @@ else:
     if st.button("Clear Leads"):
         # keep the form open
         st.session_state.adding_lead = False
-        st.success("Form closed and Leads cleared.")
+        st.success("Leads cleared successfully.")
+        st.rerun()
 
     # Display leads dashboard
     if st.session_state.leads:
@@ -457,6 +458,7 @@ else:
                                 if l["id"] != lead["id"]
                             ]
                             st.success("Leads deleted Successfully!")
+                            st.rerun()
 
                     with c2:
                         if st.button("Edit", key=f"edit_{lead['id']}"):
@@ -468,6 +470,7 @@ else:
                             st.session_state["Email"]     = lead["email"]
                             st.session_state["Use Case"]  = lead["use_case"]
                             st.session_state.adding_lead  = True
+                            st.rerun()
                             
     if st.button("Train Leads"):
         email_writing_crew.train(n_iterations=1, filename="training.pkl",inputs = inputs)
