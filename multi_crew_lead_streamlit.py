@@ -5,9 +5,9 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from supabase import create_client
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+# __import__('pysqlite3')
+# import sys
+# sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai_tools import SerperDevTool, ScrapeWebsiteTool
 from crewai.flow.flow import listen, start
@@ -25,29 +25,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-inputs = {
-        "lead_score":{
-            "score":95,
-            "scoring_criteria":["Role Relevance","Company Size","Market Presence","Cultural Fit"],
-            "validation_notes":"""The cultural values of Amazon align with CrewAI's product and pitch.
-                                However, potential differences in company culture and values should be considered to ensure a successful partnership.
-                                CrewAI should be prepared to adapt to Amazon's fast-paced and competitive environment, while Amazon should be open to CrewAI's innovative approach to AI orchestration.
-                            """
-        },
-        "company_info":{
-            "revenue":513,
-            "industry":"E-commerce, Technology, Retail",
-            "company_name":"Amazon",
-            "company_size":1500000,
-            "market_presence":10
-        },
-        "personal_info":{
-            "name":"Jeff Bezos",
-            "job_title":"Founder & Executive Chairman",
-            "role_relevance":10,
-            "professional_background":"Jeff Bezos founded Amazon in 1994 and has been instrumental in its growth and innovation, including the development of Amazon Web Services (AWS)."
-        }
-}
+
 
 # Define Pydantic models
 class LeadPersonalInfo(BaseModel):
@@ -471,30 +449,5 @@ else:
                             st.session_state["Use Case"]  = lead["use_case"]
                             st.session_state.adding_lead  = True
                             st.rerun()
-                            
-    if st.button("Train Leads"):
-        email_writing_crew.train(n_iterations=1, filename="training.pkl",inputs = inputs)
-        # # email_expected_outputs = [lead["email_draft"] for lead in processed_leads]
-        email_writing_crew.test(n_iterations=2,eval_llm=llm3,inputs = inputs)
-                             
-    # if st.button("Export Leads to CSV"):
-    #         # Prepare data for CSV
-    #         leads_data = []
-    #         for lead in st.session_state.leads:
-    #             lead_dict = {
-    #                 "personal_info": str(lead["scoring_result"]["personal_info"]) if lead.get("scoring_result") else None,
-    #                 "company_info": str(lead["scoring_result"]["company_info"]) if lead.get("scoring_result") else None,
-    #                 "lead_score": str(lead["scoring_result"]["lead_score"]) if lead.get("scoring_result") else None,
-    #                 "email_draft": lead.get("email_draft")
-    #             }
-    #             leads_data.append(lead_dict)
-    #         
-    #         df = pd.DataFrame(leads_data)
-    #         csv = df.to_csv(index=False).encode('utf-8')
-    #         
-    #         st.download_button(
-    #             label="Download CSV",
-    #             data=csv,
-    #             file_name="leads.csv",
-    #             mime="text/csv"
-    #         )
+
+
