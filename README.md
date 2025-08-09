@@ -50,7 +50,7 @@ The system automates lead collection, scoring, and personalized email generation
 ### 1. **Clone the Repository**
 
 ```bash
-git clone https://github.com/yourusername/sales-pipeline-app.git
+git clone https://github.com/VIVPM/sales-pipeline-app.git
 cd sales-pipeline-app
 ```
 
