@@ -17,8 +17,8 @@ from crewai_tools import FileReadTool
 import hashlib
 import warnings
 warnings.filterwarnings('ignore')
+import matplotlib.pyplot as plt
 
-# Load environment variables
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -27,12 +27,15 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 
-# Define Pydantic models
+
 class LeadPersonalInfo(BaseModel):
     name: str = Field(..., description="The full name of the lead.")
     job_title: str = Field(..., description="The job title of the lead.")
     role_relevance: int = Field(..., description="A score representing how relevant the lead's role is to the decision-making process (0-10).")
     professional_background: Optional[str] = Field(None, description="A brief description of the lead's professional background.")
+    years_experience: Optional[int] = Field(None, description="Years of professional experience.")
+    linkedin_url: Optional[str] = Field(None, description="LinkedIn profile URL.")
+    location: Optional[str] = Field(None, description="Location of the lead (city, country).")
 
 class CompanyInfo(BaseModel):
     company_name: str = Field(..., description="The name of the company the lead works for.")
@@ -40,18 +43,24 @@ class CompanyInfo(BaseModel):
     company_size: int = Field(..., description="The size of the company in terms of employee count.")
     revenue: Optional[float] = Field(None, description="The annual revenue of the company, if available.")
     market_presence: int = Field(..., description="A score representing the company's market presence (0-10).")
+    company_location: Optional[str] = Field(None, description="Location of the company (city, country).")
+    founding_year: Optional[int] = Field(None, description="Year the company was founded.")
+    website: Optional[str] = Field(None, description="Company website URL.")
 
 class LeadScore(BaseModel):
     score: int = Field(..., description="The final score assigned to the lead (0-100).")
     scoring_criteria: List[str] = Field(..., description="The criteria used to determine the lead's score.")
     validation_notes: Optional[str] = Field(None, description="Any notes regarding the validation of the lead score.")
+    demographic_score: int = Field(..., description="Sub-score for demographic factors (0-33).")
+    firmographic_score: int = Field(..., description="Sub-score for firmographic factors (0-33).")
+    behavioral_score: int = Field(..., description="Sub-score for behavioral factors (0-34).")
 
 class LeadScoringResult(BaseModel):
     personal_info: LeadPersonalInfo = Field(..., description="Personal information about the lead.")
     company_info: CompanyInfo = Field(..., description="Information about the lead's company.")
     lead_score: LeadScore = Field(..., description="The calculated score and related information for the lead.")
 
-# Define file paths for YAML configurations
+
 files = {
     'lead_agents': 'config/lead_qualification_agents.yaml',
     'lead_tasks': 'config/lead_qualification_tasks.yaml',
@@ -59,19 +68,19 @@ files = {
     'email_tasks': 'config/email_engagement_tasks.yaml'
 }
 
-# Load configurations from YAML files
+
 configs = {}
 for config_type, file_path in files.items():
     with open(file_path, 'r', encoding='utf-8') as file:
         configs[config_type] = yaml.safe_load(file)
 
-# Assign loaded configurations to specific variables
+
 lead_agents_config = configs['lead_agents']
 lead_tasks_config = configs['lead_tasks']
 email_agents_config = configs['email_agents']
 email_tasks_config = configs['email_tasks']
 
-# Initialize session state for auth
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_id' not in st.session_state:
@@ -135,13 +144,13 @@ if not st.session_state.logged_in:
             st.session_state.show_signup = True
             st.rerun()
 else:
-    # Main app content starts here
+    
     st.title("Sales Pipeline Lead Scoring and Email Generation")
     st.sidebar.header("🔑 Enter your API keys")
     sambana_key = st.sidebar.text_input("Sambanova API Key", type="password")
     
     if st.sidebar.button("🚪 Log Out"):
-        # clear everything and restart
+        
         st.sidebar.success("Logout successful!")
         st.session_state.logged_in = False
         st.session_state.user_id = None
@@ -153,10 +162,10 @@ else:
         st.sidebar.warning("Please enter Sambanova API Key above to continue")
         st.stop()
 
-    # Initialize LLMs
+   
     llm3 = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
 
-    # Creating Lead Scoring Agents
+    
     lead_data_agent = Agent(
         config=lead_agents_config['lead_data_agent'],
         tools=[SerperDevTool(), ScrapeWebsiteTool()],
@@ -175,7 +184,7 @@ else:
         llm=llm3
     )
 
-    # Creating Lead Scoring Tasks
+    
     lead_data_task = Task(
         config=lead_tasks_config['lead_data_collection'],
         agent=lead_data_agent
@@ -193,14 +202,14 @@ else:
         output_pydantic=LeadScoringResult
     )
 
-    # Creating Lead Scoring Crew
+   
     lead_scoring_crew = Crew(
         agents=[lead_data_agent, cultural_fit_agent, scoring_validation_agent],
         tasks=[lead_data_task, cultural_fit_task, scoring_validation_task],
         verbose=True
     )
 
-    # Creating Email Writing Agents
+    
     email_content_specialist = Agent(
         config=email_agents_config['email_content_specialist'],
         llm=llm3
@@ -211,7 +220,7 @@ else:
         llm=llm3
     )
 
-    # Creating Email Writing Tasks
+   
     email_drafting = Task(
         config=email_tasks_config['email_drafting'],
         agent=email_content_specialist
@@ -223,19 +232,17 @@ else:
         agent=engagement_strategist
     )
 
-    # Creating Email Writing Crew
+    
     email_writing_crew = Crew(
         agents=[email_content_specialist, engagement_strategist],
         tasks=[email_drafting, engagement_optimization],
         verbose=True
     )
 
-    # Initialize session state
     if 'leads' not in st.session_state:
         resp = supabase.table("leads").select("*").eq("user_id", st.session_state.user_id).order("created_at", desc=False).execute()
         st.session_state.leads = resp.data or []
 
-    # Define the SalesPipeline flow with CrewAI Flow
     class SalesPipeline(Flow):
         def __init__(self, leads):
             super().__init__()
@@ -250,7 +257,6 @@ else:
 
         @listen(score_leads)
         def store_leads_score(self, scores):
-            # Here we would store the scores in the database
             return scores
 
         @listen(score_leads)
@@ -265,11 +271,9 @@ else:
 
         @listen(write_email)
         def send_email(self, emails):
-            # Here we would send the emails to the leads
             self.state["emails"] = emails
             return emails
 
-    # Streamlit Application
     async def process_leads(leads):
         flow = SalesPipeline(leads)
         await flow.kickoff_async()
@@ -280,18 +284,19 @@ else:
     if 'editing_lead' not in st.session_state:
         st.session_state.editing_lead = None
 
-    # Button to add new lead
+
     if st.button("Add New Lead"):
         st.session_state.adding_lead = True
 
-    # Form to input lead data
     if st.session_state.adding_lead:
-        # pre‑fill defaults from session_state if editing
         default_name      = st.session_state.get("Name", "")
         default_title     = st.session_state.get("Job Title", "")
         default_company   = st.session_state.get("Company", "")
         default_email     = st.session_state.get("Email", "")
         default_use_case  = st.session_state.get("Use Case", "")
+        default_industry  = st.session_state.get("Industry", "")
+        default_location  = st.session_state.get("Location", "")
+        default_source    = st.session_state.get("Lead Source", "")
 
         with st.form("lead_form"):
             name      = st.text_input("Name",      value=default_name)
@@ -299,11 +304,13 @@ else:
             company   = st.text_input("Company",   value=default_company)
             email     = st.text_input("Email",     value=default_email)
             use_case  = st.text_input("Use Case",  value=default_use_case)
+            industry  = st.text_input("Industry",  value=default_industry)
+            location  = st.text_input("Location",  value=default_location)
+            source    = st.selectbox("Lead Source", ["Website", "Referral", "Event", "Social Media", "Other"], index=0 if not default_source else ["Website", "Referral", "Event", "Social Media", "Other"].index(default_source))
             submit = st.form_submit_button("Save Lead")
 
             if submit:
                 if st.session_state.editing_lead:
-                    #  ————— UPDATE existing row in Supabase —————
                     supabase.table("leads")\
                         .update({
                             "name":      name,
@@ -311,11 +318,13 @@ else:
                             "company":   company,
                             "email":     email,
                             "use_case":  use_case,
+                            "industry":  industry,
+                            "location":  location,
+                            "source":    source,
                         })\
                         .eq("id", st.session_state.editing_lead)\
                         .execute()
 
-                    # mirror locally
                     for l in st.session_state.leads:
                         if l["id"] == st.session_state.editing_lead:
                             l.update({
@@ -324,6 +333,9 @@ else:
                                 "company":   company,
                                 "email":     email,
                                 "use_case":  use_case,
+                                "industry":  industry,
+                                "location":  location,
+                                "source":    source,
                             })
                             break
                     
@@ -331,13 +343,16 @@ else:
                     st.session_state.editing_lead = None
 
                 else:
-                    #  ————— INSERT new row (as before) —————
+                    
                     new_row = {
                         "name":      name,
                         "job_title": job_title,
                         "company":   company,
                         "email":     email,
                         "use_case":  use_case,
+                        "industry":  industry,
+                        "location":  location,
+                        "source":    source,
                         "created_at": "now()",
                         "user_id": st.session_state.user_id
                     }
@@ -347,9 +362,9 @@ else:
                 st.session_state.adding_lead = False
                 st.rerun()
                    
-    # Button to process leads
+    
     if st.button("Process Leads"):
-        # pick out those without a score yet
+       
         unprocessed = [
             lead for lead in st.session_state.leads
             if lead.get("score") is None
@@ -357,12 +372,12 @@ else:
         if unprocessed:
             with st.spinner("Processing new leads…"):
                 try:
-                    # run CrewAI on the raw dicts
+              
                     raw_inputs = [{"lead_data": lead} for lead in unprocessed]
                     scores, emails = asyncio.run(process_leads(raw_inputs))
-                    # st.text(emails)
+                    
                     for lead, score_obj, email_draft in zip(unprocessed, scores, emails):
-        # extract the Pydantic model
+        
                         pyd = score_obj.pydantic
 
                         updates = {
@@ -375,7 +390,7 @@ else:
                                 .eq("id", lead["id"])\
                                 .execute()
 
-                        # keep your local copy in sync
+                        
                         lead.update(updates)
 
 
@@ -386,15 +401,14 @@ else:
             st.info("No new leads to process.")
 
 
-    # Button to clear leads
-    # Button to clear the in‐form inputs (not the stored leads list)
+    
     if st.button("Clear Leads"):
         # keep the form open
         st.session_state.adding_lead = False
         st.success("Leads cleared successfully.")
         st.rerun()
 
-    # Display leads dashboard
+ 
     if st.session_state.leads:
         st.write("## Leads Dashboard")
         for lead in st.session_state.leads:
@@ -403,16 +417,19 @@ else:
                 title += f" (Score: {lead['score']})"
 
             with st.expander(title):
-                # Show core lead data
+              
                 st.json({
                     "Name":      lead["name"],
                     "Job Title": lead["job_title"],
                     "Company":   lead["company"],
                     "Email":     lead["email"],
                     "Use Case":  lead["use_case"],
+                    "Industry":  lead.get("industry", "N/A"),
+                    "Location":  lead.get("location", "N/A"),
+                    "Source":    lead.get("source", "N/A"),
+                   
                 })
 
-                # Optional: scoring result & email draft
                 if lead.get("scoring_result"):
                     st.write("*Scoring Result:*")
                     st.json(lead["scoring_result"])
@@ -420,17 +437,17 @@ else:
                     st.write("*Generated Email Draft:*")
                     st.text(lead["email_draft"])
 
-                # For un‑processed leads, show Delete + Edit
+                
                 if lead.get("score") is None:
                     c1, c2 = st.columns(2,gap="small")
                     with c1:
                         if st.button("Delete", key=f"del_{lead['id']}"):
-                            # 1) remove from Supabase
+                        
                             supabase.table("leads") \
                                     .delete() \
                                     .eq("id", lead["id"]) \
                                     .execute()
-                            # 2) remove locally
+                            
                             st.session_state.leads = [
                                 l for l in st.session_state.leads
                                 if l["id"] != lead["id"]
@@ -440,12 +457,67 @@ else:
 
                     with c2:
                         if st.button("Edit", key=f"edit_{lead['id']}"):
-                            # stash this id & preload form fields
+                        
                             st.session_state.editing_lead = lead["id"]
                             st.session_state["Name"]      = lead["name"]
                             st.session_state["Job Title"] = lead["job_title"]
                             st.session_state["Company"]   = lead["company"]
                             st.session_state["Email"]     = lead["email"]
                             st.session_state["Use Case"]  = lead["use_case"]
+                            st.session_state["Industry"]  = lead.get("industry", "")
+                            st.session_state["Location"]  = lead.get("location", "")
+                            st.session_state["Lead Source"] = lead.get("source", "")
                             st.session_state.adding_lead  = True
                             st.rerun()
+
+        # Analytics Dashboard with Graphs
+        st.write("## Analytics Dashboard")
+        if st.session_state.leads:
+            df = pd.DataFrame(st.session_state.leads)
+            if 'created_at' in df.columns:
+                df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
+
+            # Leads by Industry
+            if 'industry' in df.columns and not df['industry'].isnull().all():
+                st.subheader("Leads by Industry")
+                industry_counts = df['industry'].value_counts()
+                st.bar_chart(industry_counts)
+
+            # Leads by Source
+            if 'source' in df.columns and not df['source'].isnull().all():
+                st.subheader("Leads by Source")
+                source_counts = df['source'].value_counts()
+                fig, ax = plt.subplots()
+                source_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
+                ax.set_title("Leads by Source")
+                st.pyplot(fig)
+
+            # Score Distribution
+            if 'score' in df.columns and not df['score'].isnull().all():
+                st.subheader("Score Distribution")
+                fig, ax = plt.subplots()
+                ax.hist(df['score'].dropna(), bins=10, color='skyblue', edgecolor='black')
+                ax.set_title("Score Distribution")
+                ax.set_xlabel("Score")
+                ax.set_ylabel("Count")
+                st.pyplot(fig)
+
+            # Leads Over Time
+            if 'created_at' in df.columns and not df['created_at'].isnull().all():
+                st.subheader("Leads Over Time")
+                leads_per_day = df.resample('D', on='created_at').size()
+                st.line_chart(leads_per_day)
+
+            # Average Score by Industry
+            if 'score' in df.columns and 'industry' in df.columns and not df['score'].isnull().all() and not df['industry'].isnull().all():
+                st.subheader("Average Score by Industry")
+                avg_score_industry = df.groupby('industry')['score'].mean().sort_values()
+                st.bar_chart(avg_score_industry)
+
+            # Leads by Location
+            if 'location' in df.columns and not df['location'].isnull().all():
+                st.subheader("Leads by Location")
+                location_counts = df['location'].value_counts().head(10)  # Top 10 locations
+                st.bar_chart(location_counts)
+        else:
+            st.info("No leads available for analytics.")
