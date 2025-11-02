@@ -1,86 +1,92 @@
-import streamlit as st
-import pandas as pd
-import yaml
 import os
 import asyncio
-from dotenv import load_dotenv
-from supabase import create_client
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-from crewai import Agent, Task, Crew, LLM, Flow
-from crewai_tools import SerperDevTool, ScrapeWebsiteTool
-from crewai.flow.flow import listen, start
-from pydantic import BaseModel, Field
-from typing import Dict, Optional, List
-from crewai_tools import FileReadTool
 import hashlib
 import warnings
 warnings.filterwarnings('ignore')
+
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+import streamlit as st
+import pandas as pd
+import yaml
 import matplotlib.pyplot as plt
+from dotenv import load_dotenv
+from supabase import create_client
 
-load_dotenv()
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
 
+from crewai import Agent, Task, Crew, LLM, Flow
+from crewai.flow.flow import listen, start
+from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+
+# =========================
+# Env & Supabase
+# =========================
+load_dotenv(dotenv_path='.env')
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
-
-
+# =========================
+# Pydantic schemas
+# =========================
 class LeadPersonalInfo(BaseModel):
-    name: str = Field(..., description="The full name of the lead.")
-    job_title: str = Field(..., description="The job title of the lead.")
-    role_relevance: int = Field(..., description="A score representing how relevant the lead's role is to the decision-making process (0-10).")
-    professional_background: Optional[str] = Field(None, description="A brief description of the lead's professional background.")
-    years_experience: Optional[int] = Field(None, description="Years of professional experience.")
-    linkedin_url: Optional[str] = Field(None, description="LinkedIn profile URL.")
-    location: Optional[str] = Field(None, description="Location of the lead (city, country).")
+    name: str
+    job_title: str
+    role_relevance: int
+    professional_background: Optional[str] = None
+    years_experience: Optional[int] = None
+    linkedin_url: Optional[str] = None
+    location: Optional[str] = None
 
 class CompanyInfo(BaseModel):
-    company_name: str = Field(..., description="The name of the company the lead works for.")
-    industry: str = Field(..., description="The industry in which the company operates.")
-    company_size: int = Field(..., description="The size of the company in terms of employee count.")
-    revenue: Optional[float] = Field(None, description="The annual revenue of the company, if available.")
-    market_presence: int = Field(..., description="A score representing the company's market presence (0-10).")
-    company_location: Optional[str] = Field(None, description="Location of the company (city, country).")
-    founding_year: Optional[int] = Field(None, description="Year the company was founded.")
-    website: Optional[str] = Field(None, description="Company website URL.")
+    company_name: str
+    industry: str
+    company_size: int
+    revenue: Optional[float] = None
+    market_presence: int
+    company_location: Optional[str] = None
+    founding_year: Optional[int] = None
+    website: Optional[str] = None
 
 class LeadScore(BaseModel):
-    score: int = Field(..., description="The final score assigned to the lead (0-100).")
-    scoring_criteria: List[str] = Field(..., description="The criteria used to determine the lead's score.")
-    validation_notes: Optional[str] = Field(None, description="Any notes regarding the validation of the lead score.")
-    demographic_score: int = Field(..., description="Sub-score for demographic factors (0-33).")
-    firmographic_score: int = Field(..., description="Sub-score for firmographic factors (0-33).")
-    behavioral_score: int = Field(..., description="Sub-score for behavioral factors (0-34).")
+    score: int
+    scoring_criteria: List[str]
+    validation_notes: Optional[str] = None
+    demographic_score: int
+    firmographic_score: int
+    behavioral_score: int
 
 class LeadScoringResult(BaseModel):
-    personal_info: LeadPersonalInfo = Field(..., description="Personal information about the lead.")
-    company_info: CompanyInfo = Field(..., description="Information about the lead's company.")
-    lead_score: LeadScore = Field(..., description="The calculated score and related information for the lead.")
+    personal_info: LeadPersonalInfo
+    company_info: CompanyInfo
+    lead_score: LeadScore
 
-
+# =========================
+# YAML configs load
+# =========================
 files = {
     'lead_agents': 'config/lead_qualification_agents.yaml',
     'lead_tasks': 'config/lead_qualification_tasks.yaml',
     'email_agents': 'config/email_engagement_agents.yaml',
     'email_tasks': 'config/email_engagement_tasks.yaml'
 }
-
-
-configs = {}
-for config_type, file_path in files.items():
-    with open(file_path, 'r', encoding='utf-8') as file:
-        configs[config_type] = yaml.safe_load(file)
-
+configs: Dict[str, dict] = {}
+for k, path in files.items():
+    with open(path, 'r', encoding='utf-8') as fh:
+        configs[k] = yaml.safe_load(fh)
 
 lead_agents_config = configs['lead_agents']
 lead_tasks_config = configs['lead_tasks']
 email_agents_config = configs['email_agents']
 email_tasks_config = configs['email_tasks']
 
-
+# =========================
+# Session defaults
+# =========================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_id' not in st.session_state:
@@ -89,10 +95,53 @@ if 'show_signup' not in st.session_state:
     st.session_state.show_signup = False
 if 'show_login' not in st.session_state:
     st.session_state.show_login = True
+if 'adding_lead' not in st.session_state:
+    st.session_state.adding_lead = False
+if 'editing_lead' not in st.session_state:
+    st.session_state.editing_lead = None
 
-def hash_password(password):
+# =========================
+# Helpers
+# =========================
+def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+def refresh_leads():
+    if not st.session_state.logged_in or not st.session_state.user_id:
+        st.session_state.leads = []
+        return
+    resp = (
+        supabase.table("leads")
+        .select("*")
+        .eq("user_id", st.session_state.user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    st.session_state.leads = resp.data or []
+
+def reset_lead_form_cache(lead: Optional[dict] = None):
+    if lead:
+        st.session_state["Name"]        = lead.get("name", "")
+        st.session_state["Job Title"]   = lead.get("job_title", "")
+        st.session_state["Company"]     = lead.get("company", "")
+        st.session_state["Email"]       = lead.get("email", "")
+        st.session_state["Use Case"]    = lead.get("use_case", "")
+        st.session_state["Industry"]    = lead.get("industry", "")
+        st.session_state["Location"]    = lead.get("location", "")
+        st.session_state["Lead Source"] = lead.get("source", "")
+    else:
+        st.session_state["Name"] = st.session_state.get("Name", "")
+        st.session_state["Job Title"] = st.session_state.get("Job Title", "")
+        st.session_state["Company"] = st.session_state.get("Company", "")
+        st.session_state["Email"] = st.session_state.get("Email", "")
+        st.session_state["Use Case"] = st.session_state.get("Use Case", "")
+        st.session_state["Industry"] = st.session_state.get("Industry", "")
+        st.session_state["Location"] = st.session_state.get("Location", "")
+        st.session_state["Lead Source"] = st.session_state.get("Lead Source", "")
+
+# =========================
+# UI: Auth
+# =========================
 if not st.session_state.logged_in:
     st.title("Welcome to the Sales Pipeline Lead Scoring and Email Generation")
 
@@ -104,16 +153,15 @@ if not st.session_state.logged_in:
             submit = st.form_submit_button("Signup")
             if submit:
                 if username and password:
-                    existing_user = supabase.table("users").select("*").eq("username", username).execute()
-                    if existing_user.data:
+                    existing = supabase.table("users").select("*").eq("username", username).execute()
+                    if existing.data:
                         st.error("Username already exists.")
                     else:
-                        password_hash = hash_password(password)
                         supabase.table("users").insert({
                             "username": username,
-                            "password": password_hash
+                            "password": hash_password(password)
                         }).execute()
-                        st.success("Signup successful! Please login.")
+                        st.success("Signup successful. Please login.")
                         st.session_state.show_signup = False
                         st.session_state.show_login = True
                         st.rerun()
@@ -132,8 +180,9 @@ if not st.session_state.logged_in:
                     if user.data and hash_password(password) == user.data[0]["password"]:
                         st.session_state.logged_in = True
                         st.session_state.user_id = user.data[0]["id"]
-                        st.success("Login successful!")
                         st.session_state.show_login = False
+                        st.session_state.pop("leads", None)   # kill stale cache
+                        st.success("Login successful.")
                         st.rerun()
                     else:
                         st.error("Invalid username or password.")
@@ -143,381 +192,317 @@ if not st.session_state.logged_in:
             st.session_state.show_login = False
             st.session_state.show_signup = True
             st.rerun()
-else:
-    
-    st.title("Sales Pipeline Lead Scoring and Email Generation")
-    st.sidebar.header("🔑 Enter your API keys")
-    sambana_key = st.sidebar.text_input("Sambanova API Key", type="password")
-    
-    if st.sidebar.button("🚪 Log Out"):
-        
-        st.sidebar.success("Logout successful!")
-        st.session_state.logged_in = False
-        st.session_state.user_id = None
-        st.session_state.leads = []
-        st.session_state.show_login = True
-        st.rerun()
+    st.stop()
 
-    if not sambana_key:
-        st.sidebar.warning("Please enter Sambanova API Key above to continue")
-        st.stop()
+# =========================
+# Logged-in area
+# =========================
+st.title("Sales Pipeline Lead Scoring and Email Generation")
 
-   
-    llm3 = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
+st.sidebar.header("🔑 Enter your API keys")
+sambana_key = st.sidebar.text_input("Sambanova API Key", type="password")
 
-    
-    lead_data_agent = Agent(
-        config=lead_agents_config['lead_data_agent'],
-        tools=[SerperDevTool(), ScrapeWebsiteTool()],
-        llm=llm3
-    )
+if st.sidebar.button("🚪 Log Out"):
+    st.sidebar.success("Logout successful.")
+    st.session_state.logged_in = False
+    st.session_state.user_id = None
+    st.session_state.pop("leads", None)  # delete cache key
+    st.session_state.show_login = True
+    st.rerun()
 
-    cultural_fit_agent = Agent(
-        config=lead_agents_config['cultural_fit_agent'],
-        tools=[SerperDevTool(), ScrapeWebsiteTool()],
-        llm=llm3
-    )
+if not sambana_key:
+    st.sidebar.warning("Please enter Sambanova API Key above to continue")
+    st.stop()
 
-    scoring_validation_agent = Agent(
-        config=lead_agents_config['scoring_validation_agent'],
-        tools=[SerperDevTool(), ScrapeWebsiteTool()],
-        llm=llm3
-    )
+# =========================
+# LLM & Agents
+# =========================
+llm3 = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
 
-    
-    lead_data_task = Task(
-        config=lead_tasks_config['lead_data_collection'],
-        agent=lead_data_agent
-    )
+lead_data_agent = Agent(
+    config=lead_agents_config['lead_data_agent'],
+    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    llm=llm3
+)
+cultural_fit_agent = Agent(
+    config=lead_agents_config['cultural_fit_agent'],
+    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    llm=llm3
+)
+scoring_validation_agent = Agent(
+    config=lead_agents_config['scoring_validation_agent'],
+    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    llm=llm3
+)
 
-    cultural_fit_task = Task(
-        config=lead_tasks_config['cultural_fit_analysis'],
-        agent=cultural_fit_agent
-    )
+lead_data_task = Task(config=lead_tasks_config['lead_data_collection'], agent=lead_data_agent)
+cultural_fit_task = Task(config=lead_tasks_config['cultural_fit_analysis'], agent=cultural_fit_agent)
+scoring_validation_task = Task(
+    config=lead_tasks_config['lead_scoring_and_validation'],
+    agent=scoring_validation_agent,
+    context=[lead_data_task, cultural_fit_task],
+    output_pydantic=LeadScoringResult
+)
 
-    scoring_validation_task = Task(
-        config=lead_tasks_config['lead_scoring_and_validation'],
-        agent=scoring_validation_agent,
-        context=[lead_data_task, cultural_fit_task],
-        output_pydantic=LeadScoringResult
-    )
+lead_scoring_crew = Crew(
+    agents=[lead_data_agent, cultural_fit_agent, scoring_validation_agent],
+    tasks=[lead_data_task, cultural_fit_task, scoring_validation_task],
+    verbose=True
+)
 
-   
-    lead_scoring_crew = Crew(
-        agents=[lead_data_agent, cultural_fit_agent, scoring_validation_agent],
-        tasks=[lead_data_task, cultural_fit_task, scoring_validation_task],
-        verbose=True
-    )
+email_content_specialist = Agent(config=email_agents_config['email_content_specialist'], llm=llm3)
+engagement_strategist = Agent(config=email_agents_config['engagement_strategist'], llm=llm3)
 
-    
-    email_content_specialist = Agent(
-        config=email_agents_config['email_content_specialist'],
-        llm=llm3
-    )
+email_drafting = Task(config=email_tasks_config['email_drafting'], agent=email_content_specialist)
+engagement_optimization = Task(config=email_tasks_config['engagement_optimization'],
+                               context=[email_drafting],
+                               agent=engagement_strategist)
 
-    engagement_strategist = Agent(
-        config=email_agents_config['engagement_strategist'],
-        llm=llm3
-    )
+email_writing_crew = Crew(
+    agents=[email_content_specialist, engagement_strategist],
+    tasks=[email_drafting, engagement_optimization],
+    verbose=True
+)
 
-   
-    email_drafting = Task(
-        config=email_tasks_config['email_drafting'],
-        agent=email_content_specialist
-    )
+# =========================
+# Data bootstrap
+# =========================
+refresh_leads()  # always refresh on rerun while logged in
 
-    engagement_optimization = Task(
-        config=email_tasks_config['engagement_optimization'],
-        context=[email_drafting],
-        agent=engagement_strategist
-    )
+class SalesPipeline(Flow):
+    def __init__(self, leads):
+        super().__init__()
+        self.leads = leads
 
-    
-    email_writing_crew = Crew(
-        agents=[email_content_specialist, engagement_strategist],
-        tasks=[email_drafting, engagement_optimization],
-        verbose=True
-    )
+    @start()
+    def score_leads(self):
+        scores = lead_scoring_crew.kickoff_for_each(self.leads)
+        self.state["scores"] = scores
+        return scores
 
-    if 'leads' not in st.session_state:
-        resp = supabase.table("leads").select("*").eq("user_id", st.session_state.user_id).order("created_at", desc=False).execute()
-        st.session_state.leads = resp.data or []
+    @listen(score_leads)
+    def store_leads_score(self, scores):
+        return scores
 
-    class SalesPipeline(Flow):
-        def __init__(self, leads):
-            super().__init__()
-            self.leads = leads
+    @listen(score_leads)
+    def filter_leads(self, scores):
+        return [score for score in scores if score['lead_score'].score > 70]
 
-        @start()
-        def score_leads(self):
-            leads = self.leads
-            scores = lead_scoring_crew.kickoff_for_each(leads)
-            self.state["scores"] = scores
-            return scores
+    @listen(filter_leads)
+    def write_email(self, leads):
+        scored_leads = [lead.to_dict() for lead in leads]
+        emails = email_writing_crew.kickoff_for_each(scored_leads)
+        return emails
 
-        @listen(score_leads)
-        def store_leads_score(self, scores):
-            return scores
+    @listen(write_email)
+    def send_email(self, emails):
+        self.state["emails"] = emails
+        return emails
 
-        @listen(score_leads)
-        def filter_leads(self, scores):
-            return [score for score in scores if score['lead_score'].score > 70]
+async def process_leads(leads):
+    flow = SalesPipeline(leads)
+    await flow.kickoff_async()
+    return flow.state["scores"], flow.state["emails"]
 
-        @listen(filter_leads)
-        def write_email(self, leads):
-            scored_leads = [lead.to_dict() for lead in leads]
-            emails = email_writing_crew.kickoff_for_each(scored_leads)
-            return emails
+# =========================
+# Lead form controls
+# =========================
+if st.button("Add New Lead"):
+    st.session_state.adding_lead = True
+    st.session_state.editing_lead = None
+    reset_lead_form_cache()
+    st.rerun()
 
-        @listen(write_email)
-        def send_email(self, emails):
-            self.state["emails"] = emails
-            return emails
+if st.session_state.adding_lead:
+    reset_lead_form_cache()
+    defaults = {
+        "name": st.session_state.get("Name", ""),
+        "job_title": st.session_state.get("Job Title", ""),
+        "company": st.session_state.get("Company", ""),
+        "email": st.session_state.get("Email", ""),
+        "use_case": st.session_state.get("Use Case", ""),
+        "industry": st.session_state.get("Industry", ""),
+        "location": st.session_state.get("Location", ""),
+        "source": st.session_state.get("Lead Source", "") or "Website",
+    }
 
-    async def process_leads(leads):
-        flow = SalesPipeline(leads)
-        await flow.kickoff_async()
-        return flow.state["scores"], flow.state["emails"]
-        
-    if 'adding_lead' not in st.session_state:
-        st.session_state.adding_lead = False
-    if 'editing_lead' not in st.session_state:
-        st.session_state.editing_lead = None
+    with st.form("lead_form"):
+        name      = st.text_input("Name",      value=defaults["name"])
+        job_title = st.text_input("Job Title", value=defaults["job_title"])
+        company   = st.text_input("Company",   value=defaults["company"])
+        email     = st.text_input("Email",     value=defaults["email"])
+        use_case  = st.text_input("Use Case",  value=defaults["use_case"])
+        industry  = st.text_input("Industry",  value=defaults["industry"])
+        location  = st.text_input("Location",  value=defaults["location"])
+        source    = st.selectbox(
+            "Lead Source",
+            ["Website", "Referral", "Event", "Social Media", "Other"],
+            index=["Website", "Referral", "Event", "Social Media", "Other"].index(defaults["source"])
+            if defaults["source"] in ["Website", "Referral", "Event", "Social Media", "Other"] else 0
+        )
+        submit = st.form_submit_button("Save Lead")
 
+        if submit:
+            if st.session_state.editing_lead:
+                supabase.table("leads").update({
+                    "name": name, "job_title": job_title, "company": company, "email": email,
+                    "use_case": use_case, "industry": industry, "location": location, "source": source
+                }).eq("id", st.session_state.editing_lead).execute()
+                st.success("Lead updated.")
+                st.session_state.editing_lead = None
+            else:
+                # let DB default set created_at (TIMESTAMPTZ DEFAULT now())
+                new_row = {
+                    "name": name, "job_title": job_title, "company": company, "email": email,
+                    "use_case": use_case, "industry": industry, "location": location,
+                    "source": source, "user_id": st.session_state.user_id
+                }
+                supabase.table("leads").insert(new_row).execute()
+                st.success("Lead added.")
+            st.session_state.adding_lead = False
+            refresh_leads()
+            st.rerun()
 
-    if st.button("Add New Lead"):
-        st.session_state.adding_lead = True
+# =========================
+# Actions
+# =========================
+if st.button("Process Leads"):
+    unprocessed = [l for l in st.session_state.leads if l.get("score") is None]
+    if not unprocessed:
+        st.info("No new leads to process.")
+    else:
+        with st.spinner("Processing new leads…"):
+            try:
+                raw_inputs = [{"lead_data": lead} for lead in unprocessed]
+                scores, emails = asyncio.run(process_leads(raw_inputs))
 
-    if st.session_state.adding_lead:
-        default_name      = st.session_state.get("Name", "")
-        default_title     = st.session_state.get("Job Title", "")
-        default_company   = st.session_state.get("Company", "")
-        default_email     = st.session_state.get("Email", "")
-        default_use_case  = st.session_state.get("Use Case", "")
-        default_industry  = st.session_state.get("Industry", "")
-        default_location  = st.session_state.get("Location", "")
-        default_source    = st.session_state.get("Lead Source", "")
-
-        with st.form("lead_form"):
-            name      = st.text_input("Name",      value=default_name)
-            job_title = st.text_input("Job Title", value=default_title)
-            company   = st.text_input("Company",   value=default_company)
-            email     = st.text_input("Email",     value=default_email)
-            use_case  = st.text_input("Use Case",  value=default_use_case)
-            industry  = st.text_input("Industry",  value=default_industry)
-            location  = st.text_input("Location",  value=default_location)
-            source    = st.selectbox("Lead Source", ["Website", "Referral", "Event", "Social Media", "Other"], index=0 if not default_source else ["Website", "Referral", "Event", "Social Media", "Other"].index(default_source))
-            submit = st.form_submit_button("Save Lead")
-
-            if submit:
-                if st.session_state.editing_lead:
-                    supabase.table("leads")\
-                        .update({
-                            "name":      name,
-                            "job_title": job_title,
-                            "company":   company,
-                            "email":     email,
-                            "use_case":  use_case,
-                            "industry":  industry,
-                            "location":  location,
-                            "source":    source,
-                        })\
-                        .eq("id", st.session_state.editing_lead)\
-                        .execute()
-
-                    for l in st.session_state.leads:
-                        if l["id"] == st.session_state.editing_lead:
-                            l.update({
-                                "name":      name,
-                                "job_title": job_title,
-                                "company":   company,
-                                "email":     email,
-                                "use_case":  use_case,
-                                "industry":  industry,
-                                "location":  location,
-                                "source":    source,
-                            })
-                            break
-                    
-                    st.success("Lead Updated Successfully!")
-                    st.session_state.editing_lead = None
-
-                else:
-                    
-                    new_row = {
-                        "name":      name,
-                        "job_title": job_title,
-                        "company":   company,
-                        "email":     email,
-                        "use_case":  use_case,
-                        "industry":  industry,
-                        "location":  location,
-                        "source":    source,
-                        "created_at": "now()",
-                        "user_id": st.session_state.user_id
+                for lead, score_obj, email_draft in zip(unprocessed, scores, emails):
+                    pyd = score_obj.pydantic  # CrewAI pydantic output
+                    updates = {
+                        "score": pyd.lead_score.score,
+                        "scoring_result": pyd.dict(),
+                        "email_draft": email_draft.raw
                     }
-                    resp = supabase.table("leads").insert(new_row).execute()
-                    st.session_state.leads.append(resp.data[0])
-                    st.success("Leads added Successfully!")
-                st.session_state.adding_lead = False
+                    supabase.table("leads").update(updates).eq("id", lead["id"]).execute()
+
+                refresh_leads()
+                st.success("Leads processed and updated.")
                 st.rerun()
-                   
-    
-    if st.button("Process Leads"):
-       
-        unprocessed = [
-            lead for lead in st.session_state.leads
-            if lead.get("score") is None
-        ]
-        if unprocessed:
-            with st.spinner("Processing new leads…"):
-                try:
-              
-                    raw_inputs = [{"lead_data": lead} for lead in unprocessed]
-                    scores, emails = asyncio.run(process_leads(raw_inputs))
-                    
-                    for lead, score_obj, email_draft in zip(unprocessed, scores, emails):
-        
-                        pyd = score_obj.pydantic
+            except Exception as e:
+                st.error(f"Processing error: {e}")
 
-                        updates = {
-                            "score":           pyd.lead_score.score,
-                            "scoring_result":  pyd.dict(),    # now a plain dict
-                            "email_draft":     email_draft.raw
-                        }
-                        supabase.table("leads")\
-                                .update(updates)\
-                                .eq("id", lead["id"])\
-                                .execute()
+if st.button("Clear Leads"):
+    st.session_state.adding_lead = False
+    st.success("Leads cleared from the form.")
+    st.rerun()
 
-                        
-                        lead.update(updates)
+# =========================
+# Leads Dashboard
+# =========================
+st.write("## Leads Dashboard")
+if st.session_state.leads:
+    for lead in st.session_state.leads:
+        title = f"{lead['name']} – {lead['company']}"
+        if lead.get("score") is not None:
+            title += f" (Score: {lead['score']})"
 
+        with st.expander(title):
+            st.json({
+                "Name":      lead.get("name"),
+                "Job Title": lead.get("job_title"),
+                "Company":   lead.get("company"),
+                "Email":     lead.get("email"),
+                "Use Case":  lead.get("use_case"),
+                "Industry":  lead.get("industry", "N/A"),
+                "Location":  lead.get("location", "N/A"),
+                "Source":    lead.get("source", "N/A"),
+            })
 
-                    st.success("Leads processed and updated in Supabase!")
-                except Exception as e:
-                    st.error(f"Processing error: {e}")
-        else:
-            st.info("No new leads to process.")
+            if lead.get("scoring_result"):
+                st.write("*Scoring Result:*")
+                st.json(lead["scoring_result"])
+            if lead.get("email_draft"):
+                st.write("*Generated Email Draft:*")
+                st.text(lead["email_draft"])
 
+            c1, c2, c3 = st.columns(3, gap="small")
+            with c1:
+                if st.button("Edit", key=f"edit_{lead['id']}"):
+                    st.session_state.editing_lead = lead["id"]
+                    reset_lead_form_cache(lead)
+                    st.session_state.adding_lead = True
+                    st.rerun()
+            with c2:
+                if st.button("Delete", key=f"del_{lead['id']}"):
+                    supabase.table("leads").delete().eq("id", lead["id"]).execute()
+                    refresh_leads()
+                    st.success("Lead deleted.")
+                    st.rerun()
+            with c3:
+                if st.button("Refresh Row", key=f"refresh_{lead['id']}"):
+                    refresh_leads()
+                    st.rerun()
+else:
+    st.info("No leads found. Add a lead to get started.")
 
-    
-    if st.button("Clear Leads"):
-        # keep the form open
-        st.session_state.adding_lead = False
-        st.success("Leads cleared successfully.")
-        st.rerun()
+# =========================
+# Analytics
+# =========================
+st.write("## Analytics Dashboard")
+if st.session_state.leads:
+    df = pd.DataFrame(st.session_state.leads)
 
- 
-    if st.session_state.leads:
-        st.write("## Leads Dashboard")
-        for lead in st.session_state.leads:
-            title = f"{lead['name']} – {lead['company']}"
-            if lead.get("score") is not None:
-                title += f" (Score: {lead['score']})"
+    # Coerce created_at to datetime if present
+    if 'created_at' in df.columns:
+        df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
 
-            with st.expander(title):
-              
-                st.json({
-                    "Name":      lead["name"],
-                    "Job Title": lead["job_title"],
-                    "Company":   lead["company"],
-                    "Email":     lead["email"],
-                    "Use Case":  lead["use_case"],
-                    "Industry":  lead.get("industry", "N/A"),
-                    "Location":  lead.get("location", "N/A"),
-                    "Source":    lead.get("source", "N/A"),
-                   
-                })
+    # Leads by Industry
+    if 'industry' in df.columns and not df['industry'].isnull().all():
+        st.subheader("Leads by Industry")
+        industry_counts = df['industry'].fillna("Unknown").value_counts()
+        st.bar_chart(industry_counts)
 
-                if lead.get("scoring_result"):
-                    st.write("*Scoring Result:*")
-                    st.json(lead["scoring_result"])
-                if lead.get("email_draft"):
-                    st.write("*Generated Email Draft:*")
-                    st.text(lead["email_draft"])
+    # Leads by Source
+    if 'source' in df.columns and not df['source'].isnull().all():
+        st.subheader("Leads by Source")
+        source_counts = df['source'].fillna("Unknown").value_counts()
+        fig, ax = plt.subplots()
+        source_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
+        ax.set_title("Leads by Source")
+        ax.set_ylabel("")  # cleaner
+        st.pyplot(fig)
 
-                
-                if lead.get("score") is None:
-                    c1, c2 = st.columns(2,gap="small")
-                    with c1:
-                        if st.button("Delete", key=f"del_{lead['id']}"):
-                        
-                            supabase.table("leads") \
-                                    .delete() \
-                                    .eq("id", lead["id"]) \
-                                    .execute()
-                            
-                            st.session_state.leads = [
-                                l for l in st.session_state.leads
-                                if l["id"] != lead["id"]
-                            ]
-                            st.success("Leads deleted Successfully!")
-                            st.rerun()
+    # Score Distribution
+    if 'score' in df.columns and not df['score'].isnull().all():
+        st.subheader("Score Distribution")
+        fig, ax = plt.subplots()
+        ax.hist(df['score'].dropna(), bins=10, edgecolor='black')
+        ax.set_title("Score Distribution")
+        ax.set_xlabel("Score")
+        ax.set_ylabel("Count")
+        st.pyplot(fig)
 
-                    with c2:
-                        if st.button("Edit", key=f"edit_{lead['id']}"):
-                        
-                            st.session_state.editing_lead = lead["id"]
-                            st.session_state["Name"]      = lead["name"]
-                            st.session_state["Job Title"] = lead["job_title"]
-                            st.session_state["Company"]   = lead["company"]
-                            st.session_state["Email"]     = lead["email"]
-                            st.session_state["Use Case"]  = lead["use_case"]
-                            st.session_state["Industry"]  = lead.get("industry", "")
-                            st.session_state["Location"]  = lead.get("location", "")
-                            st.session_state["Lead Source"] = lead.get("source", "")
-                            st.session_state.adding_lead  = True
-                            st.rerun()
+    # Leads Over Time
+    if 'created_at' in df.columns and not df['created_at'].isnull().all():
+        st.subheader("Leads Over Time")
+        leads_per_day = df.resample('D', on='created_at').size()
+        st.line_chart(leads_per_day)
 
-        # Analytics Dashboard with Graphs
-        st.write("## Analytics Dashboard")
-        if st.session_state.leads:
-            df = pd.DataFrame(st.session_state.leads)
-            if 'created_at' in df.columns:
-                df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
+    # Average Score by Industry
+    if 'score' in df.columns and 'industry' in df.columns \
+       and not df['score'].isnull().all() and not df['industry'].isnull().all():
+        st.subheader("Average Score by Industry")
+        avg_score_industry = (
+            df.groupby(df['industry'].fillna("Unknown"))['score']
+              .mean()
+              .sort_values()
+        )
+        st.bar_chart(avg_score_industry)
 
-            # Leads by Industry
-            if 'industry' in df.columns and not df['industry'].isnull().all():
-                st.subheader("Leads by Industry")
-                industry_counts = df['industry'].value_counts()
-                st.bar_chart(industry_counts)
-
-            # Leads by Source
-            if 'source' in df.columns and not df['source'].isnull().all():
-                st.subheader("Leads by Source")
-                source_counts = df['source'].value_counts()
-                fig, ax = plt.subplots()
-                source_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
-                ax.set_title("Leads by Source")
-                st.pyplot(fig)
-
-            # Score Distribution
-            if 'score' in df.columns and not df['score'].isnull().all():
-                st.subheader("Score Distribution")
-                fig, ax = plt.subplots()
-                ax.hist(df['score'].dropna(), bins=10, color='skyblue', edgecolor='black')
-                ax.set_title("Score Distribution")
-                ax.set_xlabel("Score")
-                ax.set_ylabel("Count")
-                st.pyplot(fig)
-
-            # Leads Over Time
-            if 'created_at' in df.columns and not df['created_at'].isnull().all():
-                st.subheader("Leads Over Time")
-                leads_per_day = df.resample('D', on='created_at').size()
-                st.line_chart(leads_per_day)
-
-            # Average Score by Industry
-            if 'score' in df.columns and 'industry' in df.columns and not df['score'].isnull().all() and not df['industry'].isnull().all():
-                st.subheader("Average Score by Industry")
-                avg_score_industry = df.groupby('industry')['score'].mean().sort_values()
-                st.bar_chart(avg_score_industry)
-
-            # Leads by Location
-            if 'location' in df.columns and not df['location'].isnull().all():
-                st.subheader("Leads by Location")
-                location_counts = df['location'].value_counts().head(10)  # Top 10 locations
-                st.bar_chart(location_counts)
-        else:
-            st.info("No leads available for analytics.")
+    # Leads by Location
+    if 'location' in df.columns and not df['location'].isnull().all():
+        st.subheader("Leads by Location")
+        location_counts = df['location'].fillna("Unknown").value_counts().head(10)
+        st.bar_chart(location_counts)
+else:
+    st.info("No leads available for analytics.")
