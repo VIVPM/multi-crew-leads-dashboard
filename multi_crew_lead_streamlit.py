@@ -397,12 +397,141 @@ if st.button("Clear Leads"):
     st.rerun()
 
 # =========================
-# Leads Dashboard
+# Visualization: Dashboard-first layout + searchable Leads Data
 # =========================
-st.write("## Leads Dashboard")
+st.subheader("Leads Dashboard")  # big title above graphs
+
 if st.session_state.leads:
-    for lead in st.session_state.leads:
-        title = f"{lead['name']} – {lead['company']}"
+    df = pd.DataFrame(st.session_state.leads)
+
+    # Normalize types
+    if 'created_at' in df.columns:
+        df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
+
+    # Precompute series safely
+    industry_counts = (
+        df['industry'].fillna("Unknown").value_counts()
+        if 'industry' in df.columns and not df['industry'].isnull().all() else None
+    )
+    source_counts = (
+        df['source'].fillna("Unknown").value_counts()
+        if 'source' in df.columns and not df['source'].isnull().all() else None
+    )
+    score_series = (
+        df['score'].dropna()
+        if 'score' in df.columns and not df['score'].isnull().all() else None
+    )
+    leads_per_day = (
+        df.resample('D', on='created_at').size()
+        if 'created_at' in df.columns and not df['created_at'].isnull().all() else None
+    )
+    avg_score_industry = (
+        df.groupby(df['industry'].fillna("Unknown"))['score'].mean().sort_values()
+        if {'industry','score'}.issubset(df.columns)
+        and not df['industry'].isnull().all()
+        and not df['score'].isnull().all()
+        else None
+    )
+    location_counts = (
+        df['location'].fillna("Unknown").value_counts().head(10)
+        if 'location' in df.columns and not df['location'].isnull().all() else None
+    )
+
+    # --- Row 1: 3 charts ---
+    c1, c2, c3 = st.columns(3, gap="small")
+
+    with c1:
+        st.markdown("#### Leads by Industry")
+        if industry_counts is not None:
+            st.bar_chart(industry_counts)
+        else:
+            st.info("No industry data")
+
+    with c2:
+        st.markdown("#### Leads by Source")
+        if source_counts is not None:
+            fig, ax = plt.subplots()
+            source_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
+            ax.set_ylabel("")  # cleaner
+            st.pyplot(fig)
+        else:
+            st.info("No source data")
+
+    with c3:
+        st.markdown("#### Score Distribution")
+        if score_series is not None and not score_series.empty:
+            fig, ax = plt.subplots()
+            ax.hist(score_series, bins=10, edgecolor='black')
+            ax.set_xlabel("Score"); ax.set_ylabel("Count")
+            st.pyplot(fig)
+        else:
+            st.info("No score data")
+
+    # --- Row 2: 3 charts ---
+    d1, d2, d3 = st.columns(3, gap="small")
+
+    with d1:
+        st.markdown("#### Leads Over Time")
+        if leads_per_day is not None and not leads_per_day.empty:
+            st.line_chart(leads_per_day)
+        else:
+            st.info("No timestamps")
+
+    with d2:
+        st.markdown("#### Average Score by Industry")
+        if avg_score_industry is not None and not avg_score_industry.empty:
+            st.bar_chart(avg_score_industry)
+        else:
+            st.info("Insufficient score/industry data")
+
+    with d3:
+        st.markdown("#### Leads by Location")
+        if location_counts is not None:
+            st.bar_chart(location_counts)
+        else:
+            st.info("No location data")
+else:
+    st.info("No leads available for analytics.")
+
+# =========================
+# Leads Data (below graphs) with search
+# =========================
+st.subheader("Leads Data")
+
+def _flatten_to_text(obj) -> str:
+    """Flatten any nested dict/list/primitive to a single lowercase string."""
+    try:
+        if isinstance(obj, dict):
+            parts = []
+            for k, v in obj.items():
+                parts.append(str(k))
+                parts.append(_flatten_to_text(v))
+            return " ".join(parts).lower()
+        if isinstance(obj, list):
+            return " ".join(_flatten_to_text(v) for v in obj).lower()
+        return ("" if obj is None else str(obj)).lower()
+    except Exception:
+        return str(obj).lower()
+
+search_q = st.text_input("Search leads (matches any field, e.g., name, company, email, location, score)")
+
+leads_src = st.session_state.leads if st.session_state.leads else []
+
+if search_q:
+    tokens = [t.strip().lower() for t in search_q.split() if t.strip()]
+    filtered_leads = []
+    for lead in leads_src:
+        haystack = _flatten_to_text(lead)
+        if all(t in haystack for t in tokens):
+            filtered_leads.append(lead)
+else:
+    filtered_leads = leads_src
+
+st.caption(f"Showing {len(filtered_leads)} of {len(leads_src)} leads")
+
+if filtered_leads:
+    for lead in filtered_leads:
+        title = f"{lead.get('name','')} – {lead.get('company','')}"
         if lead.get("score") is not None:
             title += f" (Score: {lead['score']})"
 
@@ -419,19 +548,23 @@ if st.session_state.leads:
             })
 
             if lead.get("scoring_result"):
-                st.write("*Scoring Result:*")
+                st.markdown("**Scoring Result:**")
                 st.json(lead["scoring_result"])
             if lead.get("email_draft"):
-                st.write("*Generated Email Draft:*")
+                st.markdown("**Generated Email Draft:**")
                 st.text(lead["email_draft"])
 
             c1, c2, c3 = st.columns(3, gap="small")
             with c1:
-                if st.button("Edit", key=f"edit_{lead['id']}"):
-                    st.session_state.editing_lead = lead["id"]
-                    reset_lead_form_cache(lead)
-                    st.session_state.adding_lead = True
-                    st.rerun()
+                if lead.get("score") is None:
+                    if st.button("Edit", key=f"edit_{lead['id']}"):
+                        st.session_state.editing_lead = lead["id"]
+                        reset_lead_form_cache(lead)
+                        st.session_state.adding_lead = True
+                        st.rerun()
+                else:
+                    st.caption('Processed')
+                    
             with c2:
                 if st.button("Delete", key=f"del_{lead['id']}"):
                     supabase.table("leads").delete().eq("id", lead["id"]).execute()
@@ -443,66 +576,4 @@ if st.session_state.leads:
                     refresh_leads()
                     st.rerun()
 else:
-    st.info("No leads found. Add a lead to get started.")
-
-# =========================
-# Analytics
-# =========================
-st.write("## Analytics Dashboard")
-if st.session_state.leads:
-    df = pd.DataFrame(st.session_state.leads)
-
-    # Coerce created_at to datetime if present
-    if 'created_at' in df.columns:
-        df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
-
-    # Leads by Industry
-    if 'industry' in df.columns and not df['industry'].isnull().all():
-        st.subheader("Leads by Industry")
-        industry_counts = df['industry'].fillna("Unknown").value_counts()
-        st.bar_chart(industry_counts)
-
-    # Leads by Source
-    if 'source' in df.columns and not df['source'].isnull().all():
-        st.subheader("Leads by Source")
-        source_counts = df['source'].fillna("Unknown").value_counts()
-        fig, ax = plt.subplots()
-        source_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
-        ax.set_title("Leads by Source")
-        ax.set_ylabel("")  # cleaner
-        st.pyplot(fig)
-
-    # Score Distribution
-    if 'score' in df.columns and not df['score'].isnull().all():
-        st.subheader("Score Distribution")
-        fig, ax = plt.subplots()
-        ax.hist(df['score'].dropna(), bins=10, edgecolor='black')
-        ax.set_title("Score Distribution")
-        ax.set_xlabel("Score")
-        ax.set_ylabel("Count")
-        st.pyplot(fig)
-
-    # Leads Over Time
-    if 'created_at' in df.columns and not df['created_at'].isnull().all():
-        st.subheader("Leads Over Time")
-        leads_per_day = df.resample('D', on='created_at').size()
-        st.line_chart(leads_per_day)
-
-    # Average Score by Industry
-    if 'score' in df.columns and 'industry' in df.columns \
-       and not df['score'].isnull().all() and not df['industry'].isnull().all():
-        st.subheader("Average Score by Industry")
-        avg_score_industry = (
-            df.groupby(df['industry'].fillna("Unknown"))['score']
-              .mean()
-              .sort_values()
-        )
-        st.bar_chart(avg_score_industry)
-
-    # Leads by Location
-    if 'location' in df.columns and not df['location'].isnull().all():
-        st.subheader("Leads by Location")
-        location_counts = df['location'].fillna("Unknown").value_counts().head(10)
-        st.bar_chart(location_counts)
-else:
-    st.info("No leads available for analytics.")
+    st.info("No leads match your search.")
