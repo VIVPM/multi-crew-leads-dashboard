@@ -22,11 +22,12 @@ from typing import Optional, List, Dict
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai.flow.flow import listen, start
 from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+load_dotenv(dotenv_path='.env')
 
 # =========================
 # Env & Supabase
 # =========================
-load_dotenv(dotenv_path='.env')
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
