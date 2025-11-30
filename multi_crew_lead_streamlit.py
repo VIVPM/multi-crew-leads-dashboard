@@ -17,6 +17,7 @@ load_dotenv(dotenv_path='.env')
 # Set up OpenTelemetry exporter to Langfuse
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL")
 LANGFUSE_AUTH = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
 
 os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"  # US region
