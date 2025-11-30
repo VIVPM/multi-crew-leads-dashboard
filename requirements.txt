@@ -8,3 +8,5 @@ pandas
 pysqlite3-binary
 supabase
 matplotlib
+langfuse
+openlit

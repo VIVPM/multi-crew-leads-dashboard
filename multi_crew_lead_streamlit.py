@@ -2,27 +2,42 @@ import os
 import asyncio
 import hashlib
 import warnings
-warnings.filterwarnings('ignore')
-
-# __import__('pysqlite3')
-# import sys
-# sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-import sqlite3
-
 import streamlit as st
 import pandas as pd
 import yaml
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
+warnings.filterwarnings('ignore')
+import sqlite3
+import base64
+import openlit
+
+load_dotenv(dotenv_path='.env')
+
+# Set up OpenTelemetry exporter to Langfuse
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_AUTH = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
+
+os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"  # US region
+os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
+
+# Initialize OpenLit instrumentation
+
+if "openlit_initialized" not in st.session_state:
+    openlit.init(disable_batch=True)
+    st.session_state.openlit_initialized = True
+
 from supabase import create_client
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
-
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai.flow.flow import listen, start
 from crewai_tools import SerperDevTool, ScrapeWebsiteTool
-load_dotenv(dotenv_path='.env')
+from langfuse import get_client
+
+langfuse = get_client()
 
 # =========================
 # Env & Supabase
@@ -434,10 +449,13 @@ if st.session_state.leads:
         and not df['score'].isnull().all()
         else None
     )
-    location_counts = (
-        df['location'].fillna("Unknown").value_counts().head(10)
-        if 'location' in df.columns and not df['location'].isnull().all() else None
-    )
+
+    country_counts = None
+    if 'location' in df.columns and not df['location'].isnull().all():
+        df['country'] = df['location'].fillna("Unknown").apply(
+            lambda x: x.split(',')[-1].strip() if ',' in str(x) else str(x).strip()
+        )
+        country_counts = df['country'].value_counts()
 
     # --- Row 1: 3 charts ---
     c1, c2, c3 = st.columns(3, gap="small")
@@ -487,9 +505,12 @@ if st.session_state.leads:
             st.info("Insufficient score/industry data")
 
     with d3:
-        st.markdown("#### Leads by Location")
-        if location_counts is not None:
-            st.bar_chart(location_counts)
+        st.markdown("#### Leads by Country")
+        if country_counts is not None and not country_counts.empty:
+            fig, ax = plt.subplots()
+            country_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax)
+            ax.set_ylabel("")
+            st.pyplot(fig)
         else:
             st.info("No location data")
 else:
