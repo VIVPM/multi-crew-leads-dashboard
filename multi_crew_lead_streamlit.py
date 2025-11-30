@@ -235,7 +235,7 @@ if not sambana_key:
 # =========================
 # LLM & Agents
 # =========================
-llm3 = LLM(model="sambanova/DeepSeek-V3.1-Terminus", api_key=sambana_key)
+llm3 = LLM(model="sambanova/gpt-oss-120b", api_key=sambana_key)
 
 lead_data_agent = Agent(
     config=lead_agents_config['lead_data_agent'],
