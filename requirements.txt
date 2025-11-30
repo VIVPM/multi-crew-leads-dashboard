@@ -10,4 +10,3 @@ supabase
 matplotlib
 langfuse
 openlit
-litllm
