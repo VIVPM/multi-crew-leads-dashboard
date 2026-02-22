@@ -9,25 +9,7 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 import sqlite3
-import base64
-import openlit
-
 load_dotenv(dotenv_path='.env')
-
-# Set up OpenTelemetry exporter to Langfuse
-LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
-LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
-LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL")
-LANGFUSE_AUTH = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
-
-os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"  # US region
-os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
-
-# Initialize OpenLit instrumentation
-
-if "openlit_initialized" not in st.session_state:
-    openlit.init(disable_batch=True)
-    st.session_state.openlit_initialized = True
 
 from supabase import create_client
 
@@ -36,9 +18,7 @@ from typing import Optional, List, Dict
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai.flow.flow import listen, start
 from crewai_tools import SerperDevTool, ScrapeWebsiteTool
-from langfuse import get_client
 
-langfuse = get_client()
 
 # =========================
 # Env & Supabase
@@ -235,7 +215,7 @@ if not sambana_key:
 # =========================
 # LLM & Agents
 # =========================
-llm3 = LLM(model="sambanova/Llama-4-Maverick-17B-128E-Instruct", api_key=sambana_key)
+llm3 = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
 
 lead_data_agent = Agent(
     config=lead_agents_config['lead_data_agent'],
