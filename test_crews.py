@@ -240,5 +240,5 @@ if __name__ == "__main__":
     print("\n=== Testing Lead Scoring Crew ===")
     lead_scoring_crew.test(n_iterations=2, eval_llm=llm1, inputs=lead_scoring_inputs)
 
-    # print("\n=== Testing Email Writing Crew ===")
-    # email_writing_crew.test(n_iterations=2, eval_llm=llm1, inputs=email_crew_inputs)
+    print("\n=== Testing Email Writing Crew ===")
+    email_writing_crew.test(n_iterations=2, eval_llm=llm1, inputs=email_crew_inputs)
