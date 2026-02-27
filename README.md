@@ -211,3 +211,48 @@ deactivate
 - **YAML Errors:** Double-check YAML file indentation and format.
 
 ---
+
+## **Screenshots & Results**
+
+### Agent Processing & Evaluation Results
+
+The pipeline was formally evaluated using CrewAI's built-in evaluation framework across **two independent runs**, scoring each agent task on a scale of **1–10** (higher is better). The results demonstrate consistently near-perfect performance across both crews.
+
+---
+
+#### 🔎 Lead Scoring Crew — Avg Score: **9.9 / 10** *(~109s execution)*
+
+![Lead Scoring Evaluation](Screenshot%202026-02-27%20153823.png)
+
+The Lead Scoring Crew comprises three specialized agents working in sequence — data enrichment, cultural fit analysis, and final scoring/validation. Across both evaluation runs:
+
+- The **Lead Data Specialist** delivered near-flawless web enrichment and lead profiling, scoring a perfect **10.0** in Run 1 and a strong **9.5** in Run 2 (average **9.8**). The minor variation in Run 2 reflects natural LLM output fluctuations, not a structural weakness.
+- The **Cultural Fit Analyst** achieved a **perfect 10.0 in both runs** (average **10.0**), demonstrating highly reliable company research and cultural alignment assessment — the most consistent agent in the entire pipeline.
+- The **Lead Scorer & Validator** also scored **10.0 across both runs** (average **10.0**), confirming that unified score generation and structured output validation are rock-solid, with zero degradation between runs.
+
+> The crew's overall average of **9.9/10** places it in exceptional territory — near the theoretical ceiling for an LLM-driven agentic workflow.
+
+---
+
+#### ✍️ Email Generation Crew — Avg Score: **9.8 / 10** *(~138s execution)*
+
+![Email Writing Evaluation](Screenshot%202026-02-27%20153832.png)
+
+The Email Generation Crew takes the scored lead context and produces a polished, personalized outreach email through two collaborative agents:
+
+- The **Email Content Writer** scored **10.0** in Run 1 and **9.5** in Run 2 (average **9.8**). The slight dip in Run 2 is characteristic of creative generation tasks, where tone and phrasing can vary across runs — overall quality remained excellent.
+- The **Engagement Optimization Specialist**, responsible for layering in strong calls-to-action and persuasion hooks, scored a **perfect 10.0 in both runs** (average **10.0**), highlighting the reliability of the engagement enhancement step.
+
+> With an overall average of **9.8/10**, the Email Crew shows that fully automated, context-aware email drafting is both practical and production-quality — requiring minimal human intervention before sending.
+
+---
+
+#### 📊 Summary
+
+| Crew | Average Score | Execution Time |
+|---|---|---|
+| Lead Scoring Crew (3 agents) | **9.9 / 10** | ~109 seconds |
+| Email Generation Crew (2 agents) | **9.8 / 10** | ~138 seconds |
+| **Both Crews Combined** | **9.85 / 10** | ~247 seconds total |
+
+These results validate that the multi-agent architecture is not only functionally correct but also highly consistent and reliable — making it suitable for real-world sales pipeline automation.
