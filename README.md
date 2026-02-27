@@ -18,15 +18,44 @@ The system automates lead collection, scoring, and personalized email generation
 
 ---
 
-## **Architecture Overview**
+## **Architecture**
 
-- **Frontend:** Streamlit app for user interaction and dashboarding.
-- **Backend:** Supabase (PostgreSQL) database for persistent storage.
-- **Multi-Agent Orchestration:** CrewAI framework manages specialized agent teams and tasks.
-- **LLM Integration:** Sambanova Meta-Llama 3.3-70B-Instruct used for all agent reasoning, with API key-based security.
-- **Config Files:** Agents and tasks are defined in YAML files for modularity.
+```mermaid
+graph LR
+    %% Input
+    subgraph Input [1. Lead Management — Streamlit UI]
+        Form["📋 Add Lead Form<br>(name, title, company, email)"] --> DB[("🗄️ Supabase<br>PostgreSQL")]
+        DB --> Dashboard["📊 Leads Dashboard<br>(view · edit · delete)"]
+    end
 
----
+    %% Lead Scoring
+    subgraph LeadCrew [2. Lead Scoring Crew — CrewAI - 3 Agents]
+        Dashboard -->|Process Leads| Agent1["🔎 Lead Data Agent<br>(web search + enrichment)"]
+        Agent1 --> Agent2["🌍 Cultural Fit Agent<br>(company research)"]
+        Agent2 --> Agent3["🏆 Scoring & Validation Agent<br>(unified score 0–100)"]
+        Agent3 --> Score["Lead Score + Breakdown"]
+    end
+
+    %% Email Crew
+    subgraph EmailCrew [3. Email Generation Crew — CrewAI - 2 Agents]
+        Score -->|score above threshold| Email1["✍️ Email Content Specialist<br>(personalised draft)"]
+        Email1 --> Email2["🎯 Engagement Strategist<br>(CTAs + engagement hooks)"]
+        Email2 --> Draft["📧 Final Email Draft"]
+    end
+
+    %% LLM + Config
+    subgraph Infra [4. Infrastructure]
+        YAML["📄 YAML Config<br>(agents · tasks · prompts)"] --> Agent1 & Email1
+        LLM["☁️ SambaNova<br>Meta-Llama-3.3-70B"] --> Agent1 & Agent2 & Agent3 & Email1 & Email2
+        Draft --> DB
+    end
+
+    style Input fill:#e1f5fe,stroke:#01579b
+    style LeadCrew fill:#fff3e0,stroke:#e65100
+    style EmailCrew fill:#e8f5e9,stroke:#1b5e20
+    style Infra fill:#f3e5f5,stroke:#6a1b9a
+```
+
 
 ## **Project Structure**
 

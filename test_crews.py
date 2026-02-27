@@ -17,29 +17,29 @@ load_dotenv(dotenv_path='.env')
 class LeadPersonalInfo(BaseModel):
     name: str
     job_title: str
-    role_relevance: int
+    role_relevance: float
     professional_background: Optional[str] = None
-    years_experience: Optional[int] = None
+    years_experience: Optional[float] = None
     linkedin_url: Optional[str] = None
     location: Optional[str] = None
 
 class CompanyInfo(BaseModel):
     company_name: str
     industry: str
-    company_size: int
+    company_size: float
     revenue: Optional[float] = None
-    market_presence: int
+    market_presence: float
     company_location: Optional[str] = None
     founding_year: Optional[int] = None
     website: Optional[str] = None
 
 class LeadScore(BaseModel):
-    score: int
+    score: float
     scoring_criteria: List[str]
     validation_notes: Optional[str] = None
-    demographic_score: int
-    firmographic_score: int
-    behavioral_score: int
+    demographic_score: float
+    firmographic_score: float
+    behavioral_score: float
 
 class LeadScoringResult(BaseModel):
     personal_info: LeadPersonalInfo
@@ -237,8 +237,28 @@ if __name__ == "__main__":
     print(f"  LLM4 (Engagement):     {llm4.model}")
     print("=" * 60)
     
-    print("\n=== Testing Lead Scoring Crew ===")
-    lead_scoring_crew.test(n_iterations=2, eval_llm=llm1, inputs=lead_scoring_inputs)
+    # --- Step 1: Run lead crew to get actual output for piping ---
+    print("\n=== Running Lead Scoring Crew (kickoff) ===")
+    lead_result = lead_scoring_crew.kickoff(inputs=lead_scoring_inputs)
+    lead_output = lead_result.pydantic
+    print(lead_output)
 
-    print("\n=== Testing Email Writing Crew ===")
-    email_writing_crew.test(n_iterations=2, eval_llm=llm1, inputs=email_crew_inputs)
+    # Build email crew inputs from lead crew output
+    email_crew_inputs = {
+        "personal_info": lead_output.personal_info.model_dump(),
+        "company_info": lead_output.company_info.model_dump(),
+        "lead_score": lead_output.lead_score.model_dump()
+    }
+
+    # --- Step 2: Run email crew with piped inputs ---
+    print("\n=== Running Email Writing Crew (kickoff) ===")
+    email_result = email_writing_crew.kickoff(inputs=email_crew_inputs)
+    email_output = email_result.pydantic
+    print(email_output)
+
+    # --- Step 3: Now run .test() for evaluation tables ---
+    print("\n=== Testing Lead Scoring Crew (eval table) ===")
+    lead_scoring_crew.test(n_iterations=2, eval_llm=llm4, inputs=lead_scoring_inputs)
+
+    print("\n=== Testing Email Writing Crew (eval table) ===")
+    email_writing_crew.test(n_iterations=2, eval_llm=llm4, inputs=email_crew_inputs)
