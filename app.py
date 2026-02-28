@@ -136,7 +136,7 @@ if not st.session_state.logged_in:
 
     with auth_col:
         if st.session_state.show_signup:
-            st.subheader("Signup")
+            st.markdown("<h3 style='text-align:center'>Signup</h3>", unsafe_allow_html=True)
             with st.form("signup_form"):
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
@@ -161,7 +161,7 @@ if not st.session_state.logged_in:
                 st.rerun()
 
         if st.session_state.show_login:
-            st.subheader("Login")
+            st.markdown("<h3 style='text-align:center'>Login</h3>", unsafe_allow_html=True)
             with st.form("login_form"):
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
