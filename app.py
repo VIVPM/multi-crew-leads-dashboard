@@ -126,52 +126,56 @@ def reset_lead_form_cache(lead: dict | None = None):
 # =============================================================================
 
 if not st.session_state.logged_in:
-    st.title("🎯 Sales Pipeline — Lead Scoring & Email Generation")
+    st.title("\U0001f3af Sales Pipeline \u2014 Lead Scoring & Email Generation")
 
-    if st.session_state.show_signup:
-        st.subheader("Signup")
-        with st.form("signup_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Signup"):
-                if username and password:
-                    existing = supabase.table("users").select("*").eq("username", username).execute()
-                    if existing.data:
-                        st.error("Username already exists.")
-                    else:
-                        supabase.table("users").insert(
-                            {"username": username, "password": hash_password(password)}
-                        ).execute()
-                        st.success("Signup successful. Please login.")
-                        st.session_state.show_signup = False
-                        st.session_state.show_login = True
-                        st.rerun()
-                else:
-                    st.error("Please fill in all fields.")
+    # Narrow centered column for auth forms
+    _, auth_col, _ = st.columns([1, 2, 1])
 
-    if st.session_state.show_login:
-        st.subheader("Login")
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if username and password:
-                    user = supabase.table("users").select("*").eq("username", username).execute()
-                    if user.data and hash_password(password) == user.data[0]["password"]:
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = user.data[0]["id"]
-                        st.session_state.show_login = False
-                        st.session_state.pop("leads", None)
-                        st.success("Login successful.")
-                        st.rerun()
+    with auth_col:
+        if st.session_state.show_signup:
+            st.subheader("Signup")
+            with st.form("signup_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                if st.form_submit_button("Signup", use_container_width=True):
+                    if username and password:
+                        existing = supabase.table("users").select("*").eq("username", username).execute()
+                        if existing.data:
+                            st.error("Username already exists.")
+                        else:
+                            supabase.table("users").insert(
+                                {"username": username, "password": hash_password(password)}
+                            ).execute()
+                            st.success("Signup successful. Please login.")
+                            st.session_state.show_signup = False
+                            st.session_state.show_login = True
+                            st.rerun()
                     else:
-                        st.error("Invalid username or password.")
-                else:
-                    st.error("Please fill in all fields.")
-        if st.button("Create new account"):
-            st.session_state.show_login = False
-            st.session_state.show_signup = True
-            st.rerun()
+                        st.error("Please fill in all fields.")
+
+        if st.session_state.show_login:
+            st.subheader("Login")
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                if st.form_submit_button("Login", use_container_width=True):
+                    if username and password:
+                        user = supabase.table("users").select("*").eq("username", username).execute()
+                        if user.data and hash_password(password) == user.data[0]["password"]:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user.data[0]["id"]
+                            st.session_state.show_login = False
+                            st.session_state.pop("leads", None)
+                            st.success("Login successful.")
+                            st.rerun()
+                        else:
+                            st.error("Invalid username or password.")
+                    else:
+                        st.error("Please fill in all fields.")
+            if st.button("Create new account", use_container_width=True):
+                st.session_state.show_login = False
+                st.session_state.show_signup = True
+                st.rerun()
 
     st.stop()
 
