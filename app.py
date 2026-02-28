@@ -126,7 +126,10 @@ def reset_lead_form_cache(lead: dict | None = None):
 # =============================================================================
 
 if not st.session_state.logged_in:
-    st.title("\U0001f3af Sales Pipeline \u2014 Lead Scoring & Email Generation")
+    st.markdown(
+        "<h1 style='text-align:center'>🎯 Sales Pipeline — Lead Scoring & Email Generation</h1>",
+        unsafe_allow_html=True,
+    )
 
     # Narrow centered column for auth forms
     _, auth_col, _ = st.columns([1, 2, 1])
@@ -152,6 +155,10 @@ if not st.session_state.logged_in:
                             st.rerun()
                     else:
                         st.error("Please fill in all fields.")
+            if st.button("Back to Login", use_container_width=True):
+                st.session_state.show_signup = False
+                st.session_state.show_login = True
+                st.rerun()
 
         if st.session_state.show_login:
             st.subheader("Login")
