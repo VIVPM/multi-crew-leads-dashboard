@@ -10,7 +10,7 @@ The system automates lead collection, scoring, and personalized email generation
 
 - **Interactive Streamlit Dashboard:** Collect, view, edit, and manage potential leads with a user-friendly interface.
 - **CrewAI Multi-Agent Workflow:** Modular pipeline orchestrates specialized agents for data extraction, cultural fit analysis, validation, and scoring.
-- **RAG & Web Search Integration:** Agents enrich lead profiles using web search and retrieval tools.
+- **RAG & Web Search Integration:** Agents enrich lead profiles using **Tavily AI** web search and retrieval tools.
 - **Automated Email Drafting:** Generates highly personalized email drafts for qualified leads using contextual cues and business data.
 - **Real-time Database (Supabase):** All lead data is securely stored, retrieved, and updated in real time.
 - **Continuous Improvement:** Supports agent training/testing for iterative workflow optimization.
@@ -108,6 +108,7 @@ pip install -r requirements.txt
 - pydantic  
 - pandas  
 - crewai_tools
+- tavily-python
 
 ### 4. **Environment Variables**
 
@@ -116,6 +117,8 @@ Create a `.env` file in your project root and add your Supabase credentials:
 ```
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_api_key
+SAMBANOVA_API_KEY=your_sambanova_api_key
+TAVILY_API_KEY=your_tavily_api_key
 ```
 
 ### 5. **(Optional) Prepare Data**
@@ -143,7 +146,8 @@ The app will launch in your default browser.
 
 ## **How to Use**
 
-1. **Enter Sambanova API Key** in the sidebar to enable all agent workflows.
+1. **Enter Sambanova API Key** in the sidebar to power the LLM agents.
+2. **Enter Tavily API Key** in the sidebar to enable real-time web search enrichment.
 2. **Add New Lead** using the form (name, job title, company, email, use case).
 3. **View/Edit/Delete Leads** from the dashboard.
 4. **Process Leads:**  
@@ -206,7 +210,7 @@ deactivate
 
 ## **Troubleshooting**
 
-- **Missing API Key:** Enter the Sambanova API key in the sidebar to proceed.
+- **Missing API Key:** Enter the Sambanova and Tavily API keys in the sidebar to proceed.
 - **Supabase Errors:** Ensure your `.env` file is present and credentials are valid.
 - **YAML Errors:** Double-check YAML file indentation and format.
 

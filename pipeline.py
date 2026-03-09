@@ -14,7 +14,7 @@ from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai.flow.flow import listen, start
-from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+from crewai_tools import TavilySearchTool, ScrapeWebsiteTool
 
 
 # =============================================================================
@@ -92,7 +92,7 @@ def build_crews(sambana_key: str):
     """
     llm = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
 
-    search_tools = [SerperDevTool(), ScrapeWebsiteTool()]
+    search_tools = [TavilySearchTool(), ScrapeWebsiteTool()]
 
     # --- Lead scoring crew ---
     lead_data_agent = Agent(

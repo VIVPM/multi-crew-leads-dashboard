@@ -199,12 +199,12 @@ st.sidebar.header("🔑 API Keys")
 sambana_key = st.sidebar.text_input("Sambanova API Key", type="password")
 st.sidebar.markdown("[Get a Sambanova API key →](https://cloud.sambanova.ai/)")
 
-serper_key = st.sidebar.text_input("Serper API Key", type="password")
-st.sidebar.markdown("[Get a Serper API key →](https://serper.dev/)")
+tavily_key = st.sidebar.text_input("Tavily API Key", type="password")
+st.sidebar.markdown("[Get a Tavily API key →](https://app.tavily.com)")
 
-# Inject Serper key into env so SerperDevTool picks it up automatically
-if serper_key:
-    os.environ["SERPER_API_KEY"] = serper_key
+# Inject Tavily key into env so TavilySearchTool picks it up automatically
+if tavily_key:
+    os.environ["TAVILY_API_KEY"] = tavily_key
 
 st.sidebar.divider()
 
@@ -216,8 +216,8 @@ if st.sidebar.button("🚪 Log Out"):
     st.sidebar.success("Logout successful.")
     st.rerun()
 
-if not sambana_key or not serper_key:
-    missing = [k for k, v in [("Sambanova", sambana_key), ("Serper", serper_key)] if not v]
+if not sambana_key or not tavily_key:
+    missing = [k for k, v in [("Sambanova", sambana_key), ("Tavily", tavily_key)] if not v]
     st.sidebar.warning(f"Enter your {' & '.join(missing)} API key(s) above to use the crew.")
 
 # Always refresh leads on every rerun while logged in
@@ -302,8 +302,8 @@ if st.session_state.adding_lead:
 # =============================================================================
 
 if st.button("⚡ Process Leads (Score + Email)"):
-    if not sambana_key or not serper_key:
-        st.error("Please enter both your Sambanova and Serper API Keys in the sidebar first.")
+    if not sambana_key or not tavily_key:
+        st.error("Please enter both your Sambanova and Tavily API Keys in the sidebar first.")
     else:
         unprocessed = [l for l in st.session_state.leads if l.get("score") is None]
         if not unprocessed:

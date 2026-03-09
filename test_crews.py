@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from crewai import Agent, Task, Crew, LLM
-from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+from crewai_tools import TavilySearchTool, ScrapeWebsiteTool
 
 warnings.filterwarnings('ignore')
 load_dotenv(dotenv_path='.env')
@@ -103,19 +103,19 @@ llm4 = LLM(
 # =========================
 lead_data_agent = Agent(
     config=lead_agents_config['lead_data_agent'],
-    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
     llm=llm1 
 )
 
 cultural_fit_agent = Agent(
     config=lead_agents_config['cultural_fit_agent'],
-    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
     llm=llm2  
 )
 
 scoring_validation_agent = Agent(
     config=lead_agents_config['scoring_validation_agent'],
-    tools=[SerperDevTool(), ScrapeWebsiteTool()],
+    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
     llm=llm3  
 )
 
