@@ -6,10 +6,19 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 from crewai import Agent, Task, Crew, LLM
-from crewai_tools import TavilySearchTool, ScrapeWebsiteTool
+from crewai.tools import tool
+from crewai_tools import ScrapeWebsiteTool
+from tavily import TavilyClient
+
+@tool("Tavily Web Search")
+def tavily_search_tool(query: str) -> str:
+    """Search the web for information using Tavily."""
+    client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+    result = client.search(query, max_results=5)
+    return str(result)
 
 warnings.filterwarnings('ignore')
-load_dotenv(dotenv_path='.env')
+load_dotenv(dotenv_path='backend/.env')
 
 # =========================
 # Pydantic schemas
@@ -103,19 +112,19 @@ llm4 = LLM(
 # =========================
 lead_data_agent = Agent(
     config=lead_agents_config['lead_data_agent'],
-    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
+    tools=[tavily_search_tool, ScrapeWebsiteTool()],
     llm=llm1 
 )
 
 cultural_fit_agent = Agent(
     config=lead_agents_config['cultural_fit_agent'],
-    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
+    tools=[tavily_search_tool, ScrapeWebsiteTool()],
     llm=llm2  
 )
 
 scoring_validation_agent = Agent(
     config=lead_agents_config['scoring_validation_agent'],
-    tools=[TavilySearchTool(), ScrapeWebsiteTool()],
+    tools=[tavily_search_tool, ScrapeWebsiteTool()],
     llm=llm3  
 )
 
@@ -177,51 +186,51 @@ email_writing_crew = Crew(
 # =========================
 lead_scoring_inputs = {
     "lead_data": {
-        "name": "Jane Smith",
-        "job_title": "VP of Engineering",
-        "company": "TechCorp",
-        "email": "jane@techcorp.com",
-        "use_case": "AI automation",
-        "industry": "Technology",
-        "location": "San Francisco, USA",
+        "name": "Priya Nair",
+        "job_title": "CTO",
+        "company": "Freshworks",
+        "email": "priya.nair@freshworks.com",
+        "use_case": "Customer support automation",
+        "industry": "SaaS",
+        "location": "Chennai, India",
         "source": "Website"
     }
 }
 
-email_crew_inputs = {                                                                         
-        "personal_info": {                                                                    
-        "name": "Jane Smith",                                                                 
-        "job_title": "VP of Engineering",                                                     
-        "role_relevance": 90,                                                                 
-        "professional_background": None,                                                      
-        "years_experience": None,                                                             
-        "linkedin_url": None,                                                                 
-        "location": "San Francisco, USA"                                                      
-      },                                                                                      
-        "company_info": {                                                                     
-        "company_name": "TechCorp",                                                           
-        "industry": "Technology",                                                             
-        "company_size": 10000,                                                                
-        "revenue": None,                                                                      
-        "market_presence": 60,                                                                
-        "company_location": None,                                                             
-        "founding_year": None,                                                                
-        "website": None                                                                       
-      },                                                                                      
-        "lead_score": {                                                                       
-        "score": 87,                                                                          
-        "scoring_criteria": [                                                                 
-        "Role Relevance (Weighted 25%): VP of Engineering is highly relevant for AI automation platform. Score: 9/10 (90 points).",                                         
-        "Company Size (Weighted 25%): Inferred as 10,000+ employees (Enterprise) based on 'serving Fortune 500 companies worldwide' and CrewAI's ICP. Score: 100 points.",        
-        "Market Presence (Weighted 20%): Provided as 6/10 (60 points).",                      
-        "Cultural Fit (Weighted 30%): Assessed as 9/10 (90 points) due to strong alignment in innovation, collaboration, and strategic objectives."                                
-        ],                                                                                    
-        "validation_notes": "Company size for 'TechCorp' was inferred as 10,000+ employees to align with CrewAI's ICP of 'Enterprise companies looking into Agentic automation' and the context that TechCorp 'serves Fortune 500 companies worldwide'. Direct generic searches for 'TechCorp company size' were inconclusive for an enterprise-level company, showing smaller entities. All other scores were derived directly from provided data.",                                                                        
-        "demographic_score": 90,                                                              
-        "firmographic_score": 80,                                                             
-        "behavioral_score": 90                                                                
-      }                                                                                       
-  }       
+email_crew_inputs = {
+  "personal_info": {
+    "name": "Priya Nair",
+    "job_title": "CTO",
+    "role_relevance": 80,
+    "professional_background": None,
+    "years_experience": None,
+    "linkedin_url": None,
+    "location": "Chennai, India"
+  },
+  "company_info": {
+    "company_name": "Freshworks",
+    "industry": "SaaS (Software Development)",
+    "company_size": 4400,
+    "revenue": 838.8,
+    "market_presence": 80,
+    "company_location": None,
+    "founding_year": None,
+    "website": None
+  },
+  "lead_score": {
+    "score": 85,
+    "scoring_criteria": [
+      "Role Relevance (Weighted 25%): CTO role is highly relevant for AI automation initiatives. Score: 8/10 (80 points).",
+      "Company Size (Weighted 25%): Mid-to-large enterprise (~4400 employees), suitable for scalable AI solutions. Score: 85 points.",
+      "Market Presence (Weighted 20%): Strong SaaS presence with score 8/10 (80 points).",
+      "Cultural Fit (Weighted 30%): Good alignment with innovation and automation-driven strategies. Score: 85 points."
+    ],
+    "validation_notes": "The CTO attribution for Priya Nair at Freshworks may not match public records; scoring assumes provided data is correct. Freshworks aligns well with the ICP for AI automation platforms.",
+    "demographic_score": 20,
+    "firmographic_score": 42.5,
+    "behavioral_score": 22.5
+  }
+}       
 
 # =========================
 # Run Tests
@@ -238,27 +247,27 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # --- Step 1: Run lead crew to get actual output for piping ---
-    print("\n=== Running Lead Scoring Crew (kickoff) ===")
-    lead_result = lead_scoring_crew.kickoff(inputs=lead_scoring_inputs)
-    lead_output = lead_result.pydantic
-    print(lead_output)
+    # print("\n=== Running Lead Scoring Crew (kickoff) ===")
+    # lead_result = lead_scoring_crew.kickoff(inputs=lead_scoring_inputs)
+    # lead_output = lead_result.pydantic
+    # print(lead_output)
 
     # Build email crew inputs from lead crew output
-    email_crew_inputs = {
-        "personal_info": lead_output.personal_info.model_dump(),
-        "company_info": lead_output.company_info.model_dump(),
-        "lead_score": lead_output.lead_score.model_dump()
-    }
+    # email_crew_inputs = {
+    #     "personal_info": lead_output.personal_info.model_dump(),
+    #     "company_info": lead_output.company_info.model_dump(),
+    #     "lead_score": lead_output.lead_score.model_dump()
+    # }
 
-    # --- Step 2: Run email crew with piped inputs ---
+    # # --- Step 2: Run email crew with piped inputs ---
     print("\n=== Running Email Writing Crew (kickoff) ===")
     email_result = email_writing_crew.kickoff(inputs=email_crew_inputs)
     email_output = email_result.pydantic
     print(email_output)
 
     # --- Step 3: Now run .test() for evaluation tables ---
-    print("\n=== Testing Lead Scoring Crew (eval table) ===")
-    lead_scoring_crew.test(n_iterations=2, eval_llm=llm4, inputs=lead_scoring_inputs)
+    # print("\n=== Testing Lead Scoring Crew (eval table) ===")
+    # lead_scoring_crew.test(n_iterations=3, eval_llm=llm4, inputs=lead_scoring_inputs)
 
     print("\n=== Testing Email Writing Crew (eval table) ===")
-    email_writing_crew.test(n_iterations=2, eval_llm=llm4, inputs=email_crew_inputs)
+    email_writing_crew.test(n_iterations=3, eval_llm=llm4, inputs=email_crew_inputs)

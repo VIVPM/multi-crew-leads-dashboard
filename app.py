@@ -203,8 +203,8 @@ st.title("🎯 Sales Pipeline — Lead Scoring & Email Generation")
 # --- Sidebar ---
 st.sidebar.header("🔑 API Keys")
 
-sambana_key = st.sidebar.text_input("Sambanova API Key", type="password")
-st.sidebar.markdown("[Get a Sambanova API key →](https://cloud.sambanova.ai/)")
+gemini_key = st.sidebar.text_input("Gemini API Key", type="password")
+st.sidebar.markdown("[Get a Gemini API key →](https://aistudio.google.com/apikey)")
 
 tavily_key = st.sidebar.text_input("Tavily API Key", type="password")
 st.sidebar.markdown("[Get a Tavily API key →](https://app.tavily.com)")
@@ -219,8 +219,8 @@ if st.sidebar.button("🚪 Log Out"):
     st.sidebar.success("Logout successful.")
     st.rerun()
 
-if not sambana_key or not tavily_key:
-    missing = [k for k, v in [("Sambanova", sambana_key), ("Tavily", tavily_key)] if not v]
+if not gemini_key or not tavily_key:
+    missing = [k for k, v in [("Gemini", gemini_key), ("Tavily", tavily_key)] if not v]
     st.sidebar.warning(f"Enter your {' & '.join(missing)} API key(s) above to use the crew.")
 
 refresh_leads()
@@ -312,8 +312,8 @@ if st.session_state.adding_lead:
 # =============================================================================
 
 if st.button("⚡ Process Leads (Score + Email)"):
-    if not sambana_key or not tavily_key:
-        st.error("Please enter both your Sambanova and Tavily API Keys in the sidebar first.")
+    if not gemini_key or not tavily_key:
+        st.error("Please enter both your Gemini and Tavily API Keys in the sidebar first.")
     else:
         unprocessed = [l for l in st.session_state.leads if l.get("score") is None]
         if not unprocessed:
@@ -323,7 +323,7 @@ if st.button("⚡ Process Leads (Score + Email)"):
                 try:
                     result = api("POST", "/leads/process", json={
                         "leads": unprocessed,
-                        "sambanova_api_key": sambana_key,
+                        "gemini_api_key": gemini_key,
                         "tavily_api_key": tavily_key,
                     })
                     refresh_leads()

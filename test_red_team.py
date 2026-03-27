@@ -15,10 +15,11 @@ import sys
 import json
 import warnings
 import asyncio
+from datetime import datetime
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore")
-load_dotenv(dotenv_path=".env")
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE_DIR, 'backend'))
@@ -145,7 +146,7 @@ def analyze_result(test_name, score_obj):
         return {"test": test_name, "pass": False, "error": str(e)}
 
 
-async def run_red_team(sambana_key: str):
+async def run_red_team(gemini_key: str):
     """Run all red team test cases and report results."""
     print("=" * 70)
     print("RED TEAMING — Adversarial Test Suite")
@@ -157,7 +158,7 @@ async def run_red_team(sambana_key: str):
         print(f"\n--- Running: {test_name} ---")
         try:
             inputs = [{"lead_data": lead_data}]
-            scores, emails = await process_leads(inputs, sambana_key, max_retries=1)
+            scores, emails = await process_leads(inputs, gemini_key, max_retries=1)
             result = analyze_result(test_name, scores[0])
             results.append(result)
 
@@ -174,6 +175,7 @@ async def run_red_team(sambana_key: str):
             else:
                 results.append({"test": test_name, "pass": False, "error": str(e)})
 
+
     # Summary
     print("\n" + "=" * 70)
     print("RED TEAM SUMMARY")
@@ -185,9 +187,24 @@ async def run_red_team(sambana_key: str):
         status = "PASS" if r.get("pass") else "FAIL"
         print(f"  [{status}] {r['test']}: {r.get('check', r.get('error', 'N/A'))}")
 
+    # Save to JSON
+    os.makedirs("red_team_results", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_path = os.path.join("red_team_results", f"run_{timestamp}.json")
+    report = {
+        "run_at": timestamp,
+        "passed": passed,
+        "total": total,
+        "pass_rate": f"{round(passed / total * 100)}%",
+        "results": results,
+    }
+    with open(output_path, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"\nResults saved → {output_path}")
+
     return results
 
 
 if __name__ == "__main__":
-    key = os.getenv("SAMBANOVA_API_KEY") or input("Enter your Sambanova API Key: ")
+    key = os.getenv("GEMINI_API_KEY") or input("Enter your Gemini API Key: ")
     asyncio.run(run_red_team(key))
