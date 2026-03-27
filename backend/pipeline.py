@@ -93,25 +93,25 @@ def _load_configs() -> Dict[str, dict]:
 _CONFIGS = _load_configs()
 
 # Cache crew instances per API key to avoid rebuilding every request
-_crew_cache: Dict[str, tuple] = {}  # keyed by sambana_key
+_crew_cache: Dict[str, tuple] = {}  # keyed by gemini_key
 
 
 # =============================================================================
 # Crew factory — accepts the Sambanova API key from the UI
 # =============================================================================
 
-def build_crews(sambana_key: str):
+def build_crews(gemini_key: str):
     """
     Build and return (lead_scoring_crew, email_writing_crew) using the
     Sambanova API key supplied by the caller (e.g., from st.sidebar).
     Caches crew instances per API key to avoid rebuilding every request.
     """
-    if sambana_key in _crew_cache:
+    if gemini_key in _crew_cache:
         logger.info("Using cached crews for API key")
-        return _crew_cache[sambana_key]
-    llm_70b = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
-    llm_8b = LLM(model="sambanova/Meta-Llama-3.1-8B-Instruct", api_key=sambana_key)
-    llm_maverick = LLM(model="sambanova/Llama-4-Maverick-17B-128E-Instruct", api_key=sambana_key)
+        return _crew_cache[gemini_key]
+    llm_70b = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
+    llm_8b = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
+    llm_maverick = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
 
     search_tools = [tavily_search_tool, ScrapeWebsiteTool()]
 
@@ -180,7 +180,7 @@ def build_crews(sambana_key: str):
     )
 
     logger.info("Built new crew instances (caching for future use)")
-    _crew_cache[sambana_key] = (lead_scoring_crew, email_writing_crew)
+    _crew_cache[gemini_key] = (lead_scoring_crew, email_writing_crew)
     return lead_scoring_crew, email_writing_crew
 
 
@@ -225,20 +225,20 @@ class SalesPipeline(Flow):
 # Public async entry-point (called by app.py)
 # =============================================================================
 
-async def process_leads(leads: list, sambana_key: str, max_retries: int = 3):
+async def process_leads(leads: list, gemini_key: str, max_retries: int = 3):
     """
     Score and email-draft all leads in `leads`.
 
     Args:
         leads: list of lead dicts (rows from Supabase), each wrapped as
                {"lead_data": <lead_dict>}
-        sambana_key: Sambanova API key from the Streamlit sidebar.
+        gemini_key: Sambanova API key from the Streamlit sidebar.
         max_retries: Number of retry attempts with exponential backoff.
 
     Returns:
         (scores, emails) — both are lists of CrewAI output objects.
     """
-    lead_scoring_crew, email_writing_crew = build_crews(sambana_key)
+    lead_scoring_crew, email_writing_crew = build_crews(gemini_key)
     flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
 
     for attempt in range(1, max_retries + 1):
