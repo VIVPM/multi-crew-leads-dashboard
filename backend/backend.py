@@ -54,7 +54,10 @@ app = FastAPI(title="Sales Pipeline Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://multi-crew-leads-dashboard-frontend.onrender.com",
+        "http://localhost:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

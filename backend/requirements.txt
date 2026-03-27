@@ -1,13 +1,10 @@
-crewai
+crewai[litellm]
 crewai-tools
 fastapi
 uvicorn[standard]
 tavily-python
-crewai[litellm]
-pyyaml 
+pyyaml
 python-dotenv
-streamlit
-pydantic 
+pydantic
 pandas
 supabase
-matplotlib
