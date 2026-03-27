@@ -109,7 +109,9 @@ def build_crews(sambana_key: str):
     if sambana_key in _crew_cache:
         logger.info("Using cached crews for API key")
         return _crew_cache[sambana_key]
-    llm = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
+    llm_70b = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
+    llm_8b = LLM(model="sambanova/Meta-Llama-3.1-8B-Instruct", api_key=sambana_key)
+    llm_maverick = LLM(model="sambanova/Llama-4-Maverick-17B-128E-Instruct", api_key=sambana_key)
 
     search_tools = [tavily_search_tool, ScrapeWebsiteTool()]
 
@@ -117,17 +119,17 @@ def build_crews(sambana_key: str):
     lead_data_agent = Agent(
         config=_CONFIGS["lead_agents"]["lead_data_agent"],
         tools=search_tools,
-        llm=llm,
+        llm=llm_70b,
     )
     cultural_fit_agent = Agent(
         config=_CONFIGS["lead_agents"]["cultural_fit_agent"],
         tools=search_tools,
-        llm=llm,
+        llm=llm_8b,
     )
     scoring_validation_agent = Agent(
         config=_CONFIGS["lead_agents"]["scoring_validation_agent"],
         tools=search_tools,
-        llm=llm,
+        llm=llm_70b,
     )
 
     lead_data_task = Task(
@@ -154,11 +156,11 @@ def build_crews(sambana_key: str):
     # --- Email writing crew ---
     email_content_specialist = Agent(
         config=_CONFIGS["email_agents"]["email_content_specialist"],
-        llm=llm,
+        llm=llm_maverick,
     )
     engagement_strategist = Agent(
         config=_CONFIGS["email_agents"]["engagement_strategist"],
-        llm=llm,
+        llm=llm_maverick,
     )
 
     email_drafting = Task(
