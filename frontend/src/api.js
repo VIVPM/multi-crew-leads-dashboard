@@ -1,7 +1,7 @@
 const BACKEND =
   import.meta.env.VITE_BACKEND_URL ||
-  "https://multi-crew-leads-dashboard.onrender.com" ||
-  "http://localhost:8000";
+  "https://multi-crew-leads-dashboard.onrender.com";
+//  || "http://localhost:8000";
 
 export async function api(method, path, body) {
   const opts = {
