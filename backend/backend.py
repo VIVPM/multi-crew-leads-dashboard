@@ -114,7 +114,7 @@ class LeadUpdate(BaseModel):
 
 class ProcessLeadsRequest(BaseModel):
     leads: List[dict]
-    sambanova_api_key: str
+    gemini_api_key: str
     tavily_api_key: str
 
 
@@ -189,13 +189,7 @@ async def process_leads_endpoint(req: ProcessLeadsRequest):
     os.environ["TAVILY_API_KEY"] = req.tavily_api_key
 
     raw_inputs = [{"lead_data": lead} for lead in req.leads]
-    try:
-        scores, emails = await asyncio.wait_for(
-            process_leads(raw_inputs, req.sambanova_api_key),
-            timeout=300,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="Processing timed out.")
+    scores, emails = await process_leads(raw_inputs, req.gemini_api_key)
 
     results = []
     for lead, score_obj, email_draft in zip(req.leads, scores, emails):

@@ -14,15 +14,15 @@ function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, expiresAt, sambanovaKey, tavilyKey } = JSON.parse(raw)
+    const { userId, username, expiresAt, geminiKey, tavilyKey } = JSON.parse(raw)
     if (Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, sambanovaKey: sambanovaKey || '', tavilyKey: tavilyKey || '' }
+    return { userId, username, geminiKey: geminiKey || '', tavilyKey: tavilyKey || '' }
   } catch { return null }
 }
 
-function saveSession(userId, username, sambanovaKey = '', tavilyKey = '') {
+function saveSession(userId, username, geminiKey = '', tavilyKey = '') {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId, username, sambanovaKey, tavilyKey, expiresAt: Date.now() + SESSION_TTL,
+    userId, username, geminiKey, tavilyKey, expiresAt: Date.now() + SESSION_TTL,
   }))
 }
 
@@ -36,7 +36,7 @@ export default function App() {
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
 
-  const [sambanovaKey, setSambanovaKey] = useState(saved?.sambanovaKey ?? '')
+  const [geminiKey, setGeminiKey] = useState(saved?.geminiKey ?? '')
   const [tavilyKey, setTavilyKey] = useState(saved?.tavilyKey ?? '')
 
   const [leads, setLeads] = useState([])
@@ -70,8 +70,8 @@ export default function App() {
 
   useEffect(() => {
     if (!loggedIn || !userId) return
-    saveSession(userId, username, sambanovaKey, tavilyKey)
-  }, [sambanovaKey, tavilyKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    saveSession(userId, username, geminiKey, tavilyKey)
+  }, [geminiKey, tavilyKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Leads ---
   const fetchLeads = useCallback(async (uid) => {
@@ -107,7 +107,7 @@ export default function App() {
     try {
       await api('POST', '/leads/process', {
         leads: [savedLead],
-        sambanova_api_key: sambanovaKey,
+        gemini_api_key: geminiKey,
         tavily_api_key: tavilyKey,
       })
     } catch (e) {
@@ -135,13 +135,13 @@ export default function App() {
 
   if (!loggedIn) return <Auth onLogin={handleLogin} />
 
-  const keysReady = !!(sambanovaKey && tavilyKey)
+  const keysReady = !!(geminiKey && tavilyKey)
 
   return (
     <div className="app-layout">
       <Sidebar
-        sambanovaKey={sambanovaKey}
-        setSambanovaKey={setSambanovaKey}
+        geminiKey={geminiKey}
+        setGeminiKey={setGeminiKey}
         tavilyKey={tavilyKey}
         setTavilyKey={setTavilyKey}
         onLogout={handleLogout}

@@ -1,6 +1,6 @@
-export default function Sidebar({ sambanovaKey, setSambanovaKey, tavilyKey, setTavilyKey, onLogout, username }) {
+export default function Sidebar({ geminiKey, setGeminiKey, tavilyKey, setTavilyKey, onLogout, username }) {
   const missing = [
-    !sambanovaKey && 'Sambanova',
+    !geminiKey && 'Gemini',
     !tavilyKey && 'Tavily',
   ].filter(Boolean)
 
@@ -18,19 +18,19 @@ export default function Sidebar({ sambanovaKey, setSambanovaKey, tavilyKey, setT
         <h3 className="sidebar-section-title">🔑 API Keys</h3>
 
         <div className="form-group">
-          <label>Sambanova API Key</label>
+          <label>Gemini API Key</label>
           <input
             type="password"
-            value={sambanovaKey}
-            onChange={e => setSambanovaKey(e.target.value)}
-            placeholder="sk-…"
+            value={geminiKey}
+            onChange={e => setGeminiKey(e.target.value)}
+            placeholder="AIza-…"
           />
           <a
-            href="https://cloud.sambanova.ai/"
+            href="https://aistudio.google.com/app/apikey"
             target="_blank"
             rel="noreferrer"
             className="sidebar-link"
-          >Get a Sambanova API key →</a>
+          >Get a Gemini API key →</a>
         </div>
 
         <div className="form-group">
