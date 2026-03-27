@@ -50,10 +50,10 @@ class LeadScoringResult(BaseModel):
 # YAML configs load
 # =========================
 files = {
-    'lead_agents': 'config/lead_qualification_agents.yaml',
-    'lead_tasks': 'config/lead_qualification_tasks.yaml',
-    'email_agents': 'config/email_engagement_agents.yaml',
-    'email_tasks': 'config/email_engagement_tasks.yaml'
+    'lead_agents': 'backend/config/lead_qualification_agents.yaml',
+    'lead_tasks': 'backend/config/lead_qualification_tasks.yaml',
+    'email_agents': 'backend/config/email_engagement_agents.yaml',
+    'email_tasks': 'backend/config/email_engagement_tasks.yaml'
 }
 configs: Dict[str, dict] = {}
 for k, path in files.items():

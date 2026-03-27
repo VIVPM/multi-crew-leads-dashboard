@@ -1,61 +1,28 @@
 import os
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler errors in Streamlit threads
 
-import asyncio
-import hashlib
+import re
+import logging
 import warnings
-import sys
 warnings.filterwarnings("ignore")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("app")
+
+import requests
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# Path setup — ensure pipeline.py is always importable
+# Backend URL
 # ---------------------------------------------------------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)
-
-# Change working directory so relative YAML paths in pipeline.py resolve correctly
-os.chdir(BASE_DIR)
-
-from pipeline import process_leads   # single import from the CrewAI side
-
-
-# =============================================================================
-# API key loading  (st.secrets on cloud, .env locally)
-# =============================================================================
-
-def load_api_keys():
-    # Only Supabase keys come from secrets; Sambanova + Serper are entered via sidebar
-    required_keys = ["SUPABASE_URL", "SUPABASE_KEY"]
-    try:
-        for key in required_keys:
-            if key in st.secrets:
-                os.environ[key] = st.secrets[key]
-        return
-    except Exception:
-        pass
-    try:
-        load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
-    except ImportError:
-        pass
-
-
-load_api_keys()
-
-# ---------------------------------------------------------------------------
-# Supabase client (loaded after env is ready)
-# ---------------------------------------------------------------------------
-from supabase import create_client
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 
 # =============================================================================
@@ -88,22 +55,66 @@ for _key, _default in [
 # Helpers
 # =============================================================================
 
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+def api(method: str, path: str, **kwargs):
+    """Call the FastAPI backend and return parsed JSON, or raise on error."""
+    try:
+        resp = requests.request(method, f"{BACKEND_URL}{path}", timeout=360, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Cannot reach the backend server. Make sure it is running.")
+    except requests.exceptions.HTTPError as e:
+        detail = e.response.json().get("detail", str(e)) if e.response else str(e)
+        raise RuntimeError(detail)
+
+
+def friendly_error(e: Exception) -> str:
+    msg = str(e).lower()
+    if "timeout" in msg or "timed out" in msg:
+        return "The request timed out. Please try again."
+    if "connection" in msg or "network" in msg or "backend" in msg:
+        return str(e)
+    if "401" in msg or "unauthorized" in msg or "invalid api" in msg:
+        return "Invalid API key. Please check your credentials in the sidebar."
+    if "429" in msg or "rate limit" in msg:
+        return "Rate limit exceeded. Please wait a moment and try again."
+    if "500" in msg or "internal server" in msg:
+        return "The server encountered an error. Please try again later."
+    return str(e)
+
+
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+MAX_FIELD_LENGTH = 255
+
+
+def validate_lead(name, job_title, company, email, use_case, industry, location):
+    errors = []
+    if not name or not name.strip():
+        errors.append("Name is required.")
+    if not company or not company.strip():
+        errors.append("Company is required.")
+    if not email or not email.strip():
+        errors.append("Email is required.")
+    elif not EMAIL_REGEX.match(email.strip()):
+        errors.append("Invalid email format.")
+    for field_name, value in [("Name", name), ("Job Title", job_title),
+                               ("Company", company), ("Email", email),
+                               ("Use Case", use_case), ("Industry", industry),
+                               ("Location", location)]:
+        if value and len(value) > MAX_FIELD_LENGTH:
+            errors.append(f"{field_name} must be under {MAX_FIELD_LENGTH} characters.")
+    return errors
 
 
 def refresh_leads():
     if not st.session_state.logged_in or not st.session_state.user_id:
         st.session_state.leads = []
         return
-    resp = (
-        supabase.table("leads")
-        .select("*")
-        .eq("user_id", st.session_state.user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    st.session_state.leads = resp.data or []
+    try:
+        st.session_state.leads = api("GET", f"/leads/{st.session_state.user_id}")
+    except Exception as e:
+        st.error(friendly_error(e))
+        st.session_state.leads = []
 
 
 def reset_lead_form_cache(lead: dict | None = None):
@@ -131,7 +142,6 @@ if not st.session_state.logged_in:
         unsafe_allow_html=True,
     )
 
-    # Narrow centered column for auth forms
     _, auth_col, _ = st.columns([1, 2, 1])
 
     with auth_col:
@@ -142,17 +152,14 @@ if not st.session_state.logged_in:
                 password = st.text_input("Password", type="password")
                 if st.form_submit_button("Signup", use_container_width=True):
                     if username and password:
-                        existing = supabase.table("users").select("*").eq("username", username).execute()
-                        if existing.data:
-                            st.error("Username already exists.")
-                        else:
-                            supabase.table("users").insert(
-                                {"username": username, "password": hash_password(password)}
-                            ).execute()
+                        try:
+                            api("POST", "/auth/signup", json={"username": username, "password": password})
                             st.success("Signup successful. Please login.")
                             st.session_state.show_signup = False
                             st.session_state.show_login = True
                             st.rerun()
+                        except Exception as e:
+                            st.error(friendly_error(e))
                     else:
                         st.error("Please fill in all fields.")
             if st.button("Back to Login", use_container_width=True):
@@ -167,16 +174,16 @@ if not st.session_state.logged_in:
                 password = st.text_input("Password", type="password")
                 if st.form_submit_button("Login", use_container_width=True):
                     if username and password:
-                        user = supabase.table("users").select("*").eq("username", username).execute()
-                        if user.data and hash_password(password) == user.data[0]["password"]:
+                        try:
+                            data = api("POST", "/auth/login", json={"username": username, "password": password})
                             st.session_state.logged_in = True
-                            st.session_state.user_id = user.data[0]["id"]
+                            st.session_state.user_id = data["user_id"]
                             st.session_state.show_login = False
                             st.session_state.pop("leads", None)
                             st.success("Login successful.")
                             st.rerun()
-                        else:
-                            st.error("Invalid username or password.")
+                        except Exception as e:
+                            st.error(friendly_error(e))
                     else:
                         st.error("Please fill in all fields.")
             if st.button("Create new account", use_container_width=True):
@@ -202,10 +209,6 @@ st.sidebar.markdown("[Get a Sambanova API key →](https://cloud.sambanova.ai/)"
 tavily_key = st.sidebar.text_input("Tavily API Key", type="password")
 st.sidebar.markdown("[Get a Tavily API key →](https://app.tavily.com)")
 
-# Inject Tavily key into env so TavilySearchTool picks it up automatically
-if tavily_key:
-    os.environ["TAVILY_API_KEY"] = tavily_key
-
 st.sidebar.divider()
 
 if st.sidebar.button("🚪 Log Out"):
@@ -220,7 +223,6 @@ if not sambana_key or not tavily_key:
     missing = [k for k, v in [("Sambanova", sambana_key), ("Tavily", tavily_key)] if not v]
     st.sidebar.warning(f"Enter your {' & '.join(missing)} API key(s) above to use the crew.")
 
-# Always refresh leads on every rerun while logged in
 refresh_leads()
 
 
@@ -276,25 +278,33 @@ if st.session_state.adding_lead:
         )
 
         if st.form_submit_button("💾 Save Lead"):
-            if st.session_state.editing_lead:
-                supabase.table("leads").update({
-                    "name": name, "job_title": job_title, "company": company,
-                    "email": email, "use_case": use_case, "industry": industry,
-                    "location": location, "source": source,
-                }).eq("id", st.session_state.editing_lead).execute()
-                st.success("Lead updated.")
-                st.session_state.editing_lead = None
+            validation_errors = validate_lead(name, job_title, company, email, use_case, industry, location)
+            if validation_errors:
+                for err in validation_errors:
+                    st.error(err)
             else:
-                supabase.table("leads").insert({
-                    "name": name, "job_title": job_title, "company": company,
-                    "email": email, "use_case": use_case, "industry": industry,
-                    "location": location, "source": source,
-                    "user_id": st.session_state.user_id,
-                }).execute()
-                st.success("Lead added.")
-            st.session_state.adding_lead = False
-            refresh_leads()
-            st.rerun()
+                try:
+                    if st.session_state.editing_lead:
+                        api("PUT", f"/leads/{st.session_state.editing_lead}", json={
+                            "name": name, "job_title": job_title, "company": company,
+                            "email": email, "use_case": use_case, "industry": industry,
+                            "location": location, "source": source,
+                        })
+                        st.success("Lead updated.")
+                        st.session_state.editing_lead = None
+                    else:
+                        api("POST", "/leads", json={
+                            "name": name, "job_title": job_title, "company": company,
+                            "email": email, "use_case": use_case, "industry": industry,
+                            "location": location, "source": source,
+                            "user_id": st.session_state.user_id,
+                        })
+                        st.success("Lead added.")
+                    st.session_state.adding_lead = False
+                    refresh_leads()
+                    st.rerun()
+                except Exception as e:
+                    st.error(friendly_error(e))
 
 
 # =============================================================================
@@ -311,22 +321,17 @@ if st.button("⚡ Process Leads (Score + Email)"):
         else:
             with st.spinner(f"Processing {len(unprocessed)} lead(s) with AI crew…"):
                 try:
-                    raw_inputs = [{"lead_data": lead} for lead in unprocessed]
-                    scores, emails = asyncio.run(process_leads(raw_inputs, sambana_key))
-
-                    for lead, score_obj, email_draft in zip(unprocessed, scores, emails):
-                        pyd = score_obj.pydantic
-                        supabase.table("leads").update({
-                            "score":          pyd.lead_score.score,
-                            "scoring_result": pyd.dict(),
-                            "email_draft":    email_draft.raw,
-                        }).eq("id", lead["id"]).execute()
-
+                    result = api("POST", "/leads/process", json={
+                        "leads": unprocessed,
+                        "sambanova_api_key": sambana_key,
+                        "tavily_api_key": tavily_key,
+                    })
                     refresh_leads()
-                    st.success("✅ Leads processed and scores saved!")
+                    st.success(f"✅ {result['processed']} lead(s) processed and scores saved!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Processing error: {e}")
+                    logger.error("Lead processing failed: %s", e, exc_info=True)
+                    st.error(friendly_error(e))
 
 
 # =============================================================================
@@ -371,7 +376,6 @@ if st.session_state.leads:
         )
         country_counts = df["country"].value_counts()
 
-    # Row 1
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         st.markdown("#### Leads by Industry")
@@ -401,7 +405,6 @@ if st.session_state.leads:
         else:
             st.info("No score data yet")
 
-    # Row 2
     d1, d2, d3 = st.columns(3, gap="small")
     with d1:
         st.markdown("#### Leads Over Time")
@@ -438,7 +441,6 @@ st.subheader("📋 Leads Data")
 
 
 def _flatten_to_text(obj) -> str:
-    """Recursively flatten a dict/list/primitive to a single lowercase string."""
     try:
         if isinstance(obj, dict):
             return " ".join(_flatten_to_text(v) for v in obj.values()).lower()
@@ -462,10 +464,49 @@ if search_q:
 else:
     filtered_leads = leads_src
 
-st.caption(f"Showing {len(filtered_leads)} of {len(leads_src)} lead(s)")
-
 if filtered_leads:
-    for lead in filtered_leads:
+    export_df = pd.DataFrame([{
+        "Name": l.get("name"), "Job Title": l.get("job_title"),
+        "Company": l.get("company"), "Email": l.get("email"),
+        "Use Case": l.get("use_case"), "Industry": l.get("industry"),
+        "Location": l.get("location"), "Source": l.get("source"),
+        "Score": l.get("score"),
+    } for l in filtered_leads])
+    st.download_button(
+        "📥 Export CSV", export_df.to_csv(index=False),
+        file_name="leads_export.csv", mime="text/csv",
+    )
+
+PAGE_SIZES = [10, 25, 50, 100]
+page_size = st.selectbox("Leads per page", PAGE_SIZES, index=0)
+
+if "leads_page" not in st.session_state:
+    st.session_state.leads_page = 0
+
+total_leads = len(filtered_leads)
+total_pages = max(1, (total_leads + page_size - 1) // page_size)
+
+if st.session_state.leads_page >= total_pages:
+    st.session_state.leads_page = total_pages - 1
+
+start_idx = st.session_state.leads_page * page_size
+end_idx = min(start_idx + page_size, total_leads)
+page_leads = filtered_leads[start_idx:end_idx]
+
+st.caption(f"Showing {start_idx + 1}–{end_idx} of {total_leads} lead(s)  |  Page {st.session_state.leads_page + 1} of {total_pages}")
+
+prev_col, next_col, _ = st.columns([1, 1, 6])
+with prev_col:
+    if st.button("⬅️ Previous", disabled=st.session_state.leads_page == 0):
+        st.session_state.leads_page -= 1
+        st.rerun()
+with next_col:
+    if st.button("Next ➡️", disabled=st.session_state.leads_page >= total_pages - 1):
+        st.session_state.leads_page += 1
+        st.rerun()
+
+if page_leads:
+    for lead in page_leads:
         title = f"{lead.get('name', '')} – {lead.get('company', '')}"
         if lead.get("score") is not None:
             title += f"  •  Score: {lead['score']}"
@@ -501,13 +542,17 @@ if filtered_leads:
                     st.caption("✅ Processed")
             with btn2:
                 if st.button("🗑️ Delete", key=f"del_{lead['id']}"):
-                    supabase.table("leads").delete().eq("id", lead["id"]).execute()
-                    refresh_leads()
-                    st.success("Lead deleted.")
-                    st.rerun()
+                    try:
+                        api("DELETE", f"/leads/{lead['id']}")
+                        refresh_leads()
+                        st.success("Lead deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(friendly_error(e))
             with btn3:
                 if st.button("🔄 Refresh", key=f"refresh_{lead['id']}"):
                     refresh_leads()
                     st.rerun()
-else:
+
+if not filtered_leads:
     st.info("No leads match your search." if search_q else "No leads yet.")
