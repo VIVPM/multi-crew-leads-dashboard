@@ -247,10 +247,10 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # --- Step 1: Run lead crew to get actual output for piping ---
-    # print("\n=== Running Lead Scoring Crew (kickoff) ===")
-    # lead_result = lead_scoring_crew.kickoff(inputs=lead_scoring_inputs)
-    # lead_output = lead_result.pydantic
-    # print(lead_output)
+    print("\n=== Running Lead Scoring Crew (kickoff) ===")
+    lead_result = lead_scoring_crew.kickoff(inputs=lead_scoring_inputs)
+    lead_output = lead_result.pydantic
+    print(lead_output)
 
     # Build email crew inputs from lead crew output
     # email_crew_inputs = {
@@ -266,8 +266,8 @@ if __name__ == "__main__":
     print(email_output)
 
     # --- Step 3: Now run .test() for evaluation tables ---
-    # print("\n=== Testing Lead Scoring Crew (eval table) ===")
-    # lead_scoring_crew.test(n_iterations=3, eval_llm=llm4, inputs=lead_scoring_inputs)
+    print("\n=== Testing Lead Scoring Crew (eval table) ===")
+    lead_scoring_crew.test(n_iterations=3, eval_llm=llm4, inputs=lead_scoring_inputs)
 
     print("\n=== Testing Email Writing Crew (eval table) ===")
     email_writing_crew.test(n_iterations=3, eval_llm=llm4, inputs=email_crew_inputs)
