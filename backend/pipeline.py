@@ -8,13 +8,25 @@ import os
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler errors in threads
 
 import asyncio
+import logging
 import yaml
 from typing import Optional, List, Dict
+
+logger = logging.getLogger("pipeline")
 
 from pydantic import BaseModel, Field
 from crewai import Agent, Task, Crew, LLM, Flow
 from crewai.flow.flow import listen, start
-from crewai_tools import TavilySearchTool, ScrapeWebsiteTool
+from crewai_tools import ScrapeWebsiteTool
+from crewai.tools import tool
+from tavily import TavilyClient
+
+@tool("Tavily Web Search")
+def tavily_search_tool(query: str) -> str:
+    """Search the web for information using Tavily."""
+    client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+    result = client.search(query, max_results=5)
+    return str(result)
 
 
 # =============================================================================
@@ -80,6 +92,9 @@ def _load_configs() -> Dict[str, dict]:
 # Load once at module level (no Streamlit dependency)
 _CONFIGS = _load_configs()
 
+# Cache crew instances per API key to avoid rebuilding every request
+_crew_cache: Dict[str, tuple] = {}  # keyed by sambana_key
+
 
 # =============================================================================
 # Crew factory — accepts the Sambanova API key from the UI
@@ -89,10 +104,14 @@ def build_crews(sambana_key: str):
     """
     Build and return (lead_scoring_crew, email_writing_crew) using the
     Sambanova API key supplied by the caller (e.g., from st.sidebar).
+    Caches crew instances per API key to avoid rebuilding every request.
     """
+    if sambana_key in _crew_cache:
+        logger.info("Using cached crews for API key")
+        return _crew_cache[sambana_key]
     llm = LLM(model="sambanova/Meta-Llama-3.3-70B-Instruct", api_key=sambana_key)
 
-    search_tools = [TavilySearchTool(), ScrapeWebsiteTool()]
+    search_tools = [tavily_search_tool, ScrapeWebsiteTool()]
 
     # --- Lead scoring crew ---
     lead_data_agent = Agent(
@@ -158,6 +177,8 @@ def build_crews(sambana_key: str):
         verbose=True,
     )
 
+    logger.info("Built new crew instances (caching for future use)")
+    _crew_cache[sambana_key] = (lead_scoring_crew, email_writing_crew)
     return lead_scoring_crew, email_writing_crew
 
 
@@ -202,7 +223,7 @@ class SalesPipeline(Flow):
 # Public async entry-point (called by app.py)
 # =============================================================================
 
-async def process_leads(leads: list, sambana_key: str):
+async def process_leads(leads: list, sambana_key: str, max_retries: int = 3):
     """
     Score and email-draft all leads in `leads`.
 
@@ -210,11 +231,25 @@ async def process_leads(leads: list, sambana_key: str):
         leads: list of lead dicts (rows from Supabase), each wrapped as
                {"lead_data": <lead_dict>}
         sambana_key: Sambanova API key from the Streamlit sidebar.
+        max_retries: Number of retry attempts with exponential backoff.
 
     Returns:
         (scores, emails) — both are lists of CrewAI output objects.
     """
     lead_scoring_crew, email_writing_crew = build_crews(sambana_key)
     flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
-    await flow.kickoff_async()
-    return flow.state["scores"], flow.state["emails"]
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info("Pipeline attempt %d/%d for %d lead(s)", attempt, max_retries, len(leads))
+            await flow.kickoff_async()
+            logger.info("Pipeline completed successfully on attempt %d", attempt)
+            return flow.state["scores"], flow.state["emails"]
+        except Exception as e:
+            logger.warning("Pipeline attempt %d failed: %s", attempt, e)
+            if attempt == max_retries:
+                logger.error("All %d retry attempts exhausted", max_retries)
+                raise
+            wait = 2 ** attempt
+            logger.info("Retrying in %ds...", wait)
+            await asyncio.sleep(wait)

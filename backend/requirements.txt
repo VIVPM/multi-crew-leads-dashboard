@@ -1,13 +1,13 @@
 crewai
 crewai-tools
+fastapi
+uvicorn[standard]
+tavily-python
 crewai[litellm]
 pyyaml 
 python-dotenv
 streamlit
 pydantic 
-pandas 
-pysqlite3-binary
+pandas
 supabase
 matplotlib
-langfuse
-openlit
