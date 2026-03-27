@@ -8,3 +8,4 @@ python-dotenv
 pydantic
 pandas
 supabase
+google-genai
