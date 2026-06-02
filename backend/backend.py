@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import logging
 import sys
+import time
 from typing import Optional, List, Any
 
 from fastapi import FastAPI, HTTPException
@@ -194,7 +195,9 @@ async def process_leads_endpoint(req: ProcessLeadsRequest):
     os.environ["TAVILY_API_KEY"] = req.tavily_api_key
 
     raw_inputs = [{"lead_data": lead} for lead in req.leads]
+    start_time = time.time()
     scores, emails = await process_leads(raw_inputs, req.gemini_api_key)
+    elapsed = round(time.time() - start_time, 1)
 
     results = []
     for lead, score_obj, email_draft in zip(req.leads, scores, emails):
@@ -205,7 +208,73 @@ async def process_leads_endpoint(req: ProcessLeadsRequest):
             "email_draft":    email_draft.raw,
         }
         supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
+
+        # Collect token usage from both crews
+        score_usage = score_obj.token_usage
+        email_usage = email_draft.token_usage
+        score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
+        email_tokens  = getattr(email_usage, "total_tokens",      0) or 0
+        score_prompt  = getattr(score_usage, "prompt_tokens",     0) or 0
+        score_compl   = getattr(score_usage, "completion_tokens", 0) or 0
+        email_prompt  = getattr(email_usage, "prompt_tokens",     0) or 0
+        email_compl   = getattr(email_usage, "completion_tokens", 0) or 0
+
+        # Build per-agent list, distributing tokens evenly within each crew
+        score_tasks = score_obj.tasks_output or []
+        email_tasks = email_draft.tasks_output or []
+        per_score = score_tokens // len(score_tasks) if score_tasks else 0
+        per_email = email_tokens // len(email_tasks) if email_tasks else 0
+
+        agents_data = []
+        for t in score_tasks:
+            agents_data.append({
+                "agent": t.agent, "status": "Success",
+                "tokens": per_score,
+                "cost": round(per_score * 0.30 / 1_000_000, 6),
+            })
+        for t in email_tasks:
+            agents_data.append({
+                "agent": t.agent, "status": "Success",
+                "tokens": per_email,
+                "cost": round(per_email * 0.30 / 1_000_000, 6),
+            })
+
+        total_cost = round(
+            (score_prompt + email_prompt) * 0.15 / 1_000_000
+            + (score_compl + email_compl) * 0.60 / 1_000_000,
+            6,
+        )
+        analysis_record = {
+            "lead_id":          lead["id"],
+            "duration_seconds": elapsed,
+            "total_tokens":     score_tokens + email_tokens,
+            "total_cost":       total_cost,
+            "success_rate":     100.0,
+            "agents_executed":  len(agents_data),
+            "agents_data":      agents_data,
+        }
+        try:
+            existing = supabase.table("analysis_runs").select("id").eq("lead_id", lead["id"]).execute()
+            if existing.data:
+                supabase.table("analysis_runs").update(analysis_record).eq("lead_id", lead["id"]).execute()
+            else:
+                supabase.table("analysis_runs").insert(analysis_record).execute()
+        except Exception as exc:
+            logger.warning("Failed to save analysis for lead %s: %s", lead.get("name"), exc)
+
         results.append({"lead_id": lead["id"], **update_payload})
         logger.info("Processed lead %s — score %s", lead.get("name"), pyd.lead_score.score)
 
     return {"processed": len(results), "results": results}
+
+
+@app.get("/analysis/{lead_id}")
+def get_analysis(lead_id: str):
+    try:
+        resp = supabase.table("analysis_runs").select("*").eq("lead_id", lead_id).execute()
+    except Exception as exc:
+        logger.error("Failed to fetch analysis for lead %s: %s", lead_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch analysis data.")
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="No analysis data found.")
+    return resp.data[0]
