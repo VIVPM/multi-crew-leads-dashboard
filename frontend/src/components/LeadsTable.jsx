@@ -84,6 +84,7 @@ function AnalysisModal({ leadId, onClose }) {
                   <tr>
                     <th>Agent</th>
                     <th>Status</th>
+                    <th>Time</th>
                     <th>Tokens</th>
                     <th>Cost</th>
                   </tr>
@@ -93,6 +94,7 @@ function AnalysisModal({ leadId, onClose }) {
                     <tr key={i}>
                       <td>{agent.agent}</td>
                       <td><span className="badge badge-green">✅ {agent.status}</span></td>
+                      <td>{agent.time_seconds != null ? `${agent.time_seconds}s` : '—'}</td>
                       <td>{agent.tokens != null ? agent.tokens.toLocaleString() : '—'}</td>
                       <td>{agent.cost != null ? `$${agent.cost.toFixed(6)}` : '—'}</td>
                     </tr>

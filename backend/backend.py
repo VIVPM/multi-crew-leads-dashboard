@@ -190,13 +190,13 @@ def delete_lead(lead_id: str):
 
 @app.post("/leads/process")
 async def process_leads_endpoint(req: ProcessLeadsRequest):
-    from pipeline import process_leads
+    from pipeline import process_leads, build_crews
 
     os.environ["TAVILY_API_KEY"] = req.tavily_api_key
 
     raw_inputs = [{"lead_data": lead} for lead in req.leads]
     start_time = time.time()
-    scores, emails = await process_leads(raw_inputs, req.gemini_api_key)
+    scores, emails, agent_times = await process_leads(raw_inputs, req.gemini_api_key)
     elapsed = round(time.time() - start_time, 1)
 
     results = []
@@ -227,17 +227,43 @@ async def process_leads_endpoint(req: ProcessLeadsRequest):
 
         agents_data = []
         for t in score_tasks:
+            name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
             agents_data.append({
-                "agent": t.agent, "status": "Success",
+                "agent": name, "status": "Success",
                 "tokens": per_score,
                 "cost": round(per_score * 0.30 / 1_000_000, 6),
+                "time_seconds": agent_times.get(name),
             })
         for t in email_tasks:
+            name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
             agents_data.append({
-                "agent": t.agent, "status": "Success",
+                "agent": name, "status": "Success",
                 "tokens": per_email,
                 "cost": round(per_email * 0.30 / 1_000_000, 6),
+                "time_seconds": agent_times.get(name),
             })
+
+        # Fallback: tasks_output was empty — read agent roles directly from cached crews
+        if not agents_data:
+            lead_crew, email_crew = build_crews(req.gemini_api_key)
+            n_lead  = len(lead_crew.agents)  or 1
+            n_email = len(email_crew.agents) or 1
+            per_score_fb = score_tokens // n_lead
+            per_email_fb = email_tokens // n_email
+            for a in lead_crew.agents:
+                agents_data.append({
+                    "agent": a.role, "status": "Success",
+                    "tokens": per_score_fb,
+                    "cost": round(per_score_fb * 0.30 / 1_000_000, 6),
+                    "time_seconds": agent_times.get(a.role),
+                })
+            for a in email_crew.agents:
+                agents_data.append({
+                    "agent": a.role, "status": "Success",
+                    "tokens": per_email_fb,
+                    "cost": round(per_email_fb * 0.30 / 1_000_000, 6),
+                    "time_seconds": agent_times.get(a.role),
+                })
 
         total_cost = round(
             (score_prompt + email_prompt) * 0.15 / 1_000_000

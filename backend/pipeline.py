@@ -9,6 +9,7 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler error
 
 import asyncio
 import logging
+import time
 import yaml
 from typing import Optional, List, Dict
 
@@ -229,24 +230,45 @@ async def process_leads(leads: list, gemini_key: str, max_retries: int = 3):
     """
     Score and email-draft all leads in `leads`.
 
-    Args:
-        leads: list of lead dicts (rows from Supabase), each wrapped as
-               {"lead_data": <lead_dict>}
-        gemini_key: Sambanova API key from the Streamlit sidebar.
-        max_retries: Number of retry attempts with exponential backoff.
-
     Returns:
-        (scores, emails) — both are lists of CrewAI output objects.
+        (scores, emails, agent_times) — scores and emails are lists of CrewAI
+        output objects; agent_times maps agent role -> seconds taken.
     """
     lead_scoring_crew, email_writing_crew = build_crews(gemini_key)
+
+    task_timing: List[Dict] = []
+    start_ref: List[float] = [0.0]
+
+    def _timing_cb(output):
+        agent_name = (
+            output.agent if isinstance(output.agent, str)
+            else getattr(output.agent, "role", str(output.agent))
+        )
+        task_timing.append({"agent": agent_name, "ts": time.time()})
+
+    try:
+        lead_scoring_crew.task_callback = _timing_cb
+        email_writing_crew.task_callback = _timing_cb
+    except Exception:
+        pass
+
     flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
 
     for attempt in range(1, max_retries + 1):
         try:
+            task_timing.clear()
+            start_ref[0] = time.time()
             logger.info("Pipeline attempt %d/%d for %d lead(s)", attempt, max_retries, len(leads))
             await flow.kickoff_async()
             logger.info("Pipeline completed successfully on attempt %d", attempt)
-            return flow.state["scores"], flow.state["emails"]
+
+            agent_times: Dict[str, float] = {}
+            prev = start_ref[0]
+            for entry in task_timing:
+                agent_times[entry["agent"]] = round(entry["ts"] - prev, 1)
+                prev = entry["ts"]
+
+            return flow.state["scores"], flow.state["emails"], agent_times
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
             if attempt == max_retries:
