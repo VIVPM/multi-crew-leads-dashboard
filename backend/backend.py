@@ -192,6 +192,9 @@ def delete_lead(lead_id: str):
 async def process_leads_endpoint(req: ProcessLeadsRequest):
     from pipeline import process_leads, build_crews
 
+    if len(req.leads) != 1:
+        raise HTTPException(status_code=400, detail="Only one lead can be processed at a time.")
+
     os.environ["TAVILY_API_KEY"] = req.tavily_api_key
 
     raw_inputs = [{"lead_data": lead} for lead in req.leads]
