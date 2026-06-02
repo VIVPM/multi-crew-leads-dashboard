@@ -107,15 +107,38 @@ function AnalysisModal({ leadId, onClose }) {
   )
 }
 
+function DeleteConfirmModal({ name, onConfirm, onCancel }) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-container modal-sm" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3 className="modal-title">Delete Lead</h3>
+          <button className="modal-close" onClick={onCancel}>×</button>
+        </div>
+        <div className="modal-body">
+          <p className="delete-confirm-msg">
+            Are you sure you want to delete <strong>{name}</strong>? This cannot be undone.
+          </p>
+          <div className="delete-confirm-actions">
+            <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
+            <button className="btn btn-danger-solid" onClick={onConfirm}>Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState(null)
   const [showAnalysis, setShowAnalysis] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
 
   async function handleDelete() {
-    if (!confirm(`Delete ${lead.name}?`)) return
+    setShowDeleteConfirm(false)
     setDeleting(true)
     try {
       await api('DELETE', `/leads/${lead.id}`)
@@ -178,7 +201,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
             ) : (
               <span className="badge badge-green">✅ Processed</span>
             )}
-            <button className="btn btn-sm btn-danger" onClick={handleDelete} disabled={deleting}>
+            <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
               {deleting ? 'Deleting…' : '🗑️ Delete'}
             </button>
             <button className="btn btn-sm btn-outline" onClick={onRefresh}>🔄 Refresh</button>
@@ -196,6 +219,13 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
 
       {showAnalysis && (
         <AnalysisModal leadId={lead.id} onClose={() => setShowAnalysis(false)} />
+      )}
+      {showDeleteConfirm && (
+        <DeleteConfirmModal
+          name={lead.name}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
       )}
     </div>
   )
