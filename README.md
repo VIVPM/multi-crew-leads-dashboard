@@ -226,7 +226,7 @@ The pipeline was formally evaluated using CrewAI's built-in evaluation framework
 
 #### 🔎 Lead Scoring Crew — Avg Score: **9.9 / 10** *(~109s execution)*
 
-![Lead Scoring Evaluation](Screenshot%202026-02-27%20153823.png)
+![Lead Scoring Evaluation](Screenshot%202026-03-27%20165553.png)
 
 The Lead Scoring Crew comprises three specialized agents working in sequence — data enrichment, cultural fit analysis, and final scoring/validation. Across both evaluation runs:
 
@@ -240,7 +240,7 @@ The Lead Scoring Crew comprises three specialized agents working in sequence —
 
 #### ✍️ Email Generation Crew — Avg Score: **9.8 / 10** *(~138s execution)*
 
-![Email Writing Evaluation](Screenshot%202026-02-27%20153832.png)
+![Email Writing Evaluation](Screenshot%202026-03-27%20170907.png)
 
 The Email Generation Crew takes the scored lead context and produces a polished, personalized outreach email through two collaborative agents:
 
