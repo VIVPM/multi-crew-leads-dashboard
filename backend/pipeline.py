@@ -22,12 +22,15 @@ from crewai_tools import ScrapeWebsiteTool
 from crewai.tools import tool
 from tavily import TavilyClient
 
-@tool("Tavily Web Search")
-def tavily_search_tool(query: str) -> str:
-    """Search the web for information using Tavily."""
-    client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
-    result = client.search(query, max_results=5)
-    return str(result)
+def make_tavily_tool(tavily_key: str):
+    """Build a Tavily search tool bound to this caller's key (no global state)."""
+    @tool("Tavily Web Search")
+    def tavily_search_tool(query: str) -> str:
+        """Search the web for information using Tavily."""
+        client = TavilyClient(api_key=tavily_key)
+        result = client.search(query, max_results=5)
+        return str(result)
+    return tavily_search_tool
 
 
 # =============================================================================
@@ -94,26 +97,27 @@ def _load_configs() -> Dict[str, dict]:
 _CONFIGS = _load_configs()
 
 # Cache crew instances per API key to avoid rebuilding every request
-_crew_cache: Dict[str, tuple] = {}  # keyed by gemini_key
+_crew_cache: Dict[tuple, tuple] = {}  # keyed by (gemini_key, tavily_key)
 
 
 # =============================================================================
-# Crew factory — accepts the Gemini API key from the UI
+# Crew factory — accepts the Gemini and Tavily API keys from the UI
 # =============================================================================
 
-def build_crews(gemini_key: str):
+def build_crews(gemini_key: str, tavily_key: str):
     """
     Build and return (lead_scoring_crew, email_writing_crew) using the
-    Gemini API key supplied by the caller.
-    Caches crew instances per API key to avoid rebuilding every request.
+    Gemini and Tavily API keys supplied by the caller.
+    Caches crew instances per key pair to avoid rebuilding every request.
     """
-    if gemini_key in _crew_cache:
+    cache_key = (gemini_key, tavily_key)
+    if cache_key in _crew_cache:
         logger.info("Using cached crews for API key")
-        return _crew_cache[gemini_key]
+        return _crew_cache[cache_key]
     llm_flash = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
     llm_flash_lite = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
 
-    search_tools = [tavily_search_tool, ScrapeWebsiteTool()]
+    search_tools = [make_tavily_tool(tavily_key), ScrapeWebsiteTool()]
 
     # --- Lead scoring crew ---
     lead_data_agent = Agent(
@@ -180,7 +184,7 @@ def build_crews(gemini_key: str):
     )
 
     logger.info("Built new crew instances (caching for future use)")
-    _crew_cache[gemini_key] = (lead_scoring_crew, email_writing_crew)
+    _crew_cache[cache_key] = (lead_scoring_crew, email_writing_crew)
     return lead_scoring_crew, email_writing_crew
 
 
@@ -225,7 +229,7 @@ class SalesPipeline(Flow):
 # Public async entry-point (called by app.py)
 # =============================================================================
 
-async def process_leads(leads: list, gemini_key: str, max_retries: int = 3):
+async def process_leads(leads: list, gemini_key: str, tavily_key: str, max_retries: int = 3):
     """
     Score and email-draft all leads in `leads`.
 
@@ -233,7 +237,7 @@ async def process_leads(leads: list, gemini_key: str, max_retries: int = 3):
         (scores, emails, agent_times) — scores and emails are lists of CrewAI
         output objects; agent_times maps agent role -> seconds taken.
     """
-    lead_scoring_crew, email_writing_crew = build_crews(gemini_key)
+    lead_scoring_crew, email_writing_crew = build_crews(gemini_key, tavily_key)
 
     task_timing: List[Dict] = []
     start_ref: List[float] = [0.0]

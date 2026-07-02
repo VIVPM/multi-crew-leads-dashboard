@@ -192,11 +192,11 @@ def delete_lead(lead_id: str):
 async def process_leads_endpoint(req: ProcessLeadsRequest):
     from pipeline import process_leads, build_crews
 
-    os.environ["TAVILY_API_KEY"] = req.tavily_api_key
-
     raw_inputs = [{"lead_data": lead} for lead in req.leads]
     start_time = time.time()
-    scores, emails, agent_times = await process_leads(raw_inputs, req.gemini_api_key)
+    scores, emails, agent_times = await process_leads(
+        raw_inputs, req.gemini_api_key, req.tavily_api_key
+    )
     elapsed = round(time.time() - start_time, 1)
 
     results = []
@@ -245,7 +245,7 @@ async def process_leads_endpoint(req: ProcessLeadsRequest):
 
         # Fallback: tasks_output was empty — read agent roles directly from cached crews
         if not agents_data:
-            lead_crew, email_crew = build_crews(req.gemini_api_key)
+            lead_crew, email_crew = build_crews(req.gemini_api_key, req.tavily_api_key)
             n_lead  = len(lead_crew.agents)  or 1
             n_email = len(email_crew.agents) or 1
             per_score_fb = score_tokens // n_lead

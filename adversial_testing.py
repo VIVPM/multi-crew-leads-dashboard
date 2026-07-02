@@ -146,7 +146,7 @@ def analyze_result(test_name, score_obj):
         return {"test": test_name, "pass": False, "error": str(e)}
 
 
-async def run_red_team(gemini_key: str):
+async def run_red_team(gemini_key: str, tavily_key: str):
     """Run all red team test cases and report results."""
     print("=" * 70)
     print("RED TEAMING — Adversarial Test Suite")
@@ -158,7 +158,7 @@ async def run_red_team(gemini_key: str):
         print(f"\n--- Running: {test_name} ---")
         try:
             inputs = [{"lead_data": lead_data}]
-            scores, emails = await process_leads(inputs, gemini_key, max_retries=1)
+            scores, _emails, _times = await process_leads(inputs, gemini_key, tavily_key, max_retries=1)
             result = analyze_result(test_name, scores[0])
             results.append(result)
 
@@ -207,4 +207,5 @@ async def run_red_team(gemini_key: str):
 
 if __name__ == "__main__":
     key = os.getenv("GEMINI_API_KEY") or input("Enter your Gemini API Key: ")
-    asyncio.run(run_red_team(key))
+    tavily_key = os.getenv("TAVILY_API_KEY") or input("Enter your Tavily API Key: ")
+    asyncio.run(run_red_team(key, tavily_key))
