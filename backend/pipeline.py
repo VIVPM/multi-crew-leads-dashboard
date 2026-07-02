@@ -98,21 +98,20 @@ _crew_cache: Dict[str, tuple] = {}  # keyed by gemini_key
 
 
 # =============================================================================
-# Crew factory — accepts the Sambanova API key from the UI
+# Crew factory — accepts the Gemini API key from the UI
 # =============================================================================
 
 def build_crews(gemini_key: str):
     """
     Build and return (lead_scoring_crew, email_writing_crew) using the
-    Sambanova API key supplied by the caller (e.g., from st.sidebar).
+    Gemini API key supplied by the caller.
     Caches crew instances per API key to avoid rebuilding every request.
     """
     if gemini_key in _crew_cache:
         logger.info("Using cached crews for API key")
         return _crew_cache[gemini_key]
-    llm_70b = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
-    llm_8b = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
-    llm_maverick = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
+    llm_flash = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
+    llm_flash_lite = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
 
     search_tools = [tavily_search_tool, ScrapeWebsiteTool()]
 
@@ -120,17 +119,17 @@ def build_crews(gemini_key: str):
     lead_data_agent = Agent(
         config=_CONFIGS["lead_agents"]["lead_data_agent"],
         tools=search_tools,
-        llm=llm_70b,
+        llm=llm_flash,
     )
     cultural_fit_agent = Agent(
         config=_CONFIGS["lead_agents"]["cultural_fit_agent"],
         tools=search_tools,
-        llm=llm_8b,
+        llm=llm_flash_lite,
     )
     scoring_validation_agent = Agent(
         config=_CONFIGS["lead_agents"]["scoring_validation_agent"],
         tools=search_tools,
-        llm=llm_70b,
+        llm=llm_flash,
     )
 
     lead_data_task = Task(
@@ -157,11 +156,11 @@ def build_crews(gemini_key: str):
     # --- Email writing crew ---
     email_content_specialist = Agent(
         config=_CONFIGS["email_agents"]["email_content_specialist"],
-        llm=llm_maverick,
+        llm=llm_flash,
     )
     engagement_strategist = Agent(
         config=_CONFIGS["email_agents"]["engagement_strategist"],
-        llm=llm_maverick,
+        llm=llm_flash,
     )
 
     email_drafting = Task(
