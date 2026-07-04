@@ -400,19 +400,22 @@ async def process_leads(
         )
         task_timing.append({"agent": agent_name, "ts": time.time()})
 
-    lead_scoring_crew.task_callback = _timing_cb
-    email_writing_crew.task_callback = _timing_cb
+    for crew in crews.values():
+        crew.task_callback = _timing_cb
 
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
+
+    def _run_sync():
+        return _process_batch(leads, crews, context_text, cache_get, cache_set, force_refresh)
 
     for attempt in range(1, max_retries + 1):
         try:
             task_timing.clear()
             start_ref[0] = time.time()
             logger.info("Pipeline attempt %d/%d for %d lead(s)", attempt, max_retries, len(leads))
-            # fresh flow per attempt — no stale state carried into a retry
-            flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
-            await asyncio.wait_for(flow.kickoff_async(), timeout=timeout_s)
+            scores, emails, cache_hits = await asyncio.wait_for(
+                asyncio.to_thread(_run_sync), timeout=timeout_s,
+            )
             logger.info("Pipeline completed successfully on attempt %d", attempt)
 
             agent_times: Dict[str, float] = {}
@@ -421,9 +424,7 @@ async def process_leads(
                 agent_times[entry["agent"]] = round(entry["ts"] - prev, 1)
                 prev = entry["ts"]
 
-            emails_by_index = dict(flow.state["emails"])
-            emails = [emails_by_index.get(i) for i in range(len(leads))]
-            return flow.state["scores"], emails, agent_times
+            return scores, emails, agent_times, cache_hits
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
             if attempt == max_retries:
