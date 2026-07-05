@@ -188,9 +188,9 @@ async def run_red_team(gemini_key: str, tavily_key: str):
         print(f"  [{status}] {r['test']}: {r.get('check', r.get('error', 'N/A'))}")
 
     # Save to JSON
-    os.makedirs("adversial_results", exist_ok=True)
+    os.makedirs("adversarial_results", exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_path = os.path.join("red_team_results", f"run_{timestamp}.json")
+    output_path = os.path.join("adversarial_results", f"run_{timestamp}.json")
     report = {
         "run_at": timestamp,
         "passed": passed,
