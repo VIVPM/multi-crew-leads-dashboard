@@ -16,16 +16,43 @@ import json
 import warnings
 import asyncio
 from datetime import datetime
-from dotenv import load_dotenv
+
+# Windows' console defaults to cp1252, which can't print the emoji CrewAI's
+# internal event-bus logging emits — reconfigure before anything else touches
+# stdout/stderr (setting PYTHONIOENCODING via os.environ here would be too
+# late to affect the already-open stream).
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 warnings.filterwarnings("ignore")
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env"))
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(BASE_DIR, 'backend'))
-os.chdir(BASE_DIR)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/ — pipeline.py lives right here
+ROOT_DIR = os.path.dirname(BASE_DIR)  # repo root — results are saved alongside the existing ones there
 
-from pipeline import process_leads, build_crews, LeadScoringResult
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
+    from pipeline import process_leads
+except ModuleNotFoundError as e:
+    venv_python = os.path.join(BASE_DIR, '.venv', 'Scripts', 'python.exe')
+    sys.exit(
+        f"{e}\n\n"
+        f"This script needs the backend virtualenv, not the system Python "
+        f"({sys.executable}).\nRun it with:\n\n"
+        f'    "{venv_python}" "{__file__}"\n\n'
+        f"(or activate backend/.venv first: backend\\.venv\\Scripts\\activate)"
+    )
+
+# Same ICP used before this was made user-configurable — keeps the red-team
+# baseline stable regardless of what any particular account has configured.
+DEFAULT_COMPANY_CONTEXT = (
+    "Company Name: CrewAI\n"
+    "Product: Multi-Agent Orchestration Platform\n"
+    "ICP: Enterprise companies looking into Agentic automation.\n"
+    "Pitch: We are a platform that allows you to orchestrate AI Agents for "
+    "automations to any vertical."
+)
 
 # ---------------------------------------------------------------------------
 # Adversarial test leads
@@ -157,8 +184,12 @@ async def run_red_team(gemini_key: str, tavily_key: str):
     for test_name, lead_data in RED_TEAM_LEADS.items():
         print(f"\n--- Running: {test_name} ---")
         try:
-            inputs = [{"lead_data": lead_data}]
-            scores, _emails, _times = await process_leads(inputs, gemini_key, tavily_key, max_retries=1)
+            # process_leads takes raw lead dicts — it does its own
+            # {"lead_data": lead} wrapping per kickoff call internally
+            scores, _emails, _times, _cache_hits = await process_leads(
+                [lead_data], gemini_key, tavily_key,
+                our_company_context=DEFAULT_COMPANY_CONTEXT, max_retries=1,
+            )
             result = analyze_result(test_name, scores[0])
             results.append(result)
 
@@ -187,10 +218,11 @@ async def run_red_team(gemini_key: str, tavily_key: str):
         status = "PASS" if r.get("pass") else "FAIL"
         print(f"  [{status}] {r['test']}: {r.get('check', r.get('error', 'N/A'))}")
 
-    # Save to JSON
-    os.makedirs("adversarial_results", exist_ok=True)
+    # Save to JSON — alongside the existing results at the repo root
+    results_dir = os.path.join(ROOT_DIR, "adversarial_results")
+    os.makedirs(results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_path = os.path.join("adversarial_results", f"run_{timestamp}.json")
+    output_path = os.path.join(results_dir, f"run_{timestamp}.json")
     report = {
         "run_at": timestamp,
         "passed": passed,
