@@ -140,7 +140,8 @@ body {
   margin-bottom: 0.3rem;
 }
 
-.sidebar .form-group input {
+.sidebar .form-group input,
+.sidebar .form-group textarea {
   width: 100%;
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -151,11 +152,22 @@ body {
   font-family: var(--font);
 }
 
-.sidebar .form-group input::placeholder { color: rgba(255, 255, 255, 0.35); }
-.sidebar .form-group input:focus {
+.sidebar .form-group textarea { resize: vertical; line-height: 1.4; }
+
+.sidebar .form-group input::placeholder,
+.sidebar .form-group textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
+.sidebar .form-group input:focus,
+.sidebar .form-group textarea:focus {
   outline: none;
   border-color: var(--primary-soft);
   box-shadow: none;
+}
+
+.sidebar-hint {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
 }
 
 .sidebar-link {
@@ -309,7 +321,8 @@ body {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   width: 100%;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--hairline-input);
@@ -322,11 +335,48 @@ body {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
+.form-group textarea { resize: vertical; line-height: 1.5; }
+
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(83, 58, 253, 0.12);
+}
+
+/* Company profile card (main content) */
+.company-profile-card { cursor: default; }
+
+.company-profile-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.company-profile-summary {
+  margin-top: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40rem;
+}
+
+.required-badge {
+  display: inline-block;
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--pill);
+  background: #fff0f5;
+  color: var(--ruby);
+  font-size: 0.62rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
 }
 
 .form-grid {
@@ -339,6 +389,23 @@ body {
   display: flex;
   gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--ink-secondary);
+  margin-top: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 /* ============================================================
@@ -419,11 +486,11 @@ body {
 }
 
 /* ============================================================
-   Lead controls
+   Lead form card (collapsible, same pattern as .company-profile-card)
    ============================================================ */
-.lead-controls { margin-bottom: 1rem; }
-
 .lead-form-card { margin-bottom: 1.5rem; }
+
+.lead-form-body { margin-top: 1rem; }
 
 /* ============================================================
    Dashboard charts
@@ -442,13 +509,31 @@ body {
   box-shadow: var(--shadow-1);
 }
 
+.chart-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .chart-title {
   font-size: 0.68rem;
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--ink-mute);
-  margin-bottom: 0.75rem;
+}
+
+.chart-year-select {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  font-size: 0.72rem;
+  font-family: var(--font);
+  color: var(--ink-secondary);
+  background: var(--canvas);
+  flex-shrink: 0;
 }
 
 .no-data {
@@ -572,6 +657,23 @@ body {
   margin-bottom: 0.35rem;
 }
 
+.lead-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.btn-link:hover { color: var(--primary-deep); text-decoration: underline; }
+
 /* scoring JSON — cool data panel with tabular figures */
 .lead-json {
   background: var(--canvas-soft);
@@ -605,6 +707,25 @@ body {
   overflow-y: auto;
 }
 
+.lead-email-edit {
+  width: 100%;
+  background: var(--cream);
+  border: 1px solid var(--cream-line);
+  border-radius: var(--r-md);
+  padding: 0.85rem 1rem;
+  font-family: var(--font);
+  font-size: 0.85rem;
+  color: var(--ink);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.lead-email-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 .lead-card-actions {
   display: flex;
   gap: 0.5rem;
@@ -622,6 +743,7 @@ body {
   font-weight: 400;
 }
 .badge-green { background: #d7f7c2; color: #1e7d34; }
+.badge-neutral { background: var(--canvas-soft); color: var(--ink-mute); }
 
 /* ============================================================
    Utility
@@ -984,7 +1106,8 @@ body {
   line-height: 1.5;
   opacity: 0;
   animation: lp-fade-up 0.5s ease forwards;
-  animation-delay: calc(3200ms + var(--i) * 450ms);
+  /* starts once the last agent dot (index 3 of 4) has lit up at 600+3*500=2100ms */
+  animation-delay: calc(2300ms + var(--i) * 450ms);
 }
 
 .lp-caret {
@@ -995,7 +1118,7 @@ body {
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: lp-blink 1s step-end infinite;
-  animation-delay: 4600ms;
+  animation-delay: 3800ms;
 }
 
 @keyframes lp-blink { 50% { opacity: 0; } }
