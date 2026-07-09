@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
 const AGENTS = [
-  { name: 'Lead Data Specialist', job: 'researches the person and company on the live web' },
-  { name: 'Cultural Fit Analyst', job: 'checks alignment with your ideal customer profile' },
-  { name: 'Lead Scorer & Validator', job: 'assigns a validated 0–100 score with reasoning' },
-  { name: 'Email Content Writer', job: 'drafts a personalized outreach email' },
-  { name: 'Engagement Strategist', job: 'sharpens the call to action' },
+  { name: 'Personal Research Specialist', job: 'researches the lead\'s role and background on the live web' },
+  { name: 'Company Research & Cultural Fit Analyst', job: 'researches the company and checks fit with your ICP' },
+  { name: 'Lead Scorer and Validator', job: 'assigns a validated 0–100 score with reasoning' },
+  { name: 'Email Specialist', job: 'drafts and optimizes a personalized outreach email' },
 ]
 
 const STEPS = [
@@ -17,12 +16,12 @@ const STEPS = [
   {
     n: '2',
     title: 'The crew gets to work',
-    body: 'Three agents research the lead on the live web, assess cultural fit, and settle on a validated 0–100 score with a full breakdown.',
+    body: 'Agents research the lead and their company on the live web, assess cultural fit against your ICP, and a validator settles on a 0–100 score with a full breakdown.',
   },
   {
     n: '3',
     title: 'Outreach, ready to send',
-    body: 'Leads scoring above 70 get a personalized email drafted and optimized by two more agents — waiting in the dashboard.',
+    body: 'Leads scoring above 70 get a personalized, CTA-optimized email drafted by our email specialist — waiting in the dashboard.',
   },
 ]
 
@@ -73,7 +72,7 @@ function Reveal({ children, className = '' }) {
 }
 
 export default function Landing({ onSignIn, onGetStarted }) {
-  const score = useCountUp(85, 1400, 2600)
+  const score = useCountUp(85, 1400, 1800)
 
   return (
     <div className="lp">
@@ -96,7 +95,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
             Every lead scored.<br />Every email written.
           </h1>
           <p className="lp-sub lp-fade" style={{ '--d': '240ms' }}>
-            Five AI agents research each lead on the live web, assign a validated
+            Four AI agents research each lead on the live web, assign a validated
             0–100 score, and draft personalized outreach for everyone worth your time.
           </p>
           <div className="lp-cta-row lp-fade" style={{ '--d': '360ms' }}>
