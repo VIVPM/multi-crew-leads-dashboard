@@ -55,6 +55,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
   }))
   const [errors, setErrors] = useState([])
   const [status, setStatus] = useState(null) // 'saving' | 'processing' | null
+  const [forceRefresh, setForceRefresh] = useState(false)
 
   function set(key, val) {
     setFields(f => ({ ...f, [key]: val }))
@@ -66,7 +67,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
     if (errs.length) { setErrors(errs); return }
     setErrors([])
     try {
-      await onSave(fields, setStatus)
+      await onSave(fields, setStatus, forceRefresh)
     } catch (err) {
       setErrors([err.message || String(err)])
       setStatus(null)
@@ -76,9 +77,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
   const loading = status !== null
 
   return (
-    <div className="card lead-form-card">
-      <h3 className="card-title">{lead ? 'Edit lead' : 'Add new lead'}</h3>
-
+    <div className="lead-form-body">
       {!keysReady && (
         <div className="alert alert-warning">
           Enter your Gemini &amp; Tavily API keys in the sidebar before saving.
@@ -135,6 +134,16 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
             </select>
           </div>
         </div>
+
+        <label className="checkbox-row" title="Company research is cached across leads from the same company. Check this to ignore the cache and re-research it now.">
+          <input
+            type="checkbox"
+            checked={forceRefresh}
+            onChange={e => setForceRefresh(e.target.checked)}
+            disabled={loading}
+          />
+          Force refresh company research (ignore cache)
+        </label>
 
         <div className="form-actions">
           <button type="submit" className="btn btn-success" disabled={loading || !keysReady}>
