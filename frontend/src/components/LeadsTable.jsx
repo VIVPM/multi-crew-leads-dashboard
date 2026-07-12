@@ -97,7 +97,7 @@ function AnalysisModal({ leadId, onClose }) {
                   {(data.agents_data || []).map((agent, i) => (
                     <tr key={i}>
                       <td>{agent.agent}</td>
-                      <td><span className="badge badge-green">{agent.status}</span></td>
+                      <td><span className={`badge ${agent.status === 'Skipped' ? 'badge-neutral' : 'badge-green'}`}>{agent.status}</span></td>
                       <td>{agent.time_seconds != null ? `${agent.time_seconds}s` : '—'}</td>
                       <td>{agent.tokens != null ? agent.tokens.toLocaleString() : '—'}</td>
                       <td>{agent.cost != null ? `$${agent.cost.toFixed(6)}` : '—'}</td>
@@ -141,7 +141,12 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [err, setErr] = useState(null)
   const [showAnalysis, setShowAnalysis] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [editingEmail, setEditingEmail] = useState(false)
+  const [emailDraft, setEmailDraft] = useState(lead.email_draft || '')
+  const [savingEmail, setSavingEmail] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
+
+  useEffect(() => { setEmailDraft(lead.email_draft || '') }, [lead.email_draft])
 
   async function handleDelete() {
     setShowDeleteConfirm(false)
@@ -153,6 +158,20 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
       setErr(friendlyError(e))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleSaveEmail() {
+    setSavingEmail(true)
+    setErr(null)
+    try {
+      await api('PUT', `/leads/${lead.id}`, { email_draft: emailDraft })
+      setEditingEmail(false)
+      onRefresh()
+    } catch (e) {
+      setErr(friendlyError(e))
+    } finally {
+      setSavingEmail(false)
     }
   }
 
@@ -196,8 +215,37 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
 
           {lead.email_draft && (
             <div className="lead-section">
-              <div className="lead-section-title">Email draft</div>
-              <pre className="lead-email">{lead.email_draft}</pre>
+              <div className="lead-section-header">
+                <div className="lead-section-title">Email draft</div>
+                {!editingEmail && (
+                  <button className="btn-link" onClick={() => setEditingEmail(true)}>Edit</button>
+                )}
+              </div>
+              {editingEmail ? (
+                <>
+                  <textarea
+                    className="lead-email-edit"
+                    value={emailDraft}
+                    onChange={e => setEmailDraft(e.target.value)}
+                    rows={10}
+                    disabled={savingEmail}
+                  />
+                  <div className="lead-email-edit-actions">
+                    <button className="btn btn-sm btn-primary" onClick={handleSaveEmail} disabled={savingEmail}>
+                      {savingEmail ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline"
+                      onClick={() => { setEditingEmail(false); setEmailDraft(lead.email_draft || '') }}
+                      disabled={savingEmail}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <pre className="lead-email">{lead.email_draft}</pre>
+              )}
             </div>
           )}
 
