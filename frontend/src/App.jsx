@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react'
 import Landing from './components/Landing'
 import Auth from './components/Auth'
 import Sidebar from './components/Sidebar'
+import AdminOverview from './components/AdminOverview'
+import CompanyProfile from './components/CompanyProfile'
 import LeadForm from './components/LeadForm'
 import Dashboard from './components/Dashboard'
 import LeadsTable from './components/LeadsTable'
@@ -17,16 +19,16 @@ function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, token, expiresAt } = JSON.parse(raw)
+    const { userId, username, token, isAdmin, expiresAt } = JSON.parse(raw)
     if (!token || Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, token }
+    return { userId, username, token, isAdmin: !!isAdmin }
   } catch { return null }
 }
 
 // API keys deliberately stay in memory only (never persisted) — re-entered per session
-function saveSession(userId, username, token) {
+function saveSession(userId, username, token, isAdmin) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId, username, token, expiresAt: Date.now() + SESSION_TTL,
+    userId, username, token, isAdmin: !!isAdmin, expiresAt: Date.now() + SESSION_TTL,
   }))
 }
 
@@ -42,6 +44,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState(null) // null (landing) | 'login' | 'signup'
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
+  const [isAdmin, setIsAdmin] = useState(saved?.isAdmin ?? false)
 
   const [geminiKey, setGeminiKey] = useState('')
   const [tavilyKey, setTavilyKey] = useState('')
@@ -52,13 +55,20 @@ export default function App() {
   const [editingLead, setEditingLead] = useState(null)
   const [globalMsg, setGlobalMsg] = useState(null)
 
+  const [companyContext, setCompanyContext] = useState('')
+  const [companyContextLoaded, setCompanyContextLoaded] = useState(false)
+  const [companyProfileExpanded, setCompanyProfileExpanded] = useState(false)
+  const [showIcpDialog, setShowIcpDialog] = useState(false)
+
   // --- Auth ---
-  function handleLogin(uid, uname, token) {
-    saveSession(uid, uname, token)
+  function handleLogin(uid, uname, token, admin) {
+    saveSession(uid, uname, token, admin)
     setUserId(uid)
     setUsername(uname)
+    setIsAdmin(!!admin)
     setLoggedIn(true)
     fetchLeads(uid)
+    fetchCompanyContext()
   }
 
   function handleLogout() {
@@ -66,15 +76,28 @@ export default function App() {
     setLoggedIn(false)
     setUserId(null)
     setUsername('')
+    setIsAdmin(false)
     setGeminiKey('')
     setTavilyKey('')
     setLeads([])
     setAddingLead(false)
     setEditingLead(null)
+    setCompanyContext('')
+    setCompanyContextLoaded(false)
   }
 
+  const fetchCompanyContext = useCallback(async () => {
+    try {
+      const data = await api('GET', '/account/company-context')
+      const val = data.company_context || ''
+      setCompanyContext(val)
+      setCompanyProfileExpanded(!val) // nudge new users to fill it in immediately
+    } catch { /* CompanyProfile card shows its own error state on save; ignore here */ }
+    finally { setCompanyContextLoaded(true) }
+  }, [])
+
   useEffect(() => {
-    if (saved) fetchLeads(saved.userId)
+    if (saved) { fetchLeads(saved.userId); fetchCompanyContext() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Leads ---
@@ -105,7 +128,12 @@ export default function App() {
   }
 
   // Save lead then enqueue processing — called by LeadForm
-  async function handleSaveAndProcess(fields, setStatus) {
+  async function handleSaveAndProcess(fields, setStatus, forceRefresh = false) {
+    if (!companyContext?.trim()) {
+      setShowIcpDialog(true)
+      return
+    }
+
     let savedLead
     setStatus('saving')
     try {
@@ -126,6 +154,7 @@ export default function App() {
         leads: [savedLead],
         gemini_api_key: geminiKey,
         tavily_api_key: tavilyKey,
+        force_refresh: forceRefresh,
       })
       job = await waitForJob(job_id)
     } catch (e) {
@@ -164,6 +193,32 @@ export default function App() {
       : <Landing onSignIn={() => setAuthMode('login')} onGetStarted={() => setAuthMode('signup')} />
   }
 
+  // Admin accounts never see the lead-scoring dashboard — just the overview.
+  if (isAdmin) {
+    return (
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <span className="sidebar-logo">🛡️</span>
+            <div>
+              <div className="sidebar-app-name">Admin</div>
+              <div className="sidebar-username">{username}</div>
+            </div>
+          </div>
+          <div className="sidebar-footer">
+            <button className="btn btn-outline btn-full" onClick={handleLogout}>Log out</button>
+          </div>
+        </aside>
+        <main className="main-content">
+          <div className="page-header">
+            <h1 className="page-title">Admin Overview</h1>
+          </div>
+          <AdminOverview />
+        </main>
+      </div>
+    )
+  }
+
   const keysReady = !!(geminiKey && tavilyKey)
 
   return (
@@ -189,21 +244,38 @@ export default function App() {
           </div>
         )}
 
-        {addingLead ? (
-          <LeadForm
-            key={editingLead?.id ?? 'new'}
-            lead={editingLead}
-            onSave={handleSaveAndProcess}
-            onCancel={() => { setAddingLead(false); setEditingLead(null) }}
-            keysReady={keysReady}
-          />
-        ) : (
-          <div className="lead-controls">
-            <button className="btn btn-primary" onClick={() => { setEditingLead(null); setAddingLead(true) }}>
-              Add new lead
-            </button>
+        <CompanyProfile
+          value={companyContext}
+          loaded={companyContextLoaded}
+          expanded={companyProfileExpanded}
+          onToggleExpanded={setCompanyProfileExpanded}
+          onSaved={setCompanyContext}
+        />
+
+        <div className="card lead-form-card">
+          <div
+            className="company-profile-header"
+            onClick={() => {
+              if (addingLead) { setAddingLead(false); setEditingLead(null) }
+              else { setEditingLead(null); setAddingLead(true) }
+            }}
+          >
+            <h3 className="card-title" style={{ marginBottom: 0 }}>
+              {editingLead ? 'Edit lead' : 'Add new lead'}
+            </h3>
+            <span className="lead-card-chevron">{addingLead ? '▲' : '▼'}</span>
           </div>
-        )}
+
+          {addingLead && (
+            <LeadForm
+              key={editingLead?.id ?? 'new'}
+              lead={editingLead}
+              onSave={handleSaveAndProcess}
+              onCancel={() => { setAddingLead(false); setEditingLead(null) }}
+              keysReady={keysReady}
+            />
+          )}
+        </div>
 
         <section className="section">
           <h2 className="section-title">Leads dashboard</h2>
@@ -218,6 +290,38 @@ export default function App() {
           }
         </section>
       </main>
+
+      {showIcpDialog && (
+        <div className="modal-overlay" onClick={() => setShowIcpDialog(false)}>
+          <div className="modal-container modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Company profile required</h3>
+              <button className="modal-close" onClick={() => setShowIcpDialog(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p className="delete-confirm-msg">
+                Set your company, product, and ideal customer profile before processing
+                leads — cultural fit and outreach emails are measured against it, so
+                there's no generic fallback.
+              </p>
+              <div className="delete-confirm-actions">
+                <button className="btn btn-outline" onClick={() => setShowIcpDialog(false)}>Cancel</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowIcpDialog(false)
+                    setCompanyProfileExpanded(true)
+                    document.getElementById('company-profile-card')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }}
+                >
+                  Set it now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
