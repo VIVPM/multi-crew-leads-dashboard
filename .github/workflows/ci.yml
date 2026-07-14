@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Syntax check
-        run: python -m py_compile backend/backend.py backend/pipeline.py backend/security.py backend/worker.py adversarial_testing.py test_crews.py
+        run: python -m py_compile backend/backend.py backend/pipeline.py backend/security.py backend/worker.py backend/adversarial_testing.py backend/test_crews.py
       - name: Unit tests (no network)
         run: |
           pip install bcrypt==5.0.0
