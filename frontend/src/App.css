@@ -1003,6 +1003,8 @@ body {
   padding: 72px 24px;
 }
 
+.lp-section-tight { padding-top: 0; }
+
 .lp-band-soft {
   max-width: none;
   background: var(--canvas-soft);

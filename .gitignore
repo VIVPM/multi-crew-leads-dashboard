@@ -8,3 +8,4 @@ __pycache__/
 .claude
 .playwright-mcp/
 migrations.sql
+evaluation_plan.txt

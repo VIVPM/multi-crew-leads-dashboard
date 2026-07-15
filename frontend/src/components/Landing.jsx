@@ -203,7 +203,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
       </section>
 
       {/* Dark CTA band */}
-      <section className="lp-section">
+      <section className="lp-section lp-section-tight">
         <Reveal>
           <div className="lp-dark-cta">
             <h2 className="lp-h2-inverse">Process your first lead in minutes</h2>
