@@ -795,6 +795,8 @@ body {
   color: var(--ink);
   min-height: 100vh;
   overflow-x: clip; /* the mesh backdrop extends past the viewport */
+  display: flex;
+  flex-direction: column;
 }
 
 .lp-nav {
@@ -1116,15 +1118,16 @@ body {
 }
 
 .lp-footer {
+  margin-top: auto; /* pins the footer to the bottom of the page */
   border-top: 1px solid var(--hairline);
-  padding: 40px 24px 56px;
+  padding: 20px 24px;
   text-align: center;
   font-size: 13px;
   color: var(--ink-mute);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .lp-copyright { font-size: 12px; }

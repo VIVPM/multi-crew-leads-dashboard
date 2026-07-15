@@ -7,3 +7,4 @@ __pycache__/
 .code-review-graph/
 .claude
 .playwright-mcp/
+migrations.sql

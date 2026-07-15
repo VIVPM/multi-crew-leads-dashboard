@@ -67,7 +67,6 @@ graph LR
 │   ├── requirements.txt      # pinned Python dependencies
 │   └── config/               # agent & task YAML definitions (both crews)
 ├── frontend/                 # React + Vite dashboard + landing page (Stripe-inspired design system)
-├── migrations.sql            # Supabase schema additions (jobs table, indexes)
 ├── adversarial_testing.py    # red-team test suite
 ├── test_crews.py             # crew smoke test + CrewAI eval runs
 └── tests/test_security.py    # no-network unit tests (run in CI)
@@ -79,7 +78,7 @@ graph LR
 
 ### 1. Supabase
 
-Create a project at [supabase.com](https://supabase.com) with tables `users` (id, username, password), `leads`, and `analysis_runs`, then run `migrations.sql` in the SQL editor — it adds the `jobs` queue table, a unique constraint on usernames, and indexes.
+Create a project at [supabase.com](https://supabase.com) with tables `users` (id, username, password), `leads`, and `analysis_runs`, plus a `jobs` queue table (id, user_id, status, leads jsonb, gemini_api_key, tavily_api_key, results jsonb, error, created_at), a unique constraint on `users.username`, and indexes on `jobs(status, created_at)`, `leads(user_id)`, and `analysis_runs(lead_id)`.
 
 > **Note on RLS:** the backend uses a service key, which bypasses Row Level Security; authorization is enforced at the API layer (token + ownership checks). Enabling RLS as a second layer is recommended for defense in depth.
 
