@@ -9,3 +9,4 @@ __pycache__/
 .playwright-mcp/
 migrations.sql
 evaluation_plan.txt
+CLAUDE.md
