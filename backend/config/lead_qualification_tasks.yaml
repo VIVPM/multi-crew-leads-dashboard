@@ -72,6 +72,8 @@ lead_scoring_and_validation:
   expected_output: >
     A validated lead score report including:
     - Final lead score (0-100) with scoring criteria.
+    - A component breakdown: demographic score, firmographic score, and
+      behavioral score (each a number, together supporting the final score).
     - A summary report detailing the scoring process, criteria used, and validation notes.
 
 

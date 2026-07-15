@@ -1,262 +1,192 @@
+# Sales Pipeline — Lead Scoring & Email Generation
 
-# Sales Pipeline Lead Scoring & Email Generation
-
-A full-stack, multi-agent sales pipeline application built using **Streamlit**, **CrewAI**, and **Supabase**.  
-The system automates lead collection, scoring, and personalized email generation using configurable agent-based pipelines powered by modern LLMs.
+A full-stack, multi-agent sales pipeline application: a **React** dashboard backed by a **FastAPI** server that orchestrates **CrewAI** agent crews (powered by **Google Gemini**) to score sales leads and draft personalized outreach emails, with all data stored in **Supabase**.
 
 ---
 
-## **Features**
+## Features
 
-- **Interactive Streamlit Dashboard:** Collect, view, edit, and manage potential leads with a user-friendly interface.
-- **CrewAI Multi-Agent Workflow:** Modular pipeline orchestrates specialized agents for data extraction, cultural fit analysis, validation, and scoring.
-- **RAG & Web Search Integration:** Agents enrich lead profiles using **Tavily AI** web search and retrieval tools.
-- **Automated Email Drafting:** Generates highly personalized email drafts for qualified leads using contextual cues and business data.
-- **Real-time Database (Supabase):** All lead data is securely stored, retrieved, and updated in real time.
-- **Continuous Improvement:** Supports agent training/testing for iterative workflow optimization.
-- **YAML-Driven Customization:** Agent/task prompts and workflow logic are fully configurable via YAML files.
+- **Landing page** — Stripe-inspired marketing page with an animated product demo: the five-agent pipeline lights up in sequence, the score counts up, and the email draft types itself.
+- **React dashboard** — add, view, edit, delete, search, and export leads; per-lead analysis modal with token/cost/timing breakdowns; charts (industry, source, score distribution, leads over time).
+- **Two CrewAI crews** — a 3-agent lead-scoring crew (data enrichment → cultural fit → scoring & validation) and a 2-agent email crew (draft → engagement optimization). Leads scoring above 70 get an email draft.
+- **Web-search enrichment** — agents research leads live via **Tavily** search and website scraping.
+- **Asynchronous job queue** — processing runs in a background worker; the API responds instantly and the UI polls job status, so long LLM runs never block requests.
+- **Token-based auth** — signup/login with bcrypt password hashing and signed session tokens; every lead endpoint is ownership-checked.
+- **YAML-driven agents** — all agent roles, task prompts, and workflow logic configurable in `backend/config/` without code changes.
+- **Red-team test suite** — adversarial inputs (fake companies, prompt injection, contradictory data) with saved pass/fail reports.
 
 ---
 
-## **Architecture**
+## Architecture
 
 ```mermaid
 graph LR
-    %% Input
-    subgraph Input [1. Lead Management — Streamlit UI]
-        Form["📋 Add Lead Form<br>(name, title, company, email)"] --> DB[("🗄️ Supabase<br>PostgreSQL")]
-        DB --> Dashboard["📊 Leads Dashboard<br>(view · edit · delete)"]
+    subgraph FE [React Frontend — Vite]
+        UI["📋 Leads Dashboard<br>(add · edit · search · export)"]
     end
 
-    %% Lead Scoring
-    subgraph LeadCrew [2. Lead Scoring Crew — CrewAI - 3 Agents]
-        Dashboard -->|Process Leads| Agent1["🔎 Lead Data Agent<br>(web search + enrichment)"]
-        Agent1 --> Agent2["🌍 Cultural Fit Agent<br>(company research)"]
-        Agent2 --> Agent3["🏆 Scoring & Validation Agent<br>(unified score 0–100)"]
-        Agent3 --> Score["Lead Score + Breakdown"]
+    subgraph API [FastAPI Backend]
+        Auth["🔐 Auth<br>(bcrypt + signed tokens)"]
+        CRUD["🗂️ Lead CRUD"]
+        Enq["📨 POST /leads/process<br>→ 202 + job_id"]
+        Jobs["📊 GET /jobs/{id}"]
     end
 
-    %% Email Crew
-    subgraph EmailCrew [3. Email Generation Crew — CrewAI - 2 Agents]
-        Score -->|score above threshold| Email1["✍️ Email Content Specialist<br>(personalised draft)"]
-        Email1 --> Email2["🎯 Engagement Strategist<br>(CTAs + engagement hooks)"]
-        Email2 --> Draft["📧 Final Email Draft"]
+    subgraph Worker [Background Worker]
+        W["worker.py<br>claims pending jobs"]
+        subgraph LeadCrew [Lead Scoring Crew — 3 agents]
+            A1["🔎 Lead Data"] --> A2["🌍 Cultural Fit"] --> A3["🏆 Score & Validate"]
+        end
+        subgraph EmailCrew [Email Crew — 2 agents]
+            E1["✍️ Draft"] --> E2["🎯 Optimize CTAs"]
+        end
+        W --> A1
+        A3 -->|score > 70| E1
     end
 
-    %% LLM + Config
-    subgraph Infra [4. Infrastructure]
-        YAML["📄 YAML Config<br>(agents · tasks · prompts)"] --> Agent1 & Email1
-        LLM["☁️ SambaNova<br>Meta-Llama-3.3-70B"] --> Agent1 & Agent2 & Agent3 & Email1 & Email2
-        Draft --> DB
-    end
+    DB[("🗄️ Supabase<br>users · leads · jobs · analysis_runs")]
+    LLM["☁️ Google Gemini<br>2.5 Flash / Flash-Lite"]
+    Tavily["🔍 Tavily Search"]
 
-    style Input fill:#e1f5fe,stroke:#01579b
-    style LeadCrew fill:#fff3e0,stroke:#e65100
-    style EmailCrew fill:#e8f5e9,stroke:#1b5e20
-    style Infra fill:#f3e5f5,stroke:#6a1b9a
+    UI --> API
+    API --> DB
+    W --> DB
+    A1 & A2 & A3 & E1 & E2 --> LLM
+    A1 & A2 & A3 --> Tavily
 ```
 
-
-## **Project Structure**
+## Project Structure
 
 ```
 .
-├── config/
-│   ├── lead_qualification_agents.yaml
-│   ├── lead_qualification_tasks.yaml
-│   ├── email_engagement_agents.yaml
-│   └── email_engagement_tasks.yaml
-├── leads.csv
-├── multi_crew_lead_streamlit.py  # (Your main Streamlit app)
-├── requirements.txt
-└── README.md
+├── backend/
+│   ├── backend.py            # FastAPI app: auth, lead CRUD, job enqueue/status
+│   ├── worker.py             # Background job processor (runs the crews)
+│   ├── pipeline.py           # CrewAI crews + Flow + process_leads entry point
+│   ├── security.py           # bcrypt hashing + signed session tokens
+│   ├── requirements.txt      # pinned Python dependencies
+│   └── config/               # agent & task YAML definitions (both crews)
+├── frontend/                 # React + Vite dashboard + landing page (Stripe-inspired design system)
+├── migrations.sql            # Supabase schema additions (jobs table, indexes)
+├── adversarial_testing.py    # red-team test suite
+├── test_crews.py             # crew smoke test + CrewAI eval runs
+└── tests/test_security.py    # no-network unit tests (run in CI)
 ```
 
 ---
 
-## **Setup Instructions**
+## Setup
 
-### 1. **Clone the Repository**
+### 1. Supabase
 
-```bash
-git clone https://github.com/VIVPM/sales-pipeline-app.git
-cd sales-pipeline-app
-```
+Create a project at [supabase.com](https://supabase.com) with tables `users` (id, username, password), `leads`, and `analysis_runs`, then run `migrations.sql` in the SQL editor — it adds the `jobs` queue table, a unique constraint on usernames, and indexes.
 
-### 2. **Set Up Python Environment**
+> **Note on RLS:** the backend uses a service key, which bypasses Row Level Security; authorization is enforced at the API layer (token + ownership checks). Enabling RLS as a second layer is recommended for defense in depth.
 
-It is recommended to use a virtual environment.
+### 2. Backend
 
 ```bash
-python -m venv venv
-source venv/bin/activate   # (Linux/Mac)
-venv\Scripts\activate      # (Windows)
-```
-
-### 3. **Install Dependencies**
-
-```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # Linux/Mac
 pip install -r requirements.txt
 ```
 
-**Key dependencies include:**  
-- streamlit  
-- pyyaml  
-- python-dotenv  
-- supabase  
-- crewai  
-- pydantic  
-- pandas  
-- crewai_tools
-- tavily-python
-
-### 4. **Environment Variables**
-
-Create a `.env` file in your project root and add your Supabase credentials:
+Create `backend/.env`:
 
 ```
 SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_api_key
-SAMBANOVA_API_KEY=your_sambanova_api_key
-TAVILY_API_KEY=your_tavily_api_key
+SUPABASE_KEY=your_supabase_service_key
+SECRET_KEY=any_long_random_string   # signs session tokens; required in production
 ```
 
-### 5. **(Optional) Prepare Data**
-
-- Place your initial `leads.csv` file in the project root if you want to preload sample leads.
-
-### 6. **Obtain Sambanova API Key**
-
-- Register for API access on Sambanova, or use a placeholder for demo.
-- You’ll be prompted to enter the key when running the app.
-
----
-
-## **Running the Application**
-
-Start the Streamlit app using:
+Run the API and the worker (two terminals, from the repo root):
 
 ```bash
-streamlit run multi_crew_lead_streamlit.py
+uvicorn backend.backend:app --host 0.0.0.0 --port 8000
+python backend/worker.py
 ```
 
-The app will launch in your default browser.
+> **Single-process deploys (e.g. Render free tier):** instead of a separate
+> worker service, set `RUN_WORKER_IN_PROCESS=1` on the web service — the job
+> worker then runs as a background thread inside the API process. Switch back
+> to a dedicated worker (and unset the flag) when you need more throughput.
 
----
+### 3. Frontend
 
-## **How to Use**
-
-1. **Enter Sambanova API Key** in the sidebar to power the LLM agents.
-2. **Enter Tavily API Key** in the sidebar to enable real-time web search enrichment.
-2. **Add New Lead** using the form (name, job title, company, email, use case).
-3. **View/Edit/Delete Leads** from the dashboard.
-4. **Process Leads:**  
-    - Click "Process Leads" to score new leads and generate emails for those above the threshold.
-    - Processed leads display a unified score, detailed scoring info, and the generated email draft.
-5. **Continuous Improvement:**  
-    - (Optional, commented) Train/test agent workflows using built-in CrewAI functions.
-6. **Export to CSV:**  
-    - (Optional, commented) Export all processed leads for reporting.
-
----
-
-## **YAML Configuration**
-
-- All agent roles, task definitions, and prompt instructions are in the `config/` folder.
-- You can adjust prompts, role descriptions, and task logic without changing code.
-
----
-
-## **Key Concepts Used**
-
-- **Streamlit:** For fast interactive web UI.
-- **Supabase:** PostgreSQL-based backend with real-time and RESTful APIs.
-- **CrewAI:** Orchestrates multiple agents with modular task definitions.
-- **Pydantic:** Enforces strict data validation and contracts.
-- **YAML:** Keeps workflow logic and prompts easily customizable.
-- **AsyncIO:** Enables efficient parallel agent execution.
-
----
-
-## **Extending the App**
-
-- **Add More Agents/Tasks:**  
-  Update or add YAML config files to introduce new logic or workflows.
-- **Change Database:**  
-  Switch Supabase with any other backend with minimal code change.
-- **Customize Email Drafts:**  
-  Tune prompts in YAML for tone, detail, or style.
-
----
-
-## **Sample Commands**
-
-**Install requirements:**  
 ```bash
-pip install -r requirements.txt
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 (expects the API on localhost:8000)
 ```
 
-**Run Streamlit app:**  
-```bash
-streamlit run multi_crew_lead_streamlit.py
-```
+Set `VITE_BACKEND_URL` to point at a deployed backend in production builds.
 
-**Deactivate virtualenv:**  
-```bash
-deactivate
-```
+### 4. API keys (per user, entered in the app)
+
+Each user supplies their own keys in the sidebar after logging in — they are held in memory for the session and stored only for the duration of a processing job:
+
+- **Gemini** — [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) (powers all agents)
+- **Tavily** — [app.tavily.com](https://app.tavily.com) (web-search enrichment)
 
 ---
 
-## **Troubleshooting**
+## How to Use
 
-- **Missing API Key:** Enter the Sambanova and Tavily API keys in the sidebar to proceed.
-- **Supabase Errors:** Ensure your `.env` file is present and credentials are valid.
-- **YAML Errors:** Double-check YAML file indentation and format.
+1. **Get started from the landing page** — sign up or log in (username ≥ 3 chars, password ≥ 8 chars).
+2. **Enter your Gemini and Tavily API keys** in the sidebar.
+3. **Add a lead** (name, company, email required) and click **Save & Process** — the lead is queued, the crews score it and (if it scores above 70) draft an email; the UI polls until the job completes.
+4. **Review results** — expand a lead card for the scoring breakdown and email draft; open **📊 Analysis** for duration, token, and cost details (per-agent numbers are even-split estimates of the crew totals).
+5. **Search / export** — filter the table and export the filtered set to CSV.
+
+At most **10 leads** can be processed per request; job status is `pending → running → done | failed`.
+
+---
+
+## Scaling notes
+
+- Lead processing is decoupled from HTTP via the `jobs` table; add more `worker.py` processes to increase throughput.
+- Auth tokens are stateless (HMAC-signed), so API instances scale horizontally behind a load balancer — set the same `SECRET_KEY` on every instance.
+- The login rate limiter is in-memory (per instance); move it to Redis when running multiple API instances.
 
 ---
 
-## **Screenshots & Results**
+## Testing & Evaluation
 
-### Agent Processing & Evaluation Results
+- **Unit tests (no network):** `python tests/test_security.py` — also run in CI (`.github/workflows/ci.yml`) along with syntax checks, frontend lint, and build.
+- **Crew smoke test + eval:** `python test_crews.py` (needs `GEMINI_API_KEY`/`TAVILY_API_KEY`; makes real LLM calls).
+- **Red teaming:** `python adversarial_testing.py` runs adversarial leads (fake company, prompt injection, contradictory data, incomplete lead, biased framing, duplicates) and saves a report to `adversarial_results/`. Latest run: **5/6 passed** — see `adversarial_results/run_2026-03-27_15-54-07.json`.
 
-The pipeline was formally evaluated using CrewAI's built-in evaluation framework across **two independent runs**, scoring each agent task on a scale of **1–10** (higher is better). The results demonstrate consistently near-perfect performance across both crews.
+### Evaluation Results
 
----
+The pipeline was evaluated with CrewAI's built-in evaluation framework across **two independent runs**, scoring each agent task 1–10 (LLM-as-judge; no human baseline yet).
 
 #### 🔎 Lead Scoring Crew — Avg Score: **9.9 / 10** *(~109s execution)*
 
 ![Lead Scoring Evaluation](Screenshot%202026-03-27%20165553.png)
 
-The Lead Scoring Crew comprises three specialized agents working in sequence — data enrichment, cultural fit analysis, and final scoring/validation. Across both evaluation runs:
-
-- The **Lead Data Specialist** delivered near-flawless web enrichment and lead profiling, scoring a perfect **10.0** in Run 1 and a strong **9.5** in Run 2 (average **9.8**). The minor variation in Run 2 reflects natural LLM output fluctuations, not a structural weakness.
-- The **Cultural Fit Analyst** achieved a **perfect 10.0 in both runs** (average **10.0**), demonstrating highly reliable company research and cultural alignment assessment — the most consistent agent in the entire pipeline.
-- The **Lead Scorer & Validator** also scored **10.0 across both runs** (average **10.0**), confirming that unified score generation and structured output validation are rock-solid, with zero degradation between runs.
-
-> The crew's overall average of **9.9/10** places it in exceptional territory — near the theoretical ceiling for an LLM-driven agentic workflow.
-
----
+- **Lead Data Specialist**: 10.0 / 9.5 across runs (avg 9.8)
+- **Cultural Fit Analyst**: 10.0 in both runs
+- **Lead Scorer & Validator**: 10.0 in both runs
 
 #### ✍️ Email Generation Crew — Avg Score: **9.8 / 10** *(~138s execution)*
 
 ![Email Writing Evaluation](Screenshot%202026-03-27%20170907.png)
 
-The Email Generation Crew takes the scored lead context and produces a polished, personalized outreach email through two collaborative agents:
-
-- The **Email Content Writer** scored **10.0** in Run 1 and **9.5** in Run 2 (average **9.8**). The slight dip in Run 2 is characteristic of creative generation tasks, where tone and phrasing can vary across runs — overall quality remained excellent.
-- The **Engagement Optimization Specialist**, responsible for layering in strong calls-to-action and persuasion hooks, scored a **perfect 10.0 in both runs** (average **10.0**), highlighting the reliability of the engagement enhancement step.
-
-> With an overall average of **9.8/10**, the Email Crew shows that fully automated, context-aware email drafting is both practical and production-quality — requiring minimal human intervention before sending.
-
----
-
-#### 📊 Summary
+- **Email Content Writer**: 10.0 / 9.5 across runs (avg 9.8)
+- **Engagement Optimization Specialist**: 10.0 in both runs
 
 | Crew | Average Score | Execution Time |
 |---|---|---|
-| Lead Scoring Crew (3 agents) | **9.9 / 10** | ~109 seconds |
-| Email Generation Crew (2 agents) | **9.8 / 10** | ~138 seconds |
-| **Both Crews Combined** | **9.85 / 10** | ~247 seconds total |
+| Lead Scoring Crew (3 agents) | 9.9 / 10 | ~109 s |
+| Email Generation Crew (2 agents) | 9.8 / 10 | ~138 s |
 
-These results validate that the multi-agent architecture is not only functionally correct but also highly consistent and reliable — making it suitable for real-world sales pipeline automation.
+---
+
+## Troubleshooting
+
+- **"Missing authentication token" / session expired** — log in again; tokens last 24 h and the UI session 1 h (sliding).
+- **Job stuck in `pending`** — the worker isn't running; start `python backend/worker.py`.
+- **Supabase errors on startup** — the backend refuses to start without `SUPABASE_URL`/`SUPABASE_KEY` in `backend/.env`.
+- **429 on login** — five failed attempts triggers a 15-minute lockout for that username.

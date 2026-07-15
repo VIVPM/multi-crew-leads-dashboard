@@ -96,8 +96,8 @@ def _load_configs() -> Dict[str, dict]:
 # Load once at module level (no Streamlit dependency)
 _CONFIGS = _load_configs()
 
-# Cache crew instances per API key to avoid rebuilding every request
-_crew_cache: Dict[tuple, tuple] = {}  # keyed by (gemini_key, tavily_key)
+# Per-attempt pipeline timeout, scaled by lead count in process_leads()
+PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
 
 
 # =============================================================================
@@ -107,13 +107,10 @@ _crew_cache: Dict[tuple, tuple] = {}  # keyed by (gemini_key, tavily_key)
 def build_crews(gemini_key: str, tavily_key: str):
     """
     Build and return (lead_scoring_crew, email_writing_crew) using the
-    Gemini and Tavily API keys supplied by the caller.
-    Caches crew instances per key pair to avoid rebuilding every request.
+    Gemini and Tavily API keys supplied by the caller. Building is cheap
+    (object construction only), so crews are built fresh per call — no
+    shared state between concurrent requests.
     """
-    cache_key = (gemini_key, tavily_key)
-    if cache_key in _crew_cache:
-        logger.info("Using cached crews for API key")
-        return _crew_cache[cache_key]
     llm_flash = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
     llm_flash_lite = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
 
@@ -183,8 +180,6 @@ def build_crews(gemini_key: str, tavily_key: str):
         verbose=True,
     )
 
-    logger.info("Built new crew instances (caching for future use)")
-    _crew_cache[cache_key] = (lead_scoring_crew, email_writing_crew)
     return lead_scoring_crew, email_writing_crew
 
 
@@ -206,23 +201,17 @@ class SalesPipeline(Flow):
         return scores
 
     @listen(score_leads)
-    def store_leads_score(self, scores):
-        return scores
-
-    @listen(score_leads)
     def filter_leads(self, scores):
-        return [score for score in scores if score["lead_score"].score > 70]
+        # keep each qualified score paired with its original lead index so
+        # results can be re-aligned with the full lead list afterwards
+        return [(i, score) for i, score in enumerate(scores) if score["lead_score"].score > 70]
 
     @listen(filter_leads)
-    def write_email(self, leads):
-        scored_leads = [lead.to_dict() for lead in leads]
-        emails = self._email_writing_crew.kickoff_for_each(scored_leads)
-        return emails
-
-    @listen(write_email)
-    def send_email(self, emails):
-        self.state["emails"] = emails
-        return emails
+    def write_email(self, qualified):
+        scored_leads = [score.to_dict() for _, score in qualified]
+        emails = self._email_writing_crew.kickoff_for_each(scored_leads) if scored_leads else []
+        self.state["emails"] = [(i, email) for (i, _), email in zip(qualified, emails)]
+        return self.state["emails"]
 
 
 # =============================================================================
@@ -234,8 +223,10 @@ async def process_leads(leads: list, gemini_key: str, tavily_key: str, max_retri
     Score and email-draft all leads in `leads`.
 
     Returns:
-        (scores, emails, agent_times) — scores and emails are lists of CrewAI
-        output objects; agent_times maps agent role -> seconds taken.
+        (scores, emails, agent_times) — scores is a list of CrewAI output
+        objects, one per lead; emails is aligned with `leads` and holds None
+        for leads that scored at or below the email threshold; agent_times
+        maps agent role -> seconds taken.
     """
     lead_scoring_crew, email_writing_crew = build_crews(gemini_key, tavily_key)
 
@@ -249,20 +240,19 @@ async def process_leads(leads: list, gemini_key: str, tavily_key: str, max_retri
         )
         task_timing.append({"agent": agent_name, "ts": time.time()})
 
-    try:
-        lead_scoring_crew.task_callback = _timing_cb
-        email_writing_crew.task_callback = _timing_cb
-    except Exception:
-        pass
+    lead_scoring_crew.task_callback = _timing_cb
+    email_writing_crew.task_callback = _timing_cb
 
-    flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
+    timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
 
     for attempt in range(1, max_retries + 1):
         try:
             task_timing.clear()
             start_ref[0] = time.time()
             logger.info("Pipeline attempt %d/%d for %d lead(s)", attempt, max_retries, len(leads))
-            await flow.kickoff_async()
+            # fresh flow per attempt — no stale state carried into a retry
+            flow = SalesPipeline(leads, lead_scoring_crew, email_writing_crew)
+            await asyncio.wait_for(flow.kickoff_async(), timeout=timeout_s)
             logger.info("Pipeline completed successfully on attempt %d", attempt)
 
             agent_times: Dict[str, float] = {}
@@ -271,7 +261,9 @@ async def process_leads(leads: list, gemini_key: str, tavily_key: str, max_retri
                 agent_times[entry["agent"]] = round(entry["ts"] - prev, 1)
                 prev = entry["ts"]
 
-            return flow.state["scores"], flow.state["emails"], agent_times
+            emails_by_index = dict(flow.state["emails"])
+            emails = [emails_by_index.get(i) for i in range(len(leads))]
+            return flow.state["scores"], emails, agent_times
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
             if attempt == max_retries:
