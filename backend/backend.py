@@ -17,31 +17,30 @@ import logging
 import secrets
 import sys
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("backend")
-
-# ---------------------------------------------------------------------------
-# Path + env setup
+# Path setup (logging_setup/security are siblings of this file)
 # ---------------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
+from logging_setup import configure_logging, request_context, lead_context
 from security import hash_password, verify_password, is_legacy_hash, make_token, verify_token
+
+# ---------------------------------------------------------------------------
+# Logging — structured JSON, correlated by request_id (see logging_setup.py)
+# ---------------------------------------------------------------------------
+configure_logging()
+logger = logging.getLogger("backend")
 
 # ---------------------------------------------------------------------------
 # Supabase
@@ -100,14 +99,26 @@ def current_user(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid or expired token. Please log in again.")
 
 
-# ponytail: in-memory rate limiter, per-instance; move to Redis when multi-instance
-_login_failures: dict = {}  # username -> [failure timestamps]
-
+# Supabase-backed (not in-memory) so the lockout holds across multiple API
+# instances, not just per-process.
 def _too_many_failures(username: str) -> bool:
-    now = time.time()
-    recent = [t for t in _login_failures.get(username, []) if now - t < LOGIN_WINDOW_S]
-    _login_failures[username] = recent
-    return len(recent) >= LOGIN_MAX_FAILURES
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=LOGIN_WINDOW_S)).isoformat()
+    resp = (
+        supabase.table("login_failures")
+        .select("id", count="exact")
+        .eq("username", username)
+        .gte("failed_at", cutoff)
+        .execute()
+    )
+    return (resp.count or 0) >= LOGIN_MAX_FAILURES
+
+
+def _record_login_failure(username: str) -> None:
+    supabase.table("login_failures").insert({"username": username}).execute()
+
+
+def _clear_login_failures(username: str) -> None:
+    supabase.table("login_failures").delete().eq("username", username).execute()
 
 
 # =============================================================================
@@ -179,7 +190,7 @@ def login(req: LoginRequest):
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in a few minutes.")
     user = supabase.table("users").select("*").eq("username", req.username).execute()
     if not user.data or not verify_password(req.password, user.data[0]["password"]):
-        _login_failures.setdefault(req.username, []).append(time.time())
+        _record_login_failure(req.username)
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     row = user.data[0]
     if is_legacy_hash(row["password"]):
@@ -188,10 +199,30 @@ def login(req: LoginRequest):
             {"password": hash_password(req.password)}
         ).eq("id", row["id"]).execute()
         logger.info("Migrated password hash to bcrypt for user: %s", req.username)
-    _login_failures.pop(req.username, None)
+    _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    return LoginResponse(user_id=uid, username=req.username, token=make_token(uid, SECRET_KEY))
+    return LoginResponse(
+        user_id=uid, username=req.username, token=make_token(uid, SECRET_KEY),
+        is_admin=bool(row.get("is_admin")),
+    )
+
+
+# =============================================================================
+# Company profile (ICP) — free-text context injected into research/email prompts
+# =============================================================================
+
+@app.get("/account/company-context")
+def get_company_context(user_id: str = Depends(current_user)):
+    resp = supabase.table("users").select("company_context").eq("id", user_id).execute()
+    context = resp.data[0].get("company_context") if resp.data else None
+    return {"company_context": context or ""}
+
+
+@app.put("/account/company-context")
+def set_company_context(req: CompanyProfileRequest, user_id: str = Depends(current_user)):
+    supabase.table("users").update({"company_context": req.company_context}).eq("id", user_id).execute()
+    return {"message": "Company profile saved."}
 
 
 # =============================================================================
