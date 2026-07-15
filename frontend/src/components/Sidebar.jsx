@@ -15,7 +15,7 @@ export default function Sidebar({ geminiKey, setGeminiKey, tavilyKey, setTavilyK
       </div>
 
       <div className="sidebar-section">
-        <h3 className="sidebar-section-title">🔑 API Keys</h3>
+        <h3 className="sidebar-section-title">API keys</h3>
 
         <div className="form-group">
           <label>Gemini API Key</label>
@@ -58,7 +58,7 @@ export default function Sidebar({ geminiKey, setGeminiKey, tavilyKey, setTavilyK
 
       <div className="sidebar-footer">
         <button className="btn btn-outline btn-full" onClick={onLogout}>
-          🚪 Log Out
+          Log out
         </button>
       </div>
     </aside>

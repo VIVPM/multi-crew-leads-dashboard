@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { api, friendlyError } from '../api'
 
-export default function Auth({ onLogin }) {
-  const [mode, setMode] = useState('login') // 'login' | 'signup'
+export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
+  const [mode, setMode] = useState(initialMode) // 'login' | 'signup'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState(null) // { type: 'error'|'success', text }
@@ -15,6 +15,16 @@ export default function Auth({ onLogin }) {
       setMessage({ type: 'error', text: 'Please fill in all fields.' })
       return
     }
+    if (mode === 'signup') {
+      if (username.trim().length < 3) {
+        setMessage({ type: 'error', text: 'Username must be at least 3 characters.' })
+        return
+      }
+      if (password.length < 8) {
+        setMessage({ type: 'error', text: 'Password must be at least 8 characters.' })
+        return
+      }
+    }
     setLoading(true)
     try {
       if (mode === 'signup') {
@@ -25,7 +35,7 @@ export default function Auth({ onLogin }) {
         setPassword('')
       } else {
         const data = await api('POST', '/auth/login', { username, password })
-        onLogin(data.user_id, data.username)
+        onLogin(data.user_id, data.username, data.token)
       }
     } catch (err) {
       setMessage({ type: 'error', text: friendlyError(err) })
@@ -37,6 +47,9 @@ export default function Auth({ onLogin }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
+        {onBack && (
+          <button className="auth-back" onClick={onBack}>← Back to overview</button>
+        )}
         <div className="auth-logo">🎯</div>
         <h1 className="auth-title">Sales Pipeline</h1>
         <p className="auth-subtitle">Lead Scoring &amp; Email Generation</p>

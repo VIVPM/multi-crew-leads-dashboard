@@ -4,7 +4,8 @@ import {
   LineChart, Line, CartesianGrid,
 } from 'recharts'
 
-const COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6']
+// Stripe design system: chart colors come from the documented gradient stops only
+const COLORS = ['#533afd', '#ea2261', '#f96bee', '#665efd', '#1c1e54', '#9b6829', '#b9b9f9', '#4434d4']
 
 function countBy(arr, key) {
   const map = {}
@@ -106,7 +107,7 @@ export default function Dashboard({ leads }) {
                 <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={150} />
                 <Tooltip />
-                <Bar dataKey="value" fill="#6366f1" radius={[0, 3, 3, 0]} />
+                <Bar dataKey="value" fill="#533afd" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : <NoData />}
@@ -132,7 +133,7 @@ export default function Dashboard({ leads }) {
                 <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-40} textAnchor="end" interval={0} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#10b981" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="count" fill="#665efd" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : <NoData />}
@@ -142,11 +143,11 @@ export default function Dashboard({ leads }) {
           {timeData.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <LineChart data={timeData} margin={{ bottom: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e3e8ee" />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} angle={-30} textAnchor="end" interval={0} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="count" stroke="#533afd" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : <NoData />}
@@ -159,7 +160,7 @@ export default function Dashboard({ leads }) {
                 <XAxis type="number" tick={{ fontSize: 11 }} domain={[0, 100]} allowDecimals={false} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={150} />
                 <Tooltip formatter={v => `${v}`} />
-                <Bar dataKey="avg" fill="#f59e0b" radius={[0, 3, 3, 0]} />
+                <Bar dataKey="avg" fill="#ea2261" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : <NoData />}

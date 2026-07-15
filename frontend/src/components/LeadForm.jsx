@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
-const EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/
+const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 const MAX_LEN = 255
 const SOURCES = ['Website', 'Referral', 'Event', 'Social Media', 'Other']
 
@@ -41,27 +41,20 @@ function validate(fields) {
 }
 
 export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
-  const [fields, setFields] = useState({
-    name: '', job_title: '', company: '', email: '',
-    use_case: '', industry: '', location: '', source: 'Website',
-  })
+  // initialized from props; the parent keys this component by lead id so a
+  // different lead remounts the form with fresh state
+  const [fields, setFields] = useState(() => ({
+    name: lead?.name || '',
+    job_title: lead?.job_title || '',
+    company: lead?.company || '',
+    email: lead?.email || '',
+    use_case: lead?.use_case || '',
+    industry: lead && INDUSTRIES.includes(lead.industry) ? lead.industry : '',
+    location: lead?.location || '',
+    source: lead?.source || 'Website',
+  }))
   const [errors, setErrors] = useState([])
   const [status, setStatus] = useState(null) // 'saving' | 'processing' | null
-
-  useEffect(() => {
-    if (lead) {
-      setFields({
-        name: lead.name || '',
-        job_title: lead.job_title || '',
-        company: lead.company || '',
-        email: lead.email || '',
-        use_case: lead.use_case || '',
-        industry: INDUSTRIES.includes(lead.industry) ? lead.industry : '',
-        location: lead.location || '',
-        source: lead.source || 'Website',
-      })
-    }
-  }, [lead])
 
   function set(key, val) {
     setFields(f => ({ ...f, [key]: val }))
@@ -84,11 +77,11 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
 
   return (
     <div className="card lead-form-card">
-      <h3 className="card-title">{lead ? '✏️ Edit Lead' : '➕ Add New Lead'}</h3>
+      <h3 className="card-title">{lead ? 'Edit lead' : 'Add new lead'}</h3>
 
       {!keysReady && (
         <div className="alert alert-warning">
-          Enter your Sambanova &amp; Tavily API keys in the sidebar before saving.
+          Enter your Gemini &amp; Tavily API keys in the sidebar before saving.
         </div>
       )}
 
@@ -98,7 +91,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
 
       {status === 'processing' && (
         <div className="alert alert-info">
-          ⏳ AI crew is scoring and writing email — this may take a few minutes…
+          The AI crew is scoring this lead and drafting an email — this can take a few minutes.
         </div>
       )}
 
@@ -145,7 +138,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
 
         <div className="form-actions">
           <button type="submit" className="btn btn-success" disabled={loading || !keysReady}>
-            {status === 'saving' ? '💾 Saving…' : status === 'processing' ? '⚡ Processing…' : '⚡ Save & Process'}
+            {status === 'saving' ? 'Saving…' : status === 'processing' ? 'Processing…' : 'Save and process'}
           </button>
           <button type="button" className="btn btn-outline" onClick={onCancel} disabled={loading}>
             Cancel

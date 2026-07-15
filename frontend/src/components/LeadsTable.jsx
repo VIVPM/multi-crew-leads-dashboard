@@ -12,7 +12,8 @@ function flattenToText(obj) {
 function exportCSV(leads) {
   const cols = ['Name', 'Job Title', 'Company', 'Email', 'Use Case', 'Industry', 'Location', 'Source', 'Score']
   const keys = ['name', 'job_title', 'company', 'email', 'use_case', 'industry', 'location', 'source', 'score']
-  const rows = leads.map(l => keys.map(k => `"${(l[k] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+  const sanitize = s => (/^[=+\-@]/.test(s) ? `'${s}` : s) // neutralize spreadsheet formula injection
+  const rows = leads.map(l => keys.map(k => `"${sanitize((l[k] ?? '').toString()).replace(/"/g, '""')}"`).join(','))
   const csv = [cols.join(','), ...rows].join('\n')
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -37,7 +38,7 @@ function AnalysisModal({ leadId, onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-container" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3 className="modal-title">📊 Analysis Results</h3>
+          <h3 className="modal-title">Analysis results</h3>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
@@ -79,6 +80,9 @@ function AnalysisModal({ leadId, onClose }) {
               </div>
 
               <h4 className="analysis-section-title">Agent Performance Breakdown</h4>
+              <p className="muted" style={{ fontSize: '0.8rem' }}>
+                Token usage is reported per crew; per-agent tokens and cost are even-split estimates.
+              </p>
               <table className="analysis-table">
                 <thead>
                   <tr>
@@ -93,7 +97,7 @@ function AnalysisModal({ leadId, onClose }) {
                   {(data.agents_data || []).map((agent, i) => (
                     <tr key={i}>
                       <td>{agent.agent}</td>
-                      <td><span className="badge badge-green">✅ {agent.status}</span></td>
+                      <td><span className="badge badge-green">{agent.status}</span></td>
                       <td>{agent.time_seconds != null ? `${agent.time_seconds}s` : '—'}</td>
                       <td>{agent.tokens != null ? agent.tokens.toLocaleString() : '—'}</td>
                       <td>{agent.cost != null ? `$${agent.cost.toFixed(6)}` : '—'}</td>
@@ -114,7 +118,7 @@ function DeleteConfirmModal({ name, onConfirm, onCancel }) {
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal-container modal-sm" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3 className="modal-title">Delete Lead</h3>
+          <h3 className="modal-title">Delete lead</h3>
           <button className="modal-close" onClick={onCancel}>×</button>
         </div>
         <div className="modal-body">
@@ -185,35 +189,35 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
 
           {lead.scoring_result && (
             <div className="lead-section">
-              <div className="lead-section-title">Scoring Result</div>
+              <div className="lead-section-title">Scoring result</div>
               <pre className="lead-json">{JSON.stringify(lead.scoring_result, null, 2)}</pre>
             </div>
           )}
 
           {lead.email_draft && (
             <div className="lead-section">
-              <div className="lead-section-title">Generated Email Draft</div>
+              <div className="lead-section-title">Email draft</div>
               <pre className="lead-email">{lead.email_draft}</pre>
             </div>
           )}
 
           <div className="lead-card-actions">
             {lead.score == null ? (
-              <button className="btn btn-sm btn-outline" onClick={() => onEdit(lead)}>✏️ Edit</button>
+              <button className="btn btn-sm btn-outline" onClick={() => onEdit(lead)}>Edit</button>
             ) : (
-              <span className="badge badge-green">✅ Processed</span>
+              <span className="badge badge-green">Processed</span>
             )}
             <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
-              {deleting ? 'Deleting…' : '🗑️ Delete'}
+              {deleting ? 'Deleting…' : 'Delete'}
             </button>
-            <button className="btn btn-sm btn-outline" onClick={onRefresh}>🔄 Refresh</button>
+            <button className="btn btn-sm btn-outline" onClick={onRefresh}>Refresh</button>
             <button
               className="btn btn-sm btn-outline"
               onClick={() => setShowAnalysis(true)}
               disabled={lead.score == null}
               title={lead.score == null ? 'Process this lead first to view analysis' : 'View analysis results'}
             >
-              📊 Analysis
+              Analysis
             </button>
           </div>
         </div>
@@ -258,13 +262,13 @@ export default function LeadsTable({ leads, onEdit, onRefresh }) {
       <div className="table-controls">
         <input
           className="search-input"
-          placeholder="🔍 Search leads (name, company, email, score…)"
+          placeholder="Search leads (name, company, email, score…)"
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(0) }}
         />
         {filtered.length > 0 && (
           <button className="btn btn-outline" onClick={() => exportCSV(filtered)}>
-            📥 Export CSV
+            Export CSV
           </button>
         )}
       </div>
@@ -295,10 +299,10 @@ export default function LeadsTable({ leads, onEdit, onRefresh }) {
 
       <div className="pagination-controls">
         <button className="btn btn-outline btn-sm" disabled={safePage === 0} onClick={() => setPage(p => p - 1)}>
-          ⬅️ Previous
+          ← Previous
         </button>
         <button className="btn btn-outline btn-sm" disabled={safePage >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
-          Next ➡️
+          Next →
         </button>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import Landing from './components/Landing'
 import Auth from './components/Auth'
 import Sidebar from './components/Sidebar'
 import LeadForm from './components/LeadForm'
@@ -9,20 +10,23 @@ import './App.css'
 
 const SESSION_KEY = 'sp_session'
 const SESSION_TTL = 60 * 60 * 1000 // 1 hour in ms
+const JOB_POLL_MS = 5000
+const JOB_DEADLINE_MS = 20 * 60 * 1000 // give a batch up to 20 minutes
 
 function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, expiresAt, geminiKey, tavilyKey } = JSON.parse(raw)
-    if (Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, geminiKey: geminiKey || '', tavilyKey: tavilyKey || '' }
+    const { userId, username, token, expiresAt } = JSON.parse(raw)
+    if (!token || Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
+    return { userId, username, token }
   } catch { return null }
 }
 
-function saveSession(userId, username, geminiKey = '', tavilyKey = '') {
+// API keys deliberately stay in memory only (never persisted) — re-entered per session
+function saveSession(userId, username, token) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId, username, geminiKey, tavilyKey, expiresAt: Date.now() + SESSION_TTL,
+    userId, username, token, expiresAt: Date.now() + SESSION_TTL,
   }))
 }
 
@@ -30,14 +34,17 @@ function clearSession() {
   localStorage.removeItem(SESSION_KEY)
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
 export default function App() {
   const saved = loadSession()
   const [loggedIn, setLoggedIn] = useState(!!saved)
+  const [authMode, setAuthMode] = useState(null) // null (landing) | 'login' | 'signup'
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
 
-  const [geminiKey, setGeminiKey] = useState(saved?.geminiKey ?? '')
-  const [tavilyKey, setTavilyKey] = useState(saved?.tavilyKey ?? '')
+  const [geminiKey, setGeminiKey] = useState('')
+  const [tavilyKey, setTavilyKey] = useState('')
 
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(false)
@@ -46,8 +53,8 @@ export default function App() {
   const [globalMsg, setGlobalMsg] = useState(null)
 
   // --- Auth ---
-  function handleLogin(uid, uname) {
-    saveSession(uid, uname)
+  function handleLogin(uid, uname, token) {
+    saveSession(uid, uname, token)
     setUserId(uid)
     setUsername(uname)
     setLoggedIn(true)
@@ -59,6 +66,8 @@ export default function App() {
     setLoggedIn(false)
     setUserId(null)
     setUsername('')
+    setGeminiKey('')
+    setTavilyKey('')
     setLeads([])
     setAddingLead(false)
     setEditingLead(null)
@@ -67,11 +76,6 @@ export default function App() {
   useEffect(() => {
     if (saved) fetchLeads(saved.userId)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!loggedIn || !userId) return
-    saveSession(userId, username, geminiKey, tavilyKey)
-  }, [geminiKey, tavilyKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Leads ---
   const fetchLeads = useCallback(async (uid) => {
@@ -88,7 +92,19 @@ export default function App() {
     }
   }, [userId])
 
-  // Save lead then immediately process it — called by LeadForm
+  // Poll the processing job until it finishes; returns the job row
+  async function waitForJob(jobId) {
+    const deadline = Date.now() + JOB_DEADLINE_MS
+    while (Date.now() < deadline) {
+      await sleep(JOB_POLL_MS)
+      const job = await api('GET', `/jobs/${jobId}`)
+      if (job.status === 'done') return job
+      if (job.status === 'failed') throw new Error(job.error || 'Processing failed.')
+    }
+    throw new Error('Processing is taking longer than expected — refresh the page later to see results.')
+  }
+
+  // Save lead then enqueue processing — called by LeadForm
   async function handleSaveAndProcess(fields, setStatus) {
     let savedLead
     setStatus('saving')
@@ -96,7 +112,7 @@ export default function App() {
       if (editingLead) {
         savedLead = await api('PUT', `/leads/${editingLead.id}`, fields)
       } else {
-        savedLead = await api('POST', '/leads', { ...fields, user_id: userId })
+        savedLead = await api('POST', '/leads', fields)
       }
     } catch (e) {
       setStatus(null)
@@ -104,12 +120,14 @@ export default function App() {
     }
 
     setStatus('processing')
+    let job
     try {
-      await api('POST', '/leads/process', {
+      const { job_id } = await api('POST', '/leads/process', {
         leads: [savedLead],
         gemini_api_key: geminiKey,
         tavily_api_key: tavilyKey,
       })
+      job = await waitForJob(job_id)
     } catch (e) {
       // Processing failed — lead was saved, still refresh so it appears in the table
       await fetchLeads()
@@ -124,7 +142,14 @@ export default function App() {
     setStatus(null)
     setAddingLead(false)
     setEditingLead(null)
-    setGlobalMsg({ type: 'success', text: '✅ Lead saved, scored, and email drafted!' })
+    const r = job.results?.[0]
+    if (!r) {
+      setGlobalMsg({ type: 'warning', text: 'Processing finished but no result was recorded.' })
+    } else if (r.email_drafted) {
+      setGlobalMsg({ type: 'success', text: `Lead scored ${r.score} — email drafted.` })
+    } else {
+      setGlobalMsg({ type: 'warning', text: `Lead scored ${r.score} — below the 70 threshold, so no email was drafted.` })
+    }
   }
 
   function handleEditLead(lead) {
@@ -133,7 +158,11 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  if (!loggedIn) return <Auth onLogin={handleLogin} />
+  if (!loggedIn) {
+    return authMode
+      ? <Auth initialMode={authMode} onLogin={handleLogin} onBack={() => setAuthMode(null)} />
+      : <Landing onSignIn={() => setAuthMode('login')} onGetStarted={() => setAuthMode('signup')} />
+  }
 
   const keysReady = !!(geminiKey && tavilyKey)
 
@@ -150,7 +179,7 @@ export default function App() {
 
       <main className="main-content">
         <div className="page-header">
-          <h1 className="page-title">🎯 Sales Pipeline — Lead Scoring &amp; Email Generation</h1>
+          <h1 className="page-title">Sales Pipeline — Lead Scoring &amp; Email Generation</h1>
         </div>
 
         {globalMsg && (
@@ -162,6 +191,7 @@ export default function App() {
 
         {addingLead ? (
           <LeadForm
+            key={editingLead?.id ?? 'new'}
             lead={editingLead}
             onSave={handleSaveAndProcess}
             onCancel={() => { setAddingLead(false); setEditingLead(null) }}
@@ -170,18 +200,18 @@ export default function App() {
         ) : (
           <div className="lead-controls">
             <button className="btn btn-primary" onClick={() => { setEditingLead(null); setAddingLead(true) }}>
-              ➕ Add New Lead
+              Add new lead
             </button>
           </div>
         )}
 
         <section className="section">
-          <h2 className="section-title">📊 Leads Dashboard</h2>
+          <h2 className="section-title">Leads dashboard</h2>
           {leadsLoading ? <p className="muted">Loading leads…</p> : <Dashboard leads={leads} />}
         </section>
 
         <section className="section">
-          <h2 className="section-title">📋 Leads Data</h2>
+          <h2 className="section-title">All leads</h2>
           {leadsLoading
             ? <p className="muted">Loading…</p>
             : <LeadsTable leads={leads} onEdit={handleEditLead} onRefresh={fetchLeads} />
