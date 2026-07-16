@@ -157,11 +157,16 @@ class LeadUpdate(BaseModel):
     industry: Optional[str] = None
     location: Optional[str] = None
     source: Optional[str] = None
+    email_draft: Optional[str] = None
 
 class ProcessLeadsRequest(BaseModel):
     leads: List[dict]
     gemini_api_key: str
     tavily_api_key: str
+    force_refresh: bool = False  # bypass the company-research cache for this batch
+
+class CompanyProfileRequest(BaseModel):
+    company_context: str = Field(max_length=4000)
 
 
 # =============================================================================
@@ -237,7 +242,17 @@ def _get_owned_lead(lead_id: str, user_id: str) -> dict:
 
 
 @app.get("/leads/{user_id}")
-def get_leads(user_id: str, auth_user: str = Depends(current_user)):
+def get_leads(
+    user_id: str,
+    auth_user: str = Depends(current_user),
+    limit: int = Query(500, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    # ponytail: 500 is generous enough that today's users never notice a
+    # cap, but it's a real cap now — this used to be select() with no
+    # limit at all, unbounded no matter how many leads a user accumulated.
+    # limit/offset are accepted (not yet used by the frontend) so real
+    # paged UI can be added later without another backend change.
     if user_id != auth_user:
         raise HTTPException(status_code=403, detail="Forbidden.")
     resp = (
@@ -245,6 +260,7 @@ def get_leads(user_id: str, auth_user: str = Depends(current_user)):
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
         .execute()
     )
     return resp.data or []
@@ -295,10 +311,21 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
     if len(owned.data or []) != len(set(lead_ids)):
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
+    profile = supabase.table("users").select("company_context").eq("id", user_id).execute()
+    company_context = (profile.data[0].get("company_context") if profile.data else None) or ""
+    if not company_context.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Set your company profile & ICP before processing leads.",
+        )
+
     job = {
         "user_id": user_id,
         "status": "pending",
         "leads": req.leads,
+        # frozen at enqueue time so a later profile edit can't change an already-queued job
+        "our_company_context": company_context,
+        "force_refresh": req.force_refresh,
         # ponytail: keys stored only for the job's lifetime — worker nulls them on completion
         "gemini_api_key": req.gemini_api_key,
         "tavily_api_key": req.tavily_api_key,
