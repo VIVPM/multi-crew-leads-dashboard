@@ -79,6 +79,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Optional: HTTP-layer tracing (every endpoint, not just LLM calls) to
+# Grafana Cloud only — Langfuse (see worker.py) stays focused on CrewAI/
+# LiteLLM spans, this covers the rest of the app (auth, lead CRUD, admin
+# overview) that Langfuse was never meant to show. Non-fatal if unset.
+if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        _http_tracer_provider = TracerProvider(resource=Resource.create({
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
+            "service.namespace": "lead-coordinator",
+            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
+        }))
+        _http_tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/traces",
+            headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
+        )))
+        FastAPIInstrumentor.instrument_app(app, tracer_provider=_http_tracer_provider)
+        logger.info("HTTP-layer tracing enabled via OTLP (Grafana Cloud)")
+    except Exception:
+        logger.exception("Failed to initialize HTTP tracing (non-fatal)")
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Every log line emitted while handling this request carries the same
+    request_id, so `grep request_id=<x>` shows the full story for one call."""
+    request_id = uuid.uuid4().hex[:12]
+    with request_context(request_id):
+        response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 @app.get("/")
 def health():
@@ -137,6 +174,7 @@ class LoginResponse(BaseModel):
     user_id: str
     username: str
     token: str
+    is_admin: bool = False
 
 class LeadCreate(BaseModel):
     name: str
@@ -367,88 +405,157 @@ def get_analysis(lead_id: str, user_id: str = Depends(current_user)):
 
 
 # =============================================================================
+# Admin overview — aggregate stats across ALL users (not ownership-scoped)
+# =============================================================================
+
+def current_admin(user_id: str = Depends(current_user)) -> str:
+    resp = supabase.table("users").select("is_admin").eq("id", user_id).execute()
+    if not resp.data or not resp.data[0].get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return user_id
+
+
+@app.get("/admin/overview")
+def admin_overview(_: str = Depends(current_admin)):
+    # Aggregation happens in SQL (admin_user_stats(), migrations.sql) — one
+    # row per user, not one row per lead/job. Replaces the old approach of
+    # fetching every users/leads/jobs/analysis_runs row into Python, which
+    # didn't scale past a small dataset.
+    users = supabase.rpc("admin_user_stats").execute().data or []
+
+    # Jobs still fetched raw for the status-pie and per-day trend chart
+    # (bucketed client-side, same pattern Dashboard.jsx uses for leads-over-
+    # time) — but capped to the last 90 days server-side instead of every
+    # job ever created; the chart only shows the last 30 active days anyway.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    jobs = (
+        supabase.table("jobs").select("status,created_at")
+        .gte("created_at", cutoff).execute().data or []
+    )
+
+    return {"users": users, "jobs": jobs}
+
+
+@app.get("/admin/users/{user_id}/leads")
+def admin_user_leads(user_id: str, _: str = Depends(current_admin)):
+    """Drill-down for the admin overview table — same shape as GET /leads/{user_id},
+    but any admin can view any user's leads (no ownership check)."""
+    resp = (
+        supabase.table("leads")
+        .select("id,name,company,job_title,email,score,created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return resp.data or []
+
+
+# =============================================================================
 # Result persistence — called by worker.py after the crews finish
 # =============================================================================
 
-def persist_results(leads: list, scores: list, emails: list, agent_times: dict, elapsed: float) -> list:
+def persist_results(
+    leads: list, scores: list, emails: list, agent_times: dict, cache_hits: list, elapsed: float,
+) -> list:
     """
     Write scores/emails/analysis to Supabase for each processed lead.
     `emails` is aligned with `leads` (None where the lead scored below the
-    email threshold). Returns a summary list for the job record.
+    email threshold). `cache_hits` is aligned with `leads` (True where
+    company research was served from cache). Returns a summary list for the
+    job record.
     """
     results = []
-    for lead, score_obj, email_draft in zip(leads, scores, emails):
-        pyd = score_obj.pydantic
-        update_payload = {
-            "score":          pyd.lead_score.score,
-            "scoring_result": pyd.dict(),
-        }
-        if email_draft is not None:
-            update_payload["email_draft"] = email_draft.raw
-        supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
-
-        # Token usage is reported per crew, not per agent; the per-agent rows
-        # below split the crew total evenly — estimates, not measurements.
-        score_usage = score_obj.token_usage
-        email_usage = email_draft.token_usage if email_draft else None
-        score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
-        email_tokens  = getattr(email_usage, "total_tokens",      0) or 0
-        score_prompt  = getattr(score_usage, "prompt_tokens",     0) or 0
-        score_compl   = getattr(score_usage, "completion_tokens", 0) or 0
-        email_prompt  = getattr(email_usage, "prompt_tokens",     0) or 0
-        email_compl   = getattr(email_usage, "completion_tokens", 0) or 0
-
-        total_tokens = score_tokens + email_tokens
-        # gemini-2.5-flash pricing: $0.15/M input, $0.60/M output
-        total_cost = round(
-            (score_prompt + email_prompt) * 0.15 / 1_000_000
-            + (score_compl + email_compl) * 0.60 / 1_000_000,
-            6,
-        )
-        cost_per_token = (total_cost / total_tokens) if total_tokens else 0.0
-
-        score_tasks = score_obj.tasks_output or []
-        email_tasks = (email_draft.tasks_output if email_draft else None) or []
-        per_score = score_tokens // len(score_tasks) if score_tasks else 0
-        per_email = email_tokens // len(email_tasks) if email_tasks else 0
-
-        agents_data = []
-        for tasks, per_tokens in ((score_tasks, per_score), (email_tasks, per_email)):
-            for t in tasks:
-                name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
-                agents_data.append({
-                    "agent": name, "status": "Success",
-                    "tokens": per_tokens,
-                    "cost": round(per_tokens * cost_per_token, 6),
-                    "time_seconds": agent_times.get(name),
-                })
-
-        analysis_record = {
-            "lead_id":          lead["id"],
-            "duration_seconds": elapsed,
-            "total_tokens":     total_tokens,
-            "total_cost":       total_cost,
-            "success_rate":     100.0,
-            "agents_executed":  len(agents_data),
-            "agents_data":      agents_data,
-        }
-        try:
-            existing = supabase.table("analysis_runs").select("id").eq("lead_id", lead["id"]).execute()
-            if existing.data:
-                supabase.table("analysis_runs").update(analysis_record).eq("lead_id", lead["id"]).execute()
-            else:
-                supabase.table("analysis_runs").insert(analysis_record).execute()
-        except Exception as exc:
-            logger.warning("Failed to save analysis for lead %s: %s", lead.get("name"), exc)
-
-        results.append({
-            "lead_id": lead["id"],
-            "score": pyd.lead_score.score,
-            "email_drafted": email_draft is not None,
-        })
-        logger.info("Processed lead %s — score %s", lead.get("name"), pyd.lead_score.score)
-
+    for lead, score_obj, email_draft, cache_hit in zip(leads, scores, emails, cache_hits):
+        with lead_context(lead["id"]):
+            results.append(_persist_one_lead(lead, score_obj, email_draft, agent_times, cache_hit, elapsed))
     return results
+
+
+def _persist_one_lead(
+    lead: dict, score_obj, email_draft, agent_times: dict, cache_hit: bool, elapsed: float,
+) -> dict:
+    pyd = score_obj.pydantic
+    update_payload = {
+        "score":          pyd.lead_score.score,
+        "scoring_result": pyd.dict(),
+    }
+    if email_draft is not None:
+        update_payload["email_draft"] = email_draft.raw
+    supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
+
+    # Token usage is reported per crew, not per agent; the per-agent rows
+    # below split the crew total evenly — estimates, not measurements.
+    score_usage = score_obj.token_usage
+    email_usage = email_draft.token_usage if email_draft else None
+    score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
+    email_tokens  = getattr(email_usage, "total_tokens",      0) or 0
+    score_prompt  = getattr(score_usage, "prompt_tokens",     0) or 0
+    score_compl   = getattr(score_usage, "completion_tokens", 0) or 0
+    email_prompt  = getattr(email_usage, "prompt_tokens",     0) or 0
+    email_compl   = getattr(email_usage, "completion_tokens", 0) or 0
+
+    total_tokens = score_tokens + email_tokens
+    # gemini-2.5-flash pricing: $0.15/M input, $0.60/M output
+    total_cost = round(
+        (score_prompt + email_prompt) * 0.15 / 1_000_000
+        + (score_compl + email_compl) * 0.60 / 1_000_000,
+        6,
+    )
+    cost_per_token = (total_cost / total_tokens) if total_tokens else 0.0
+
+    score_tasks = score_obj.tasks_output or []
+    email_tasks = (email_draft.tasks_output if email_draft else None) or []
+    per_score = score_tokens // len(score_tasks) if score_tasks else 0
+    per_email = email_tokens // len(email_tasks) if email_tasks else 0
+
+    agents_data = []
+    for tasks, per_tokens in ((score_tasks, per_score), (email_tasks, per_email)):
+        for t in tasks:
+            name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
+            agents_data.append({
+                "agent": name, "status": "Success",
+                "tokens": per_tokens,
+                "cost": round(per_tokens * cost_per_token, 6),
+                "time_seconds": agent_times.get(name),
+            })
+    if cache_hit:
+        # company research was served from cache — no LLM/search call made for it
+        agents_data.append({
+            "agent": "Company Research & Cultural Fit Analyst",
+            "status": "Cached", "tokens": 0, "cost": 0.0, "time_seconds": 0,
+        })
+    if email_draft is None:
+        # score <= 70 — the email crew never ran for this lead. Shown at 0
+        # rather than omitted, so the breakdown always lists all 4 agents.
+        agents_data.append({
+            "agent": "Email Specialist",
+            "status": "Skipped", "tokens": 0, "cost": 0.0, "time_seconds": 0,
+        })
+
+    analysis_record = {
+        "lead_id":          lead["id"],
+        "duration_seconds": elapsed,
+        "total_tokens":     total_tokens,
+        "total_cost":       total_cost,
+        "success_rate":     100.0,
+        "agents_executed":  len(agents_data),
+        "agents_data":      agents_data,
+    }
+    try:
+        existing = supabase.table("analysis_runs").select("id").eq("lead_id", lead["id"]).execute()
+        if existing.data:
+            supabase.table("analysis_runs").update(analysis_record).eq("lead_id", lead["id"]).execute()
+        else:
+            supabase.table("analysis_runs").insert(analysis_record).execute()
+    except Exception as exc:
+        logger.warning("Failed to save analysis for lead %s: %s", lead.get("name"), exc)
+
+    logger.info("Processed lead %s — score %s", lead.get("name"), pyd.lead_score.score)
+    return {
+        "lead_id": lead["id"],
+        "score": pyd.lead_score.score,
+        "email_drafted": email_draft is not None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +568,11 @@ if os.getenv("RUN_WORKER_IN_PROCESS") == "1":
 
     @app.on_event("startup")
     def _start_worker_thread():
+        import asyncio
         from worker import main as worker_main  # lazy import: worker imports this module
-        threading.Thread(target=worker_main, daemon=True, name="job-worker").start()
+        # worker.main() is a coroutine (concurrent job processing) — needs its
+        # own event loop, since this thread isn't the one FastAPI/uvicorn runs.
+        threading.Thread(
+            target=lambda: asyncio.run(worker_main()), daemon=True, name="job-worker",
+        ).start()
         logger.info("In-process worker thread started (RUN_WORKER_IN_PROCESS=1)")
