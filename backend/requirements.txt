@@ -15,7 +15,15 @@ bcrypt==5.0.0
 # OTLP endpoint (worker.py) — no `langfuse`/`openlit` packages needed.
 openinference-instrumentation-crewai==1.1.10
 openinference-instrumentation-litellm==0.1.34
-opentelemetry-instrumentation-fastapi==0.65b0
+# opentelemetry-instrumentation-fastapi intentionally NOT pinned here: it
+# hard-requires opentelemetry-semantic-conventions==0.65b0, which conflicts
+# with opentelemetry-sdk==1.42.1's requirement of exactly 0.63b1 (crewai
+# needs opentelemetry-sdk~=1.42.0) — pip's resolver correctly rejects this
+# as impossible when installing from a clean environment. The Grafana
+# HTTP-tracing code in backend.py that needs this package is already
+# env-gated and non-fatal (see GRAFANA_OTLP_ENDPOINT); re-add this package
+# only when actually re-enabling that feature, and expect to re-resolve
+# this same conflict then (likely needs a newer crewai/opentelemetry-sdk).
 opentelemetry-api==1.42.1
 opentelemetry-sdk==1.42.1
 opentelemetry-exporter-otlp-proto-http==1.42.1
