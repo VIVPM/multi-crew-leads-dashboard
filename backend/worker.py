@@ -11,9 +11,92 @@ import sys
 import time
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+# Windows' console defaults to cp1252, which can't print the emoji CrewAI's
+# internal event-bus logging emits — only matters when this runs standalone
+# (python backend/worker.py); the in-process mode inherits backend.py's setup.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
+
+# Load .env directly rather than relying on backend.py's load_dotenv() side
+# effect — the Langfuse/litellm instrumentation setup below now runs BEFORE
+# backend.backend is imported (ordering requirement, see comment below), so
+# that side effect isn't available yet. dotenv doesn't override already-set
+# real env vars, so this is a no-op in the in-process (RUN_WORKER_IN_PROCESS)
+# case where backend.py has already loaded them.
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
+
+from logging_setup import configure_logging, job_context  # noqa: E402
+
+configure_logging()  # idempotent — no-op if backend.py already configured it in-process
+logger = logging.getLogger("worker")
+
+# Optional: Langfuse tracing of every agent/task/LLM call. Must run BEFORE
+# crewai/litellm are imported anywhere (the litellm instrumentor patches
+# litellm at import time) — hence this sits above `from pipeline import
+# process_leads` below, not after it.
+#
+# Targeted instrumentors (CrewAI + LiteLLM only) exporting straight to
+# Langfuse's own OTLP endpoint, instead of OpenLit's blanket ~40-library
+# auto-instrumentation sweep — same Langfuse project, roughly half the
+# import/startup time (measured: ~23.7s with OpenLit vs ~12-14s here, same
+# machine). Neither the `langfuse` nor `openlit` packages are needed at all.
+#
+# Dual-exported to Grafana Cloud too when configured: one shared
+# TracerProvider, one span processor per destination, same CrewAI/LiteLLM
+# spans sent to both — no re-instrumentation, Langfuse keeps the nicer
+# LLM-specific UX (prompts/evals), Grafana adds infra correlation.
+_have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
+_have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
+
+if _have_langfuse or _have_grafana:
+    try:
+        import base64
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from openinference.instrumentation.crewai import CrewAIInstrumentor
+        from openinference.instrumentation.litellm import LiteLLMInstrumentor
+
+        _tracer_provider = TracerProvider(resource=Resource.create({
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
+            "service.namespace": "lead-coordinator",
+            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
+        }))
+        _enabled = []
+
+        if _have_langfuse:
+            _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+            _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
+            _auth = base64.b64encode(_creds.encode()).decode()
+            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+                endpoint=f"{_lf_host}/api/public/otel/v1/traces",
+                headers={"Authorization": f"Basic {_auth}"},
+            )))
+            _enabled.append(f"Langfuse ({_lf_host})")
+
+        if _have_grafana:
+            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/traces",
+                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
+            )))
+            _enabled.append("Grafana Cloud")
+
+        CrewAIInstrumentor().instrument(tracer_provider=_tracer_provider)
+        LiteLLMInstrumentor().instrument(tracer_provider=_tracer_provider)
+        logger.info("LLM tracing enabled via OTLP: %s", ", ".join(_enabled))
+    except Exception:
+        logger.exception("Failed to initialize LLM tracing (non-fatal)")
+else:
+    logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
 
 # The API module is `backend.backend` when served by uvicorn from the repo
 # root, but plain `backend` when this file runs standalone (python backend/worker.py).

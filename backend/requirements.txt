@@ -11,3 +11,11 @@ pandas==3.0.3
 supabase==2.31.0
 google-genai==2.11.0
 bcrypt==5.0.0
+# Langfuse tracing: targeted instrumentors exporting straight to Langfuse's
+# OTLP endpoint (worker.py) — no `langfuse`/`openlit` packages needed.
+openinference-instrumentation-crewai==1.1.10
+openinference-instrumentation-litellm==0.1.34
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-api==1.42.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1
