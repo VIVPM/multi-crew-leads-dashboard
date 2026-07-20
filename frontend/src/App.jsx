@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react'
 import Landing from './components/Landing'
 import Auth from './components/Auth'
 import Sidebar from './components/Sidebar'
-import AdminOverview from './components/AdminOverview'
 import CompanyProfile from './components/CompanyProfile'
 import LeadForm from './components/LeadForm'
 import Dashboard from './components/Dashboard'
@@ -19,16 +18,16 @@ function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, token, isAdmin, expiresAt } = JSON.parse(raw)
+    const { userId, username, token, expiresAt } = JSON.parse(raw)
     if (!token || Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, token, isAdmin: !!isAdmin }
+    return { userId, username, token }
   } catch { return null }
 }
 
 // API keys deliberately stay in memory only (never persisted) — re-entered per session
-function saveSession(userId, username, token, isAdmin) {
+function saveSession(userId, username, token) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId, username, token, isAdmin: !!isAdmin, expiresAt: Date.now() + SESSION_TTL,
+    userId, username, token, expiresAt: Date.now() + SESSION_TTL,
   }))
 }
 
@@ -44,7 +43,6 @@ export default function App() {
   const [authMode, setAuthMode] = useState(null) // null (landing) | 'login' | 'signup'
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
-  const [isAdmin, setIsAdmin] = useState(saved?.isAdmin ?? false)
 
   const [geminiKey, setGeminiKey] = useState('')
   const [tavilyKey, setTavilyKey] = useState('')
@@ -61,11 +59,10 @@ export default function App() {
   const [showIcpDialog, setShowIcpDialog] = useState(false)
 
   // --- Auth ---
-  function handleLogin(uid, uname, token, admin) {
-    saveSession(uid, uname, token, admin)
+  function handleLogin(uid, uname, token) {
+    saveSession(uid, uname, token)
     setUserId(uid)
     setUsername(uname)
-    setIsAdmin(!!admin)
     setLoggedIn(true)
     fetchLeads(uid)
     fetchCompanyContext()
@@ -76,7 +73,6 @@ export default function App() {
     setLoggedIn(false)
     setUserId(null)
     setUsername('')
-    setIsAdmin(false)
     setGeminiKey('')
     setTavilyKey('')
     setLeads([])
@@ -191,32 +187,6 @@ export default function App() {
     return authMode
       ? <Auth initialMode={authMode} onLogin={handleLogin} onBack={() => setAuthMode(null)} />
       : <Landing onSignIn={() => setAuthMode('login')} onGetStarted={() => setAuthMode('signup')} />
-  }
-
-  // Admin accounts never see the lead-scoring dashboard — just the overview.
-  if (isAdmin) {
-    return (
-      <div className="app-layout">
-        <aside className="sidebar">
-          <div className="sidebar-header">
-            <span className="sidebar-logo">🛡️</span>
-            <div>
-              <div className="sidebar-app-name">Admin</div>
-              <div className="sidebar-username">{username}</div>
-            </div>
-          </div>
-          <div className="sidebar-footer">
-            <button className="btn btn-outline btn-full" onClick={handleLogout}>Log out</button>
-          </div>
-        </aside>
-        <main className="main-content">
-          <div className="page-header">
-            <h1 className="page-title">Admin Overview</h1>
-          </div>
-          <AdminOverview />
-        </main>
-      </div>
-    )
   }
 
   const keysReady = !!(geminiKey && tavilyKey)

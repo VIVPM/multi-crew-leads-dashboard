@@ -174,7 +174,6 @@ class LoginResponse(BaseModel):
     user_id: str
     username: str
     token: str
-    is_admin: bool = False
 
 class LeadCreate(BaseModel):
     name: str
@@ -245,10 +244,7 @@ def login(req: LoginRequest):
     _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    return LoginResponse(
-        user_id=uid, username=req.username, token=make_token(uid, SECRET_KEY),
-        is_admin=bool(row.get("is_admin")),
-    )
+    return LoginResponse(user_id=uid, username=req.username, token=make_token(uid, SECRET_KEY))
 
 
 # =============================================================================
@@ -402,52 +398,6 @@ def get_analysis(lead_id: str, user_id: str = Depends(current_user)):
     if not resp.data:
         raise HTTPException(status_code=404, detail="No analysis data found.")
     return resp.data[0]
-
-
-# =============================================================================
-# Admin overview — aggregate stats across ALL users (not ownership-scoped)
-# =============================================================================
-
-def current_admin(user_id: str = Depends(current_user)) -> str:
-    resp = supabase.table("users").select("is_admin").eq("id", user_id).execute()
-    if not resp.data or not resp.data[0].get("is_admin"):
-        raise HTTPException(status_code=403, detail="Admin access required.")
-    return user_id
-
-
-@app.get("/admin/overview")
-def admin_overview(_: str = Depends(current_admin)):
-    # Aggregation happens in SQL (admin_user_stats(), migrations.sql) — one
-    # row per user, not one row per lead/job. Replaces the old approach of
-    # fetching every users/leads/jobs/analysis_runs row into Python, which
-    # didn't scale past a small dataset.
-    users = supabase.rpc("admin_user_stats").execute().data or []
-
-    # Jobs still fetched raw for the status-pie and per-day trend chart
-    # (bucketed client-side, same pattern Dashboard.jsx uses for leads-over-
-    # time) — but capped to the last 90 days server-side instead of every
-    # job ever created; the chart only shows the last 30 active days anyway.
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-    jobs = (
-        supabase.table("jobs").select("status,created_at")
-        .gte("created_at", cutoff).execute().data or []
-    )
-
-    return {"users": users, "jobs": jobs}
-
-
-@app.get("/admin/users/{user_id}/leads")
-def admin_user_leads(user_id: str, _: str = Depends(current_admin)):
-    """Drill-down for the admin overview table — same shape as GET /leads/{user_id},
-    but any admin can view any user's leads (no ownership check)."""
-    resp = (
-        supabase.table("leads")
-        .select("id,name,company,job_title,email,score,created_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return resp.data or []
 
 
 # =============================================================================

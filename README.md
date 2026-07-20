@@ -17,7 +17,6 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 - **Structured JSON logging** — every log line is correlated by `request_id`/`job_id`/`lead_id`, so one request's or job's full story is a single grep away.
 - **Langfuse tracing** — optional OpenTelemetry tracing of every crew/agent/LLM call via Langfuse + OpenLit, enabled automatically when Langfuse env vars are set.
 - **Editable email drafts** — click **Edit** on a lead's drafted email to revise and save it inline.
-- **Admin overview** — accounts with `is_admin` set see an all-users dashboard instead of the lead pipeline: KPI totals, jobs-by-status and top-users charts, a jobs-per-day trend, a failed-jobs alert, and a searchable/sortable per-user table with CSV export and a per-user lead drill-down.
 - **YAML-driven agents** — all agent roles, task prompts, and workflow logic configurable in `backend/config/` without code changes.
 - **Red-team test suite** — adversarial inputs (fake companies, prompt injection, contradictory data) with saved pass/fail reports.
 
@@ -100,14 +99,11 @@ Create a project at [supabase.com](https://supabase.com) with tables `users` (id
 - a `company_research_cache` table (id, company_key **unique**, company_name, company_info jsonb, cultural_fit_score, cultural_fit_notes, cached_at) — the company-research cache, keyed by normalized company name + a hash of the ICP text; the unique constraint on `company_key` is also what makes the claim-before-research lock (see [Scaling notes](#scaling-notes)) atomic,
 - a `login_failures` table (id, username, failed_at) — Supabase-backed login rate limiting,
 - a unique constraint on `users.username`,
-- an `is_admin` boolean on `users` (default `false`) — gates the admin overview,
 - indexes on `jobs(status, created_at)`, `leads(user_id)`, `analysis_runs(lead_id)`, `company_research_cache(company_key)`, and `login_failures(username, failed_at)`.
 
 The exact DDL lives in a local `migrations.sql` (gitignored — it's operational, not source) that's kept up to date as the schema evolves; run it in the Supabase SQL editor. It's idempotent, so re-running it after a schema update only applies what changed.
 
 > **Note on RLS:** the backend uses a service key, which bypasses Row Level Security; authorization is enforced at the API layer (token + ownership checks). Enabling RLS as a second layer is recommended for defense in depth.
-
-> **Making a user admin:** there's no self-service UI for this — flip it directly in Supabase: `update users set is_admin = true where username = '<username>';`. That account then sees the admin overview instead of the lead pipeline on login.
 
 ### 2. Backend
 
