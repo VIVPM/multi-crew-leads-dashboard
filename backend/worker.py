@@ -98,6 +98,37 @@ if _have_langfuse or _have_grafana:
 else:
     logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
 
+# Job outcome as a real metric (not just trace spans) — this is what
+# alerting actually needs: "no jobs processed in N minutes" and "a job
+# failed" are both trivial PromQL queries against a counter, where the
+# same signal from Tempo would need TraceQL-based alerting (less mature,
+# not available on this stack — no metrics-generator running). Same OTLP
+# gateway/credentials as the trace export above, just the /v1/metrics path.
+_jobs_processed_counter = None
+if _have_grafana:
+    try:
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+        _metric_reader = PeriodicExportingMetricReader(
+            OTLPMetricExporter(
+                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/metrics",
+                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
+            ),
+            export_interval_millis=15000,
+        )
+        _meter_provider = MeterProvider(
+            resource=Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend")}),
+            metric_readers=[_metric_reader],
+        )
+        _jobs_processed_counter = _meter_provider.get_meter("worker").create_counter(
+            "jobs_processed_total", description="Jobs finished, by status (done/failed)",
+        )
+        logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
+    except Exception:
+        logger.exception("Failed to initialize job metrics (non-fatal)")
+
 # The API module is `backend.backend` when served by uvicorn from the repo
 # root, but plain `backend` when this file runs standalone (python backend/worker.py).
 try:
@@ -257,9 +288,13 @@ async def process_one_job(job: dict) -> None:
             results = await run_job(job)
             finish_job(job["id"], status="done", results=results)
             logger.info("Job done")
+            if _jobs_processed_counter:
+                _jobs_processed_counter.add(1, {"status": "done"})
         except Exception as exc:
             logger.exception("Job failed")
             finish_job(job["id"], status="failed", error=str(exc)[:500])
+            if _jobs_processed_counter:
+                _jobs_processed_counter.add(1, {"status": "failed"})
 
 
 async def main():
