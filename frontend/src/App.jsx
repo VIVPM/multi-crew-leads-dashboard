@@ -25,7 +25,6 @@ function loadSession() {
   } catch { return null }
 }
 
-// API keys deliberately stay in memory only (never persisted) — re-entered per session
 function saveSession(userId, username, token) {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     userId, username, token, expiresAt: Date.now() + SESSION_TTL,
@@ -44,9 +43,6 @@ export default function App() {
   const [authMode, setAuthMode] = useState(null) // null (landing) | 'login' | 'signup'
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
-
-  const [geminiKey, setGeminiKey] = useState('')
-  const [tavilyKey, setTavilyKey] = useState('')
 
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(false)
@@ -74,8 +70,6 @@ export default function App() {
     setLoggedIn(false)
     setUserId(null)
     setUsername('')
-    setGeminiKey('')
-    setTavilyKey('')
     setLeads([])
     setAddingLead(false)
     setEditingLead(null)
@@ -149,8 +143,6 @@ export default function App() {
     try {
       const { job_id } = await api('POST', '/leads/process', {
         leads: [savedLead],
-        gemini_api_key: geminiKey,
-        tavily_api_key: tavilyKey,
         force_refresh: forceRefresh,
       })
       job = await waitForJob(job_id)
@@ -190,18 +182,9 @@ export default function App() {
       : <Landing onSignIn={() => setAuthMode('login')} onGetStarted={() => setAuthMode('signup')} />
   }
 
-  const keysReady = !!(geminiKey && tavilyKey)
-
   return (
     <div className="app-layout">
-      <Sidebar
-        geminiKey={geminiKey}
-        setGeminiKey={setGeminiKey}
-        tavilyKey={tavilyKey}
-        setTavilyKey={setTavilyKey}
-        onLogout={handleLogout}
-        username={username}
-      />
+      <Sidebar onLogout={handleLogout} username={username} />
 
       <main className="main-content">
         <div className="page-header">
@@ -245,7 +228,6 @@ export default function App() {
               lead={editingLead}
               onSave={handleSaveAndProcess}
               onCancel={() => { setAddingLead(false); setEditingLead(null) }}
-              keysReady={keysReady}
             />
           )}
         </div>

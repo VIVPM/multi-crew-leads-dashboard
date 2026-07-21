@@ -70,6 +70,10 @@ LOGIN_WINDOW_S = 900
 # silently blow through the account's real limit and get it flagged.
 EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
 
+# Operator-held keys — users no longer bring their own Gemini/Tavily keys.
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -204,8 +208,6 @@ class LeadUpdate(BaseModel):
 
 class ProcessLeadsRequest(BaseModel):
     leads: List[dict]
-    gemini_api_key: str
-    tavily_api_key: str
     force_refresh: bool = False  # bypass the company-research cache for this batch
 
 class CompanyProfileRequest(BaseModel):
@@ -474,9 +476,9 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         # frozen at enqueue time so a later profile edit can't change an already-queued job
         "our_company_context": company_context,
         "force_refresh": req.force_refresh,
-        # ponytail: keys stored only for the job's lifetime — worker nulls them on completion
-        "gemini_api_key": req.gemini_api_key,
-        "tavily_api_key": req.tavily_api_key,
+        # ponytail: operator-held keys, not per-user — worker nulls them on completion anyway
+        "gemini_api_key": GEMINI_API_KEY,
+        "tavily_api_key": TAVILY_API_KEY,
     }
     resp = supabase.table("jobs").insert(job).execute()
     if not resp.data:

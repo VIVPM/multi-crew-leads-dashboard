@@ -40,7 +40,7 @@ function validate(fields) {
   return errors
 }
 
-export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
+export default function LeadForm({ lead, onSave, onCancel }) {
   // initialized from props; the parent keys this component by lead id so a
   // different lead remounts the form with fresh state
   const [fields, setFields] = useState(() => ({
@@ -78,12 +78,6 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
 
   return (
     <div className="lead-form-body">
-      {!keysReady && (
-        <div className="alert alert-warning">
-          Enter your Gemini &amp; Tavily API keys in the sidebar before saving.
-        </div>
-      )}
-
       {errors.map((e, i) => (
         <div key={i} className="alert alert-error">{e}</div>
       ))}
@@ -146,7 +140,7 @@ export default function LeadForm({ lead, onSave, onCancel, keysReady }) {
         </label>
 
         <div className="form-actions">
-          <button type="submit" className="btn btn-success" disabled={loading || !keysReady}>
+          <button type="submit" className="btn btn-success" disabled={loading}>
             {status === 'saving' ? 'Saving…' : status === 'processing' ? 'Processing…' : 'Save and process'}
           </button>
           <button type="button" className="btn btn-outline" onClick={onCancel} disabled={loading}>
