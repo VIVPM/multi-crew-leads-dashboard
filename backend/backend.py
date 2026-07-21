@@ -15,10 +15,12 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 
 import logging
 import secrets
+import smtplib
 import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -63,6 +65,10 @@ if not os.getenv("SECRET_KEY"):
 MAX_LEADS_PER_REQUEST = 10
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
+# Well under Gmail's real ~100/day SMTP-relay ceiling (not the often-quoted
+# 500/day, which is the web-interface limit) — a safety net so a bug can't
+# silently blow through the account's real limit and get it flagged.
+EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
 
 # ---------------------------------------------------------------------------
 # App
@@ -205,6 +211,14 @@ class ProcessLeadsRequest(BaseModel):
 class CompanyProfileRequest(BaseModel):
     company_context: str = Field(max_length=4000)
 
+class EmailSettingsRequest(BaseModel):
+    smtp_host: str = Field(min_length=1, max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    from_address: str = Field(min_length=3, max_length=255)
+    # Optional/blank on update: leaving it out keeps the previously saved
+    # password rather than overwriting it with an empty value.
+    smtp_password: Optional[str] = Field(default=None, max_length=255)
+
 
 # =============================================================================
 # Auth endpoints
@@ -264,6 +278,42 @@ def set_company_context(req: CompanyProfileRequest, user_id: str = Depends(curre
     return {"message": "Company profile saved."}
 
 
+@app.get("/account/email-settings")
+def get_email_settings(user_id: str = Depends(current_user)):
+    resp = (
+        supabase.table("users")
+        .select("email_smtp_host,email_smtp_port,email_from_address")
+        .eq("id", user_id).execute()
+    )
+    row = resp.data[0] if resp.data else {}
+    return {
+        "smtp_host": row.get("email_smtp_host") or "",
+        "smtp_port": row.get("email_smtp_port") or 587,
+        "from_address": row.get("email_from_address") or "",
+        # Never return the password — same principle as never returning a
+        # user's login password hash. The frontend shows "configured" or
+        # not; re-entering it is how you change it, not editing in place.
+        "configured": bool(row.get("email_from_address")),
+    }
+
+
+@app.put("/account/email-settings")
+def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current_user)):
+    payload = {
+        "email_smtp_host": req.smtp_host,
+        "email_smtp_port": req.smtp_port,
+        "email_from_address": req.from_address,
+    }
+    if req.smtp_password:
+        payload["email_smtp_password"] = req.smtp_password
+    else:
+        existing = supabase.table("users").select("email_smtp_password").eq("id", user_id).execute()
+        if not (existing.data and existing.data[0].get("email_smtp_password")):
+            raise HTTPException(status_code=400, detail="App password is required for first-time setup.")
+    supabase.table("users").update(payload).eq("id", user_id).execute()
+    return {"message": "Email sending settings saved."}
+
+
 # =============================================================================
 # Lead CRUD endpoints (all ownership-checked)
 # =============================================================================
@@ -321,6 +371,70 @@ def delete_lead(lead_id: str, user_id: str = Depends(current_user)):
     _get_owned_lead(lead_id, user_id)
     supabase.table("leads").delete().eq("id", lead_id).execute()
     return {"message": "Lead deleted."}
+
+
+def _split_subject(draft: str) -> tuple[str, str]:
+    """The email crew drafts 'Subject: ...' as the first line — pull that out
+    for the actual SMTP Subject header instead of leaving it duplicated at
+    the top of the body."""
+    first_line, _, rest = draft.partition("\n")
+    if first_line.strip().lower().startswith("subject:"):
+        return first_line.split(":", 1)[1].strip(), rest.lstrip("\n")
+    return "", draft
+
+
+@app.post("/leads/{lead_id}/send-email")
+def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
+    lead = _get_owned_lead(lead_id, user_id)
+    if not lead.get("email_draft"):
+        raise HTTPException(status_code=400, detail="No email draft to send — process this lead first.")
+    if not lead.get("email"):
+        raise HTTPException(status_code=400, detail="This lead has no email address.")
+
+    settings = (
+        supabase.table("users")
+        .select("email_smtp_host,email_smtp_port,email_from_address,email_smtp_password")
+        .eq("id", user_id).execute()
+    )
+    row = settings.data[0] if settings.data else {}
+    host, port, from_addr, password = (
+        row.get("email_smtp_host"), row.get("email_smtp_port"),
+        row.get("email_from_address"), row.get("email_smtp_password"),
+    )
+    if not (host and from_addr and password):
+        raise HTTPException(status_code=400, detail="Set up your email sending settings before sending.")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    sent_today = (
+        supabase.table("leads").select("id", count="exact")
+        .eq("user_id", user_id).gte("email_sent_at", cutoff).execute()
+    )
+    if (sent_today.count or 0) >= EMAIL_SEND_DAILY_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily email send limit ({EMAIL_SEND_DAILY_CAP}) reached. Try again tomorrow.",
+        )
+
+    subject, body = _split_subject(lead["email_draft"])
+    msg = EmailMessage()
+    msg["From"] = from_addr
+    msg["To"] = lead["email"]
+    msg["Subject"] = subject or f"Following up — {lead.get('company') or lead['name']}"
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.starttls()
+            server.login(from_addr, password)
+            server.send_message(msg)
+    except Exception as exc:
+        logger.exception("Failed to send email for lead %s", lead_id)
+        raise HTTPException(status_code=502, detail=f"Failed to send email: {exc}")
+
+    sent_at = datetime.now(timezone.utc).isoformat()
+    supabase.table("leads").update({"email_sent_at": sent_at}).eq("id", lead_id).execute()
+    logger.info("Email sent for lead %s", lead_id)
+    return {"message": "Email sent.", "sent_at": sent_at}
 
 
 # =============================================================================

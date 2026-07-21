@@ -3,6 +3,7 @@ import Landing from './components/Landing'
 import Auth from './components/Auth'
 import Sidebar from './components/Sidebar'
 import CompanyProfile from './components/CompanyProfile'
+import EmailSettings from './components/EmailSettings'
 import LeadForm from './components/LeadForm'
 import Dashboard from './components/Dashboard'
 import LeadsTable from './components/LeadsTable'
@@ -221,6 +222,8 @@ export default function App() {
           onToggleExpanded={setCompanyProfileExpanded}
           onSaved={setCompanyContext}
         />
+
+        <EmailSettings />
 
         <div className="card lead-form-card">
           <div

@@ -144,6 +144,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [editingEmail, setEditingEmail] = useState(false)
   const [emailDraft, setEmailDraft] = useState(lead.email_draft || '')
   const [savingEmail, setSavingEmail] = useState(false)
+  const [sending, setSending] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
 
   useEffect(() => { setEmailDraft(lead.email_draft || '') }, [lead.email_draft])
@@ -172,6 +173,19 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
       setErr(friendlyError(e))
     } finally {
       setSavingEmail(false)
+    }
+  }
+
+  async function handleSendEmail() {
+    setSending(true)
+    setErr(null)
+    try {
+      await api('POST', `/leads/${lead.id}/send-email`)
+      onRefresh()
+    } catch (e) {
+      setErr(friendlyError(e))
+    } finally {
+      setSending(false)
     }
   }
 
@@ -218,7 +232,18 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
               <div className="lead-section-header">
                 <div className="lead-section-title">Email draft</div>
                 {!editingEmail && (
-                  <button className="btn-link" onClick={() => setEditingEmail(true)}>Edit</button>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    {lead.email_sent_at ? (
+                      <span className="badge badge-green">
+                        Sent {new Date(lead.email_sent_at).toLocaleDateString()}
+                      </span>
+                    ) : (
+                      <button className="btn-link" onClick={handleSendEmail} disabled={sending}>
+                        {sending ? 'Sending…' : 'Send'}
+                      </button>
+                    )}
+                    <button className="btn-link" onClick={() => setEditingEmail(true)}>Edit</button>
+                  </div>
                 )}
               </div>
               {editingEmail ? (
