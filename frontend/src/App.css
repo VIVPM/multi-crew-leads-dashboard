@@ -77,115 +77,56 @@ body {
    ============================================================ */
 .app-layout {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 
-/* Sidebar — the dark-app shell */
-.sidebar {
-  width: 260px;
-  min-width: 260px;
+/* Navbar — the dark-app shell, now a top bar instead of a left sidebar */
+.navbar {
   background: var(--brand-dark);
   color: var(--on-primary);
   display: flex;
-  flex-direction: column;
-  padding: 1.25rem 1rem;
-  gap: 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.5rem;
   position: sticky;
   top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  z-index: 10;
 }
 
-.sidebar-header {
+.navbar-brand {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  gap: 0.6rem;
 }
 
-.sidebar-logo { font-size: 1.75rem; }
+.navbar-logo { font-size: 1.5rem; }
 
-.sidebar-app-name {
+.navbar-app-name {
   font-weight: 400;
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   letter-spacing: -0.2px;
   color: var(--on-primary);
 }
 
-.sidebar-username {
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.navbar-username {
   font-size: 0.78rem;
   color: var(--primary-subdued);
 }
-
-.sidebar-section { flex: 1; }
-
-.sidebar-section-title {
-  font-size: 0.65rem;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--primary-subdued);
-  margin-bottom: 0.75rem;
-}
-
-.sidebar .form-group { margin-bottom: 0.75rem; }
-
-/* scoped below .form-group rules would win on equal specificity — keep these more specific */
-.sidebar .form-group label {
-  display: block;
-  font-size: 0.78rem;
-  font-weight: 300;
-  color: rgba(255, 255, 255, 0.75);
-  margin-bottom: 0.3rem;
-}
-
-.sidebar .form-group input,
-.sidebar .form-group textarea {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: var(--on-primary);
-  border-radius: var(--r-sm);
-  padding: 0.45rem 0.6rem;
-  font-size: 0.82rem;
-  font-family: var(--font);
-}
-
-.sidebar .form-group textarea { resize: vertical; line-height: 1.4; }
-
-.sidebar .form-group input::placeholder,
-.sidebar .form-group textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
-.sidebar .form-group input:focus,
-.sidebar .form-group textarea:focus {
-  outline: none;
-  border-color: var(--primary-soft);
-  box-shadow: none;
-}
-
-.sidebar-hint {
-  font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.55);
-  line-height: 1.4;
-  margin-bottom: 0.5rem;
-}
-
-.sidebar-link {
-  display: block;
-  color: var(--primary-subdued);
-  font-size: 0.75rem;
-  margin-top: 0.25rem;
-  text-decoration: none;
-}
-.sidebar-link:hover { color: var(--on-primary); }
-
-.sidebar-footer { margin-top: auto; }
 
 /* Main content */
 .main-content {
   flex: 1;
   padding: 2rem 2.5rem;
   max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
   overflow-x: hidden;
 }
 
@@ -477,13 +418,6 @@ body {
   flex-shrink: 0;
 }
 .alert-close:hover { opacity: 1; }
-
-.sidebar .alert {
-  font-size: 0.78rem;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--primary-subdued);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-}
 
 /* ============================================================
    Lead form card (collapsible, same pattern as .company-profile-card)
@@ -1296,8 +1230,8 @@ body {
    Responsive
    ============================================================ */
 @media (max-width: 900px) {
-  .app-layout { flex-direction: column; }
-  .sidebar { width: 100%; min-width: unset; height: auto; position: static; }
+  .navbar { padding: 0.75rem 1rem; }
+  .navbar-username { display: none; }
   .main-content { padding: 1rem; }
   .page-title { font-size: 22px; }
   .chart-grid { grid-template-columns: 1fr; }

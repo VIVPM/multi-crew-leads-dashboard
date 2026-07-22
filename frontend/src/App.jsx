@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import Landing from './components/Landing'
 import Auth from './components/Auth'
-import Sidebar from './components/Sidebar'
+import Navbar from './components/Navbar'
 import CompanyProfile from './components/CompanyProfile'
 import EmailSettings from './components/EmailSettings'
 import LeadForm from './components/LeadForm'
@@ -184,7 +184,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar onLogout={handleLogout} username={username} />
+      <Navbar onLogout={handleLogout} username={username} />
 
       <main className="main-content">
         <div className="page-header">
