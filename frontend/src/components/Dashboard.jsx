@@ -112,22 +112,17 @@ function NoData() {
 // Legend below the pie instead of labels on the slices — slice labels
 // clipped or overlapped for longer names (countries, sources); a legend
 // stays readable no matter how long the name or how thin the slice.
+// Percentage only shows on hover (tooltip), not as a permanent slice label.
 function LegendPie({ data }) {
   const total = data.reduce((sum, d) => sum + d.value, 0)
   const pct = value => `${Math.round((value / total) * 100)}%`
   return (
     <ResponsiveContainer width="100%" height={220}>
       <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="name"
-          outerRadius={65}
-          label={({ value }) => pct(value)}
-          labelLine={false}
-        >
+        <Pie data={data} dataKey="value" nameKey="name" outerRadius={65}>
           {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
         </Pie>
+        <Tooltip formatter={value => pct(value)} />
         <Legend
           layout="horizontal"
           verticalAlign="bottom"
