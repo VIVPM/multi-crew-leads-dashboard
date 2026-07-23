@@ -135,6 +135,28 @@ function DeleteConfirmModal({ name, onConfirm, onCancel }) {
   )
 }
 
+function SendConfirmModal({ name, onConfirm, onCancel }) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-container modal-sm" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3 className="modal-title">Send email</h3>
+          <button className="modal-close" onClick={onCancel}>×</button>
+        </div>
+        <div className="modal-body">
+          <p className="delete-confirm-msg">
+            Send this email to <strong>{name}</strong> now?
+          </p>
+          <div className="delete-confirm-actions">
+            <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
+            <button className="btn btn-primary" onClick={onConfirm}>Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -145,6 +167,8 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [emailDraft, setEmailDraft] = useState(lead.email_draft || '')
   const [savingEmail, setSavingEmail] = useState(false)
   const [sending, setSending] = useState(false)
+  const [showSendConfirm, setShowSendConfirm] = useState(false)
+  const [sentMsg, setSentMsg] = useState(null)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
 
   useEffect(() => { setEmailDraft(lead.email_draft || '') }, [lead.email_draft])
@@ -177,11 +201,14 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   }
 
   async function handleSendEmail() {
+    setShowSendConfirm(false)
     setSending(true)
     setErr(null)
     try {
       await api('POST', `/leads/${lead.id}/send-email`)
       onRefresh()
+      setSentMsg(`Email sent successfully on ${new Date().toLocaleString()}`)
+      setTimeout(() => setSentMsg(null), 5000)
     } catch (e) {
       setErr(friendlyError(e))
     } finally {
@@ -203,6 +230,12 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
       {open && (
         <div className="lead-card-body">
           {err && <div className="alert alert-error">{err}</div>}
+          {sentMsg && (
+            <div className="alert alert-success">
+              {sentMsg}
+              <button className="alert-close" onClick={() => setSentMsg(null)}>×</button>
+            </div>
+          )}
 
           <div className="lead-details-grid">
             {[
@@ -238,11 +271,11 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
                         Sent {new Date(lead.email_sent_at).toLocaleDateString()}
                       </span>
                     ) : (
-                      <button className="btn-link" onClick={handleSendEmail} disabled={sending}>
+                      <button className="btn btn-sm btn-outline" onClick={() => setShowSendConfirm(true)} disabled={sending}>
                         {sending ? 'Sending…' : 'Send'}
                       </button>
                     )}
-                    <button className="btn-link" onClick={() => setEditingEmail(true)}>Edit</button>
+                    <button className="btn btn-sm btn-outline" onClick={() => setEditingEmail(true)}>Edit</button>
                   </div>
                 )}
               </div>
@@ -298,6 +331,13 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
 
       {showAnalysis && (
         <AnalysisModal leadId={lead.id} onClose={() => setShowAnalysis(false)} />
+      )}
+      {showSendConfirm && (
+        <SendConfirmModal
+          name={lead.name}
+          onConfirm={handleSendEmail}
+          onCancel={() => setShowSendConfirm(false)}
+        />
       )}
       {showDeleteConfirm && (
         <DeleteConfirmModal
