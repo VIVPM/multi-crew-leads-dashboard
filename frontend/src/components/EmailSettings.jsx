@@ -4,7 +4,7 @@ import { api, friendlyError } from '../api'
 // Self-contained (fetches its own settings) unlike CompanyProfile, since
 // nothing else in the app needs this state — sending is opt-in per lead,
 // not required to use the rest of the product.
-export default function EmailSettings() {
+export default function EmailSettings({ onMessage }) {
   const [expanded, setExpanded] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [configured, setConfigured] = useState(false)
@@ -41,6 +41,7 @@ export default function EmailSettings() {
       setConfigured(true)
       setSmtpPassword('') // never keep the password in the form after saving
       setExpanded(false)
+      onMessage?.('Email sending settings saved.')
       setTimeout(() => setStatus(null), 2000)
     } catch (e) {
       setStatus('error')
@@ -52,7 +53,7 @@ export default function EmailSettings() {
     <div className="card company-profile-card">
       <div className="company-profile-header" onClick={() => setExpanded(!expanded)}>
         <div>
-          <h3 className="card-title" style={{ marginBottom: 0 }}>Email sending</h3>
+          <h3 className="card-title" style={{ marginBottom: 0 }}>Email sending <span className="required-star">*</span></h3>
           {!expanded && (
             <p className="muted company-profile-summary">
               {configured ? `Sending as ${fromAddress}` : 'Not set up — drafts can be edited but not sent.'}
@@ -107,12 +108,12 @@ export default function EmailSettings() {
             </div>
           </div>
           <div className="form-group">
-            <label>App password {configured && <span className="muted">(leave blank to keep current)</span>}</label>
+            <label>App password</label>
             <input
               type="password"
               value={smtpPassword}
               onChange={e => setSmtpPassword(e.target.value)}
-              placeholder={configured ? '••••••••••••••••' : '16-character app password'}
+              placeholder="16-character app password"
               disabled={!loaded}
             />
           </div>
@@ -121,7 +122,7 @@ export default function EmailSettings() {
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={status === 'saving' || !loaded || !fromAddress.trim() || !smtpHost.trim() || (!configured && !smtpPassword)}
+            disabled={status === 'saving' || !loaded || !fromAddress.trim() || !smtpHost.trim() || !smtpPassword.trim()}
           >
             {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved ✓' : 'Save email settings'}
           </button>

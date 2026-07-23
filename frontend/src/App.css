@@ -306,19 +306,7 @@ body {
   max-width: 40rem;
 }
 
-.required-badge {
-  display: inline-block;
-  margin-left: 0.6rem;
-  padding: 0.1rem 0.5rem;
-  border-radius: var(--pill);
-  background: #fff0f5;
-  color: var(--ruby);
-  font-size: 0.62rem;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  vertical-align: middle;
-}
+.required-star { color: var(--ruby); }
 
 .form-grid {
   display: grid;

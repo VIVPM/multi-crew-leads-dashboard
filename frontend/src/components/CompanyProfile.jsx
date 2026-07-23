@@ -3,7 +3,7 @@ import { api, friendlyError } from '../api'
 
 // Controlled by App.jsx: `value` is the saved profile, `expanded` is lifted
 // so the "ICP required" dialog can force this open and scroll to it.
-export default function CompanyProfile({ value, loaded, expanded, onToggleExpanded, onSaved }) {
+export default function CompanyProfile({ value, loaded, expanded, onToggleExpanded, onSaved, onMessage }) {
   const [text, setText] = useState(value)
   const [status, setStatus] = useState(null) // 'saving' | 'saved' | 'error' | null
   const [error, setError] = useState(null)
@@ -18,6 +18,7 @@ export default function CompanyProfile({ value, loaded, expanded, onToggleExpand
       setStatus('saved')
       onSaved(text)
       onToggleExpanded(false)
+      onMessage?.('Company profile saved.')
       setTimeout(() => setStatus(null), 2000)
     } catch (e) {
       setStatus('error')
@@ -32,8 +33,7 @@ export default function CompanyProfile({ value, loaded, expanded, onToggleExpand
       <div className="company-profile-header" onClick={() => onToggleExpanded(!expanded)}>
         <div>
           <h3 className="card-title" style={{ marginBottom: 0 }}>
-            Your company &amp; ICP
-            {!value && <span className="required-badge">Required</span>}
+            Your company &amp; ICP <span className="required-star">*</span>
           </h3>
           {!expanded && (
             <p className="muted company-profile-summary">

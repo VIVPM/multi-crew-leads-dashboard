@@ -204,9 +204,10 @@ export default function App() {
           expanded={companyProfileExpanded}
           onToggleExpanded={setCompanyProfileExpanded}
           onSaved={setCompanyContext}
+          onMessage={text => setGlobalMsg({ type: 'success', text })}
         />
 
-        <EmailSettings />
+        <EmailSettings onMessage={text => setGlobalMsg({ type: 'success', text })} />
 
         <div className="card lead-form-card">
           <div
