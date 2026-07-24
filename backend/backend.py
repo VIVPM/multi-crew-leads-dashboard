@@ -334,7 +334,7 @@ def get_leads(
     limit: int = Query(500, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    # ponytail: 500 is generous enough that today's users never notice a
+    # 500 is generous enough that today's users never notice a
     # cap, but it's a real cap now — this used to be select() with no
     # limit at all, unbounded no matter how many leads a user accumulated.
     # limit/offset are accepted (not yet used by the frontend) so real
@@ -476,7 +476,7 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         # frozen at enqueue time so a later profile edit can't change an already-queued job
         "our_company_context": company_context,
         "force_refresh": req.force_refresh,
-        # ponytail: operator-held keys, not per-user — worker nulls them on completion anyway
+        # operator-held keys, not per-user — worker nulls them on completion anyway
         "gemini_api_key": GEMINI_API_KEY,
         "tavily_api_key": TAVILY_API_KEY,
     }

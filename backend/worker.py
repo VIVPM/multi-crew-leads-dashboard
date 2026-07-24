@@ -187,7 +187,7 @@ def cache_get_company(key: str) -> Optional[dict]:
     except Exception:
         pass  # someone else already claimed this key — wait on them instead
 
-    # ponytail: if the winner crashes mid-research, every request for this
+    # if the winner crashes mid-research, every request for this
     # key pays this one 30s wait before falling back to researching it
     # itself, which also heals the stuck placeholder row via cache_set's
     # upsert. Rare, and self-healing, so not worth a lease/heartbeat.
@@ -220,7 +220,7 @@ def cache_set_company(key: str, company_name: str, data: dict) -> None:
 
 def fail_stale_running_jobs():
     """Jobs left 'running' by a crashed/killed worker are marked failed on startup."""
-    # ponytail: assumes workers restart together; use a started_at lease when running many workers
+    # assumes workers restart together; use a started_at lease when running many workers
     stale = supabase.table("jobs").update({
         "status": "failed",
         "error": "Worker restarted while the job was running. Please re-process the lead.",
