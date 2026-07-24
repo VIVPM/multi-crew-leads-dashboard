@@ -7,11 +7,17 @@ beyond bcrypt; no network, so it stays unit-testable.
 import base64
 import hashlib
 import hmac
+import secrets
 import time
 
 import bcrypt
 
-TOKEN_TTL_S = 24 * 3600
+# Access token: short-lived so a leaked one expires fast (it's stateless and
+# can't be revoked). The refresh token below covers staying logged in.
+TOKEN_TTL_S = 60 * 60           # 60 minutes
+# Refresh token: long-lived, revocable (stored server-side), silently mints
+# new access tokens. This is the real "how long you stay logged in" window.
+REFRESH_TTL_S = 14 * 24 * 3600  # 14 days
 
 
 # ---------------------------------------------------------------------------
@@ -64,3 +70,18 @@ def verify_token(token: str, secret: str) -> str:
     if expired:
         raise ValueError("token expired")
     return user_id
+
+
+# ---------------------------------------------------------------------------
+# Refresh tokens: opaque random strings, stored server-side only as a hash
+# ---------------------------------------------------------------------------
+
+def make_refresh_token() -> tuple[str, str]:
+    """Return (raw_token, token_hash). The raw goes to the client once; only
+    the hash is persisted, so a DB leak can't be replayed as a valid token."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_refresh_token(raw)
+
+
+def hash_refresh_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()

@@ -35,7 +35,7 @@ export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
         setPassword('')
       } else {
         const data = await api('POST', '/auth/login', { username, password })
-        onLogin(data.user_id, data.username, data.token)
+        onLogin(data.user_id, data.username, data.token, data.refresh_token)
       }
     } catch (err) {
       setMessage({ type: 'error', text: friendlyError(err) })

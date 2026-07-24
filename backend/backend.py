@@ -36,7 +36,10 @@ sys.path.insert(0, BASE_DIR)
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 from logging_setup import configure_logging, request_context, lead_context
-from security import hash_password, verify_password, is_legacy_hash, make_token, verify_token
+from security import (
+    hash_password, verify_password, is_legacy_hash, make_token, verify_token,
+    make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
+)
 
 # ---------------------------------------------------------------------------
 # Logging — structured JSON, correlated by request_id (see logging_setup.py)
@@ -184,6 +187,10 @@ class LoginResponse(BaseModel):
     user_id: str
     username: str
     token: str
+    refresh_token: str
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 class LeadCreate(BaseModel):
     name: str
@@ -260,7 +267,49 @@ def login(req: LoginRequest):
     _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    return LoginResponse(user_id=uid, username=req.username, token=make_token(uid, SECRET_KEY))
+    return LoginResponse(
+        user_id=uid, username=req.username,
+        token=make_token(uid, SECRET_KEY),
+        refresh_token=_issue_refresh_token(row["id"]),
+    )
+
+
+def _issue_refresh_token(user_id) -> str:
+    """Create a refresh token, store only its hash, return the raw value (shown
+    to the client once). See the refresh_tokens table in migrations.sql."""
+    raw, token_hash = make_refresh_token()
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TTL_S)).isoformat()
+    supabase.table("refresh_tokens").insert({
+        "user_id": user_id, "token_hash": token_hash, "expires_at": expires_at,
+    }).execute()
+    return raw
+
+
+@app.post("/auth/refresh")
+def refresh_access_token(req: RefreshRequest):
+    """Exchange a valid (unexpired, unrevoked) refresh token for a new access
+    token. The refresh token itself is unchanged and keeps its own expiry."""
+    now = datetime.now(timezone.utc).isoformat()
+    resp = (
+        supabase.table("refresh_tokens")
+        .select("user_id")
+        .eq("token_hash", hash_refresh_token(req.refresh_token))
+        .gt("expires_at", now)  # Postgres does the timestamptz comparison
+        .execute()
+    )
+    if not resp.data:
+        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
+    uid = str(resp.data[0]["user_id"])
+    return {"token": make_token(uid, SECRET_KEY)}
+
+
+@app.post("/auth/logout")
+def logout(req: RefreshRequest):
+    """Revoke a refresh token (delete it) so it can't mint more access tokens."""
+    supabase.table("refresh_tokens").delete().eq(
+        "token_hash", hash_refresh_token(req.refresh_token)
+    ).execute()
+    return {"message": "Logged out."}
 
 
 # =============================================================================

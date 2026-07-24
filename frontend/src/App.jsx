@@ -11,24 +11,27 @@ import { api, friendlyError } from './api'
 import './App.css'
 
 const SESSION_KEY = 'sp_session'
-const SESSION_TTL = 60 * 60 * 1000 // 1 hour in ms
 const JOB_POLL_MS = 5000
 const JOB_DEADLINE_MS = 20 * 60 * 1000 // give a batch up to 20 minutes
 
+// The session lasts as long as the refresh token is valid (14 days server-side),
+// not a frontend timer: the 60-min access token is refreshed silently in api.js.
 function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, token, expiresAt } = JSON.parse(raw)
-    if (!token || Date.now() > expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, token }
+    const { userId, username, token, refreshToken } = JSON.parse(raw)
+    if (!token || !refreshToken) { localStorage.removeItem(SESSION_KEY); return null }
+    return { userId, username, token, refreshToken }
   } catch { return null }
 }
 
-function saveSession(userId, username, token) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId, username, token, expiresAt: Date.now() + SESSION_TTL,
-  }))
+function saveSession(userId, username, token, refreshToken) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
+}
+
+function readRefreshToken() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
 }
 
 function clearSession() {
@@ -56,8 +59,8 @@ export default function App() {
   const [showIcpDialog, setShowIcpDialog] = useState(false)
 
   // --- Auth ---
-  function handleLogin(uid, uname, token) {
-    saveSession(uid, uname, token)
+  function handleLogin(uid, uname, token, refreshToken) {
+    saveSession(uid, uname, token, refreshToken)
     setUserId(uid)
     setUsername(uname)
     setLoggedIn(true)
@@ -65,7 +68,7 @@ export default function App() {
     fetchCompanyContext()
   }
 
-  function handleLogout() {
+  function resetToLoggedOut() {
     clearSession()
     setLoggedIn(false)
     setUserId(null)
@@ -76,6 +79,21 @@ export default function App() {
     setCompanyContext('')
     setCompanyContextLoaded(false)
   }
+
+  function handleLogout() {
+    // Revoke the refresh token server-side (fire-and-forget) so it can't be reused.
+    const refreshToken = readRefreshToken()
+    if (refreshToken) api('POST', '/auth/logout', { refresh_token: refreshToken }).catch(() => {})
+    resetToLoggedOut()
+  }
+
+  // api.js fires this when the refresh token itself is dead (expired/revoked) —
+  // the session can't be silently renewed, so drop to the login screen.
+  useEffect(() => {
+    const onExpired = () => resetToLoggedOut()
+    window.addEventListener('sp-auth-expired', onExpired)
+    return () => window.removeEventListener('sp-auth-expired', onExpired)
+  }, [])
 
   const fetchCompanyContext = useCallback(async () => {
     try {
