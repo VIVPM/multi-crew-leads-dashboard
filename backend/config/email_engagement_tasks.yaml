@@ -1,16 +1,43 @@
 email_drafting_and_optimization:
   description: >
-    Craft a highly personalized email using the lead's name, job title,
-    company information, and any relevant personal or company achievements.
-    The email should speak directly to the lead's interests and the needs
-    of their company, and include strong CTAs and engagement hooks that
-    encourage the lead to schedule a meeting or take another desired action
-    immediately.
+    Write this the way an actual salesperson at our company would write a
+    first-touch cold email to a prospect they researched and want to reach
+    — not marketing copy, not a generic AI-vendor pitch. Sound like a
+    person, not a brochure.
 
-    This is not cold outreach — it's a follow-up to a lead form, so keep it
-    short and to the point. Don't use any salutations or closing remarks,
-    nor too complex sentences. Keep in mind they reached out and filled a
-    lead form.
+    Ground every claim in what's actually in front of you: their specific
+    use_case (quote it or paraphrase it directly, don't just gesture at
+    "your needs"), their role, and their company's real situation. Avoid
+    empty enthusiasm words unless backed by a specific reason (say what and
+    why, not just that something is "critical" or "seamless" or "powerful").
+    If the lead score's validation_notes flag something specific and
+    positive about the fit, use it — that's a better hook than generic
+    praise.
+
+    Critical: this is cold outbound, not a reply. WE found THEM through our
+    own research — they did not fill out a form, sign up, or contact us
+    first. Never write "thanks for reaching out," "thanks for your
+    interest," "following up on your inquiry," or anything implying they
+    initiated contact — that's a lie the recipient will immediately catch,
+    and it undermines the whole email. Instead, open with why you're
+    reaching out to them specifically: something concrete about their role,
+    what their company is doing, or the use case data suggests they care
+    about. Keep it short (under 120 words in the body), a real first-name
+    greeting, and a real sign-off. Never invent a person's name for the
+    sign-off — sign as the company itself, using the actual company name
+    given below (e.g. "— The Acme Team" if the company name is Acme).
+
+    Hard constraints on the call to action: we have no calendar booking
+    link and no scheduling tool. Never invent one (no "[Link to Calendar]",
+    no "[Your Scheduling Link]", no bracketed placeholders of any kind —
+    a placeholder that goes out in a real email is a broken email). The
+    only real CTA available is asking them to reply to this email with a
+    time or a question. Use that.
+
+    This ships as a plain-text email exactly as written, not rendered
+    markdown. Never use *, **, _, #, or any other markdown syntax — no
+    bold, no headers, no bullet asterisks. Plain sentences and paragraphs
+    only.
 
     Our Company and Product:
     {our_company_context}
@@ -20,9 +47,17 @@ email_drafting_and_optimization:
     Company Info: {company_info}
     Lead Score: {lead_score}
   expected_output: >
-    A personalized, ready-to-send email draft that:
-    - Includes a subject line, greeting, body, closing line, and sign off.
-    - Addresses the lead by name and acknowledges their role and company.
-    - Highlights how our product can meet their specific needs or interests.
-    - Includes a strong call to action and an engagement hook that
-      encourages an immediate response.
+    A personalized, ready-to-send plain-text email draft that:
+    - Starts with a subject line, then a short greeting using the lead's
+      first name.
+    - Opens by stating why we're reaching out to them specifically — never
+      thanks them for contacting us or implies they reached out first,
+      since this is cold outbound we initiated, not a reply.
+    - In the body, references their specific stated use_case and role by
+      name, not generic language — a reader should be able to tell this
+      wasn't sent to anyone else.
+    - Explains concretely how our product fits what they said they need,
+      without buzzword padding.
+    - Ends by asking them to reply with a time or a question — no fake
+      links, no bracketed placeholders, no markdown formatting anywhere.
+    - Signs off from the company, not a fabricated person.
