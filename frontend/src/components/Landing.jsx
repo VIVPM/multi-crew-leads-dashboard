@@ -171,8 +171,8 @@ export default function Landing({ onSignIn, onGetStarted }) {
             <div className="lp-feature">
               <h3 className="lp-h3">Costs you can see</h3>
               <p className="lp-body">
-                Tokens, duration, and cost per lead sit in the analysis panel.
-                Bring your own Gemini and Tavily keys — your usage stays yours.
+                Tokens, duration, and cost per lead sit in the analysis panel —
+                every run's spend is visible, not hidden behind a black box.
               </p>
             </div>
           </Reveal>
@@ -207,7 +207,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
           <div className="lp-dark-cta">
             <h2 className="lp-h2-inverse">Process your first lead in minutes</h2>
             <p className="lp-body-inverse">
-              Create an account, add your Gemini and Tavily keys, and let the crew work.
+              Create an account, add a lead, and let the crew work.
             </p>
             <button className="btn btn-primary" onClick={onGetStarted}>Get started</button>
           </div>
