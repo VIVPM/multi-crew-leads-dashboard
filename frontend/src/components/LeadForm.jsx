@@ -64,7 +64,9 @@ export default function LeadForm({ lead, onSave, onCancel }) {
   async function handleSubmit(e) {
     e.preventDefault()
     const errs = validate(fields)
-    if (errs.length) { setErrors(errs); return }
+    // Surface one problem at a time (in field order) — the next appears
+    // only after the current one is fixed, instead of a wall of errors.
+    if (errs.length) { setErrors([errs[0]]); return }
     setErrors([])
     try {
       await onSave(fields, setStatus, forceRefresh)
