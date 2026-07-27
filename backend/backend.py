@@ -94,8 +94,15 @@ app.add_middleware(
 
 # Optional: HTTP-layer tracing (every endpoint, not just LLM calls) to
 # Grafana Cloud only — Langfuse (see worker.py) stays focused on CrewAI/
-# LiteLLM spans, this covers the rest of the app (auth, lead CRUD, admin
-# overview) that Langfuse was never meant to show. Non-fatal if unset.
+# LiteLLM spans, this covers the rest of the app (auth, lead CRUD) that
+# Langfuse was never meant to show. Non-fatal if unset.
+#
+# opentelemetry-instrumentation-fastapi is intentionally NOT in
+# requirements.txt: it pins opentelemetry-semantic-conventions==0.65b0,
+# which conflicts with the opentelemetry-sdk==1.42.1 that crewai needs
+# (that pin is exactly 0.63b1). So the ImportError below is the expected
+# state, not a failure — it's logged as a quiet INFO rather than an ERROR
+# with a traceback. Genuine misconfiguration still logs at ERROR.
 if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     try:
         from opentelemetry.sdk.trace import TracerProvider
@@ -115,6 +122,12 @@ if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
         )))
         FastAPIInstrumentor.instrument_app(app, tracer_provider=_http_tracer_provider)
         logger.info("HTTP-layer tracing enabled via OTLP (Grafana Cloud)")
+    except ImportError:
+        logger.info(
+            "HTTP-layer tracing skipped: opentelemetry-instrumentation-fastapi "
+            "not installed (expected — it conflicts with crewai's otel pins). "
+            "CrewAI/LLM tracing in worker.py is unaffected."
+        )
     except Exception:
         logger.exception("Failed to initialize HTTP tracing (non-fatal)")
 
