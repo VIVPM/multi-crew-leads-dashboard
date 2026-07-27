@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import CompanyProfile from './components/CompanyProfile'
 import EmailSettings from './components/EmailSettings'
 import LeadForm from './components/LeadForm'
+import BulkImport from './components/BulkImport'
 import Dashboard from './components/Dashboard'
 import LeadsTable from './components/LeadsTable'
 import { api, friendlyError } from './api'
@@ -49,7 +50,7 @@ export default function App() {
 
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(false)
-  const [addingLead, setAddingLead] = useState(false)
+  const [entryMode, setEntryMode] = useState(null) // null | 'single' | 'bulk'
   const [editingLead, setEditingLead] = useState(null)
   const [globalMsg, setGlobalMsg] = useState(null)
 
@@ -74,7 +75,7 @@ export default function App() {
     setUserId(null)
     setUsername('')
     setLeads([])
-    setAddingLead(false)
+    setEntryMode(null)
     setEditingLead(null)
     setCompanyContext('')
     setCompanyContextLoaded(false)
@@ -168,7 +169,7 @@ export default function App() {
       // Processing failed — lead was saved, still refresh so it appears in the table
       await fetchLeads()
       setStatus(null)
-      setAddingLead(false)
+      setEntryMode(null)
       setEditingLead(null)
       setGlobalMsg({ type: 'error', text: `Lead saved but processing failed: ${friendlyError(e)}` })
       return
@@ -176,7 +177,7 @@ export default function App() {
 
     await fetchLeads()
     setStatus(null)
-    setAddingLead(false)
+    setEntryMode(null)
     setEditingLead(null)
     const r = job.results?.[0]
     if (!r) {
@@ -190,7 +191,7 @@ export default function App() {
 
   function handleEditLead(lead) {
     setEditingLead(lead)
-    setAddingLead(true)
+    setEntryMode('single')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -228,25 +229,46 @@ export default function App() {
         <EmailSettings onMessage={text => setGlobalMsg({ type: 'success', text })} />
 
         <div className="card lead-form-card">
-          <div
-            className="company-profile-header"
-            onClick={() => {
-              if (addingLead) { setAddingLead(false); setEditingLead(null) }
-              else { setEditingLead(null); setAddingLead(true) }
-            }}
-          >
-            <h3 className="card-title" style={{ marginBottom: 0 }}>
+          <div className="lead-entry-tabs">
+            <button
+              className={`lead-entry-tab ${entryMode === 'single' ? 'active' : ''}`}
+              onClick={() => {
+                setEditingLead(null)
+                setEntryMode(entryMode === 'single' ? null : 'single')
+              }}
+            >
               {editingLead ? 'Edit lead' : 'Add new lead'}
-            </h3>
-            <span className="lead-card-chevron">{addingLead ? '▲' : '▼'}</span>
+            </button>
+            <button
+              className={`lead-entry-tab ${entryMode === 'bulk' ? 'active' : ''}`}
+              onClick={() => {
+                setEditingLead(null)
+                setEntryMode(entryMode === 'bulk' ? null : 'bulk')
+              }}
+            >
+              Bulk import
+            </button>
           </div>
 
-          {addingLead && (
+          {entryMode === 'single' && (
             <LeadForm
               key={editingLead?.id ?? 'new'}
               lead={editingLead}
               onSave={handleSaveAndProcess}
-              onCancel={() => { setAddingLead(false); setEditingLead(null) }}
+              onCancel={() => { setEntryMode(null); setEditingLead(null) }}
+            />
+          )}
+
+          {entryMode === 'bulk' && (
+            <BulkImport
+              onImported={fetchLeads}
+              onMessage={text => setGlobalMsg({ type: 'success', text })}
+              canProcess={!!companyContext?.trim()}
+              onNeedIcp={() => setShowIcpDialog(true)}
+              processBatch={async batch => {
+                const { job_id } = await api('POST', '/leads/process', { leads: batch })
+                return waitForJob(job_id)
+              }}
             />
           )}
         </div>

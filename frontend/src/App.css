@@ -412,6 +412,50 @@ body {
    ============================================================ */
 .lead-form-card { margin-bottom: 1.5rem; }
 
+/* Two ways in — one lead at a time, or a CSV — as sibling tabs rather than
+   two separate cards, so they read as one "add leads" surface. */
+.lead-entry-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lead-entry-tab {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  color: var(--ink-mute);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.lead-entry-tab:hover { border-color: var(--primary-subdued); color: var(--ink); }
+
+.lead-entry-tab.active {
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
+  color: var(--on-primary);
+}
+
+.bulk-progress-track {
+  margin-top: 0.6rem;
+  height: 6px;
+  border-radius: var(--pill);
+  background: rgba(83, 58, 253, 0.15);
+  overflow: hidden;
+}
+
+.bulk-progress-bar {
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--pill);
+  transition: width 0.3s ease;
+}
+
 .lead-form-body { margin-top: 1rem; }
 
 /* ============================================================

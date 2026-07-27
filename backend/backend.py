@@ -66,6 +66,10 @@ if not os.getenv("SECRET_KEY"):
     )
 
 MAX_LEADS_PER_REQUEST = 10
+# CSV import ceiling. Rows are only *created* here — processing still goes
+# through /leads/process in MAX_LEADS_PER_REQUEST-sized batches, so this
+# doesn't let anyone queue an unbounded amount of LLM work in one call.
+MAX_BULK_IMPORT = 200
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
 # Well under Gmail's real ~100/day SMTP-relay ceiling (not the often-quoted
@@ -225,6 +229,9 @@ class LeadUpdate(BaseModel):
     location: Optional[str] = None
     source: Optional[str] = None
     email_draft: Optional[str] = None
+
+class BulkLeadsRequest(BaseModel):
+    leads: List[LeadCreate] = Field(min_length=1, max_length=MAX_BULK_IMPORT)
 
 class ProcessLeadsRequest(BaseModel):
     leads: List[dict]
@@ -420,6 +427,17 @@ def create_lead(lead: LeadCreate, user_id: str = Depends(current_user)):
     payload["user_id"] = user_id
     resp = supabase.table("leads").insert(payload).execute()
     return resp.data[0] if resp.data else {}
+
+
+@app.post("/leads/bulk", status_code=201)
+def create_leads_bulk(req: BulkLeadsRequest, user_id: str = Depends(current_user)):
+    """Insert many leads in one call (CSV import). Only creates rows — the
+    caller then enqueues processing in MAX_LEADS_PER_REQUEST-sized batches."""
+    payload = [{**lead.dict(), "user_id": user_id} for lead in req.leads]
+    resp = supabase.table("leads").insert(payload).execute()
+    created = resp.data or []
+    logger.info("Bulk-created %d lead(s) for user %s", len(created), user_id)
+    return created
 
 
 @app.put("/leads/{lead_id}")
