@@ -42,8 +42,17 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
     try {
       // Create every row first, then process the created rows in batches —
       // /leads/process needs real lead ids and caps each call at BATCH_SIZE.
-      const created = await api('POST', '/leads/bulk', { leads })
+      // The server skips rows whose email this user already has.
+      const { created, skipped } = await api('POST', '/leads/bulk', { leads })
+      const dupeNote = skipped.length ? ` ${skipped.length} skipped as already imported.` : ''
       onImported()
+
+      if (created.length === 0) {
+        onMessage(`Nothing new to import — all ${skipped.length} row(s) are already in your leads.`)
+        reset()
+        return
+      }
+
       const batches = []
       for (let i = 0; i < created.length; i += BATCH_SIZE) batches.push(created.slice(i, i + BATCH_SIZE))
 
@@ -62,8 +71,8 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
       }
       onMessage(
         failed
-          ? `Imported ${created.length} lead(s); ${failed} could not be processed (they're saved — reprocess from the lead card).`
-          : `Imported and processed ${created.length} lead(s).`
+          ? `Imported ${created.length} lead(s); ${failed} could not be processed. They're saved but unscored — open the lead and use Edit → Save and process to retry (re-importing the file will skip them as duplicates).${dupeNote}`
+          : `Imported and processed ${created.length} lead(s).${dupeNote}`
       )
       reset()
     } catch (e) {

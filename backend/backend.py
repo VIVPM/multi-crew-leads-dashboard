@@ -432,12 +432,36 @@ def create_lead(lead: LeadCreate, user_id: str = Depends(current_user)):
 @app.post("/leads/bulk", status_code=201)
 def create_leads_bulk(req: BulkLeadsRequest, user_id: str = Depends(current_user)):
     """Insert many leads in one call (CSV import). Only creates rows — the
-    caller then enqueues processing in MAX_LEADS_PER_REQUEST-sized batches."""
-    payload = [{**lead.dict(), "user_id": user_id} for lead in req.leads]
-    resp = supabase.table("leads").insert(payload).execute()
-    created = resp.data or []
-    logger.info("Bulk-created %d lead(s) for user %s", len(created), user_id)
-    return created
+    caller then enqueues processing in MAX_LEADS_PER_REQUEST-sized batches.
+
+    Rows whose email this user already has are skipped rather than inserted:
+    re-importing a file after a partially failed run is a normal recovery
+    step, and it shouldn't silently double every lead. Duplicates *within*
+    the uploaded file are collapsed the same way.
+    """
+    # One column for this user's leads; compared lowercased so Bob@x.com and
+    # bob@x.com count as the same person. O(existing leads) per import.
+    existing = supabase.table("leads").select("email").eq("user_id", user_id).execute().data or []
+    seen = {(r.get("email") or "").strip().lower() for r in existing}
+
+    to_insert, skipped = [], []
+    for lead in req.leads:
+        data = lead.dict()
+        key = (data.get("email") or "").strip().lower()
+        if key in seen:
+            skipped.append(data.get("email"))
+            continue
+        seen.add(key)
+        to_insert.append({**data, "user_id": user_id})
+
+    created = []
+    if to_insert:
+        created = supabase.table("leads").insert(to_insert).execute().data or []
+    logger.info(
+        "Bulk import for user %s: %d created, %d skipped as duplicates",
+        user_id, len(created), len(skipped),
+    )
+    return {"created": created, "skipped": skipped}
 
 
 @app.put("/leads/{lead_id}")
