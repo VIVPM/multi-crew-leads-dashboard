@@ -84,7 +84,9 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         {BATCH_SIZE} at a time.
       </p>
 
-      <div className="form-group" style={{ marginTop: '0.75rem' }}>
+      {/* native file input is unstyleable across browsers — hide it and drive
+          it from the label, which keeps the click/keyboard behaviour for free */}
+      <label className={`file-picker ${running ? 'is-disabled' : ''}`}>
         <input
           ref={fileRef}
           type="file"
@@ -92,7 +94,9 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
           onChange={handleFile}
           disabled={running}
         />
-      </div>
+        <span className="file-picker-cta">Choose CSV file</span>
+        <span className="file-picker-name">{fileName || 'No file selected'}</span>
+      </label>
 
       {errors.map((e, i) => (
         <div key={i} className="alert alert-error">{e}</div>

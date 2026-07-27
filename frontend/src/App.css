@@ -456,6 +456,48 @@ body {
   transition: width 0.3s ease;
 }
 
+/* The native file input can't be styled consistently, so it's hidden and the
+   whole label acts as the control (keeps click + keyboard activation). */
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--canvas-soft);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.file-picker:hover { border-color: var(--primary); background: var(--canvas); }
+.file-picker input[type="file"] { display: none; }
+
+.file-picker-cta {
+  flex-shrink: 0;
+  padding: 0.5rem 1.1rem;
+  border-radius: var(--pill);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.85rem;
+  letter-spacing: -0.1px;
+}
+
+.file-picker:hover .file-picker-cta { background: var(--primary-deep); }
+
+.file-picker-name {
+  font-size: 0.85rem;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-picker.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.file-picker.is-disabled:hover { border-color: var(--hairline); background: var(--canvas-soft); }
+.file-picker.is-disabled:hover .file-picker-cta { background: var(--primary); }
+
 .lead-form-body { margin-top: 1rem; }
 
 /* ============================================================

@@ -259,7 +259,10 @@ export default function App() {
             />
           )}
 
-          {entryMode === 'bulk' && (
+          {/* Kept mounted (hidden) rather than conditionally rendered: switching
+              tabs mid-import would otherwise unmount this and throw away the
+              selected file and the running progress. */}
+          <div style={{ display: entryMode === 'bulk' ? 'block' : 'none' }}>
             <BulkImport
               onImported={fetchLeads}
               onMessage={text => setGlobalMsg({ type: 'success', text })}
@@ -270,7 +273,7 @@ export default function App() {
                 return waitForJob(job_id)
               }}
             />
-          )}
+          </div>
         </div>
 
         <section className="section">
