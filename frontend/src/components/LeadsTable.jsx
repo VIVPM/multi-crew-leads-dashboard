@@ -3,6 +3,17 @@ import { api, friendlyError } from '../api'
 
 const PAGE_SIZES = [10, 25, 50, 100]
 
+// Scores above EMAIL_THRESHOLD get an email drafted. Repeated scoring of the
+// same lead varies by roughly +/-3.5 points (see scoring_eval_results/), so a
+// lead landing inside this band could fall either side of the cutoff on a
+// different run. Rather than hide that, say so and let a human decide.
+const EMAIL_THRESHOLD = 70
+const BORDERLINE_LOW = 65
+const BORDERLINE_HIGH = 75
+const BORDERLINE_HINT =
+  `Scored close to the ${EMAIL_THRESHOLD} cutoff, and repeat runs vary by a few points — ` +
+  `this lead could qualify or not depending on the run. Worth reviewing by hand.`
+
 function flattenToText(obj) {
   if (obj == null) return ''
   if (typeof obj === 'object') return Object.values(obj).map(flattenToText).join(' ').toLowerCase()
@@ -170,6 +181,8 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [sentMsg, setSentMsg] = useState(null)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
+  const isBorderline =
+    lead.score != null && lead.score >= BORDERLINE_LOW && lead.score <= BORDERLINE_HIGH
 
   useEffect(() => { setEmailDraft(lead.email_draft || '') }, [lead.email_draft])
 
@@ -223,6 +236,9 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
           <span className="lead-name">{lead.name}</span>
           {lead.company && <span className="lead-company"> — {lead.company}</span>}
           {score && <span className="lead-score">{score}</span>}
+          {isBorderline && (
+            <span className="badge badge-amber" title={BORDERLINE_HINT}>Borderline</span>
+          )}
         </span>
         <span className="lead-card-chevron">{open ? '▲' : '▼'}</span>
       </div>
@@ -230,6 +246,16 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
       {open && (
         <div className="lead-card-body">
           {err && <div className="alert alert-error">{err}</div>}
+          {isBorderline && (
+            <div className="alert alert-warning">
+              <strong>Borderline ({lead.score}).</strong> This sits within a few points of
+              the {EMAIL_THRESHOLD} cutoff, and re-scoring the same lead moves the number by
+              a few points — so whether an email gets drafted is partly luck of the run.
+              {lead.email_draft
+                ? ' An email was drafted; read it before sending.'
+                : ' No email was drafted — if this lead looks worth it, use Edit → Save and process, or write to them directly.'}
+            </div>
+          )}
           {sentMsg && (
             <div className="alert alert-success">
               {sentMsg}

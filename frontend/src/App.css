@@ -753,6 +753,7 @@ body {
 }
 .badge-green { background: #d7f7c2; color: #1e7d34; }
 .badge-neutral { background: var(--canvas-soft); color: var(--ink-mute); }
+.badge-amber { background: var(--cream); color: var(--lemon); border: 1px solid var(--cream-line); }
 
 /* ============================================================
    Utility
