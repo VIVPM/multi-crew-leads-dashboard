@@ -18,6 +18,12 @@ Two steps:
           MAE, mean signed error (bias), % within 10, Spearman rank
           correlation, and the 70-threshold confusion matrix.
 
+    python backend/scoring_gold_set.py --compare gold_set_template.csv --rescore
+        Same, but re-runs the pipeline against the ICP saved right now
+        instead of reading stored scores — how you measure whether a prompt
+        or rubric change actually helped. Stored scores are left alone, so
+        this is an experiment rather than a mutation.
+
 Ranking agreement (Spearman) matters more than absolute agreement: a rep acts
 on "who do I contact first", so ordering is what has to be right.
 
@@ -111,15 +117,55 @@ def _pearson(a, b):
     return num / (da * db) if da and db else float("nan")
 
 
-def compare(path: str):
+def _rescore_rows(rows):
+    """Re-run the pipeline for these leads against whatever ICP is saved now,
+    WITHOUT touching the stored scores. Used to measure a prompt/rubric change
+    against the same gold set — an experiment, not a mutation."""
+    import asyncio
+    from pipeline import process_leads
+    from worker import cache_get_company, cache_set_company
+
+    icp = supabase.table("users").select("company_context").eq(
+        "username", os.getenv("EVAL_USERNAME", "vivek@gmail.com")).execute().data[0]["company_context"]
+    gk, tk = os.environ["GEMINI_API_KEY"], os.environ["TAVILY_API_KEY"]
+
+    async def run():
+        out = {}
+        for i, r in enumerate(rows, 1):
+            lead = {k: r.get(k) or "" for k in FIELDS if k != "id"}
+            try:
+                scores, _e, _t, hits = await process_leads(
+                    [lead], gk, tk, our_company_context=icp,
+                    cache_get=cache_get_company, cache_set=cache_set_company,
+                    force_refresh=False, max_retries=2,
+                )
+                # int keys: compare() looks these up as int(row["id"]), and the
+                # CSV hands back strings
+                out[int(r["id"])] = scores[0].pydantic.lead_score.score
+                print(f"  [{i}/{len(rows)}] {r['name'][:26]:26} -> {out[int(r['id'])]}"
+                      f"  (cache_hit={bool(hits[0])})", flush=True)
+            except Exception as exc:
+                print(f"  [{i}/{len(rows)}] {r['name'][:26]:26} FAILED: {type(exc).__name__}", flush=True)
+        return out
+
+    return asyncio.run(run())
+
+
+def compare(path: str, rescore: bool = False):
     with open(path, encoding="utf-8-sig", newline="") as f:
         rows = [r for r in csv.DictReader(f) if (r.get("human_score") or "").strip()]
     if len(rows) < 5:
         sys.exit(f"Only {len(rows)} rows have a human_score — fill in more before comparing.")
 
-    ids = [int(r["id"]) for r in rows]
-    live = {r["id"]: r["score"] for r in
-            (supabase.table("leads").select("id,score").in_("id", ids).execute().data or [])}
+    if rescore:
+        print(f"Re-scoring {len(rows)} leads against the currently saved ICP "
+              f"(stored scores are left untouched)...\n", flush=True)
+        live = _rescore_rows(rows)
+        print()
+    else:
+        ids = [int(r["id"]) for r in rows]
+        live = {r["id"]: r["score"] for r in
+                (supabase.table("leads").select("id,score").in_("id", ids).execute().data or [])}
 
     pairs, missing = [], []
     for r in rows:
@@ -185,7 +231,7 @@ if __name__ == "__main__":
     elif "--compare" in sys.argv:
         i = sys.argv.index("--compare")
         if len(sys.argv) <= i + 1:
-            sys.exit("Usage: --compare <filled_csv>")
-        compare(sys.argv[i + 1])
+            sys.exit("Usage: --compare <filled_csv> [--rescore]")
+        compare(sys.argv[i + 1], rescore="--rescore" in sys.argv)
     else:
         sys.exit(__doc__)
