@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-07-21T20:16:02.391964",
+  "repeats": 10,
+  "email_threshold": 70,
+  "cache_hits": "10/10",
+  "thresholds": {
+    "max_stdev": 5.0,
+    "min_separation": 25,
+    "min_seniority_drop": 10,
+    "max_cosmetic_drift": 8
+  },
+  "per_lead": {},
+  "checks": [
+    {
+      "check": "threshold_stability",
+      "pass": true,
+      "detail": "no lead straddles the email cutoff",
+      "flippers": []
+    },
+    {
+      "check": "sensitivity:seniority",
+      "pass": true,
+      "senior_scores": [
+        93,
+        88,
+        87,
+        92,
+        91
+      ],
+      "junior_scores": [
+        63,
+        66,
+        66,
+        64,
+        67
+      ],
+      "senior_mean": 90.2,
+      "junior_mean": 65.2,
+      "detail": "CTO 90.2 (sd 2.3) -> Intern 65.2 (sd 1.5) = -25.0 (bar: >= 10)"
+    }
+  ],
+  "passed": 2,
+  "graded": 2
+}

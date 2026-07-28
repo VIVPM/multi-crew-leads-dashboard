@@ -1,0 +1,173 @@
+{
+  "timestamp": "2026-07-21T19:26:22.984381",
+  "repeats": 10,
+  "cache_hits": {
+    "strong": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "borderline": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "weak": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "thresholds": {
+    "max_stdev": 5.0,
+    "min_separation": 25,
+    "min_seniority_drop": 10,
+    "max_cosmetic_drift": 8
+  },
+  "checks": [
+    {
+      "check": "reliability:strong_lead",
+      "pass": true,
+      "scores": [
+        93,
+        94,
+        100,
+        92,
+        96,
+        95,
+        87,
+        98,
+        95,
+        98
+      ],
+      "mean": 94.8,
+      "stdev": 3.49,
+      "spread": 13,
+      "detail": "stdev 3.49 (bar: <= 5.0)"
+    },
+    {
+      "check": "reliability:borderline_lead",
+      "pass": false,
+      "scores": [
+        77,
+        78,
+        87,
+        72,
+        82,
+        89,
+        81,
+        74,
+        90,
+        83
+      ],
+      "mean": 81.3,
+      "stdev": 5.83,
+      "spread": 18,
+      "detail": "stdev 5.83 (bar: <= 5.0)"
+    },
+    {
+      "check": "reliability:weak_lead",
+      "pass": false,
+      "scores": [
+        25,
+        22,
+        3,
+        23,
+        31,
+        30,
+        25,
+        26,
+        23,
+        24
+      ],
+      "mean": 23.2,
+      "stdev": 7.29,
+      "spread": 28,
+      "detail": "stdev 7.29 (bar: <= 5.0)"
+    },
+    {
+      "check": "threshold_flip:borderline",
+      "pass": null,
+      "detail": "10 of 10 runs would draft an email (>70); minority side = 0",
+      "scores": [
+        77,
+        78,
+        87,
+        72,
+        82,
+        89,
+        81,
+        74,
+        90,
+        83
+      ],
+      "above": 10,
+      "below": 0
+    },
+    {
+      "check": "discriminant",
+      "pass": true,
+      "detail": "worst strong 87 - best weak 31 = 56 (bar: >= 25)",
+      "strong_scores": [
+        93,
+        94,
+        100,
+        92,
+        96,
+        95,
+        87,
+        98,
+        95,
+        98,
+        96
+      ],
+      "weak_scores": [
+        25,
+        22,
+        3,
+        23,
+        31,
+        30,
+        25,
+        26,
+        23,
+        24
+      ]
+    },
+    {
+      "check": "sensitivity:seniority",
+      "pass": true,
+      "detail": "CTO 90 -> Intern 65 = -25 (bar: >= 10)",
+      "senior_score": 90,
+      "junior_score": 65
+    },
+    {
+      "check": "invariance:cosmetic",
+      "pass": true,
+      "detail": "|94.8 - 94| = 0.8 (bar: <= 8)"
+    }
+  ],
+  "passed": 4,
+  "graded": 6
+}

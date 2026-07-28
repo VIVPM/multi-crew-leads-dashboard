@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-07-21T18:08:07.268308",
+  "repeats": 3,
+  "cache_hits": {
+    "strong": [
+      true,
+      true,
+      true
+    ],
+    "weak": [
+      true,
+      true,
+      true
+    ]
+  },
+  "thresholds": {
+    "max_stdev": 5.0,
+    "min_separation": 25,
+    "min_seniority_drop": 10,
+    "max_cosmetic_drift": 8
+  },
+  "checks": [
+    {
+      "check": "reliability:strong_lead",
+      "pass": true,
+      "scores": [
+        85,
+        95,
+        94
+      ],
+      "mean": 91.3,
+      "stdev": 4.5,
+      "spread": 10,
+      "detail": "stdev 4.50 (bar: <= 5.0)"
+    },
+    {
+      "check": "reliability:weak_lead",
+      "pass": true,
+      "scores": [
+        23,
+        19,
+        21
+      ],
+      "mean": 21,
+      "stdev": 1.63,
+      "spread": 4,
+      "detail": "stdev 1.63 (bar: <= 5.0)"
+    },
+    {
+      "check": "discriminant",
+      "pass": true,
+      "detail": "worst strong 85 - best weak 23 = 62 (bar: >= 25)",
+      "strong_scores": [
+        85,
+        95,
+        94,
+        92
+      ],
+      "weak_scores": [
+        23,
+        19,
+        21
+      ]
+    },
+    {
+      "check": "sensitivity:seniority",
+      "pass": false,
+      "detail": "CEO 91.3 -> Intern 95 = --3.7 (bar: >= 10)"
+    },
+    {
+      "check": "invariance:cosmetic",
+      "pass": true,
+      "detail": "|91.3 - 93| = 1.7 (bar: <= 8)"
+    }
+  ],
+  "passed": 4,
+  "graded": 5
+}

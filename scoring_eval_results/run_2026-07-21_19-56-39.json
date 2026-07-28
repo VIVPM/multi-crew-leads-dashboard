@@ -1,0 +1,251 @@
+{
+  "timestamp": "2026-07-21T19:56:39.728032",
+  "repeats": 10,
+  "email_threshold": 70,
+  "cache_hits": "50/50",
+  "thresholds": {
+    "max_stdev": 5.0,
+    "min_separation": 25,
+    "min_seniority_drop": 10,
+    "max_cosmetic_drift": 8
+  },
+  "per_lead": {
+    "strong_ceo_vercel": {
+      "expect": "strong",
+      "scores": [
+        85,
+        92,
+        97,
+        90,
+        93,
+        92,
+        96,
+        95,
+        94,
+        95
+      ],
+      "mean": 92.9,
+      "stdev": 3.3,
+      "min": 85,
+      "max": 97,
+      "spread": 12,
+      "above_threshold": 10,
+      "below_threshold": 0
+    },
+    "strong_cto_hashicorp": {
+      "expect": "strong",
+      "scores": [
+        95,
+        92,
+        95,
+        89,
+        95,
+        94,
+        92,
+        100,
+        88,
+        95
+      ],
+      "mean": 93.5,
+      "stdev": 3.26,
+      "min": 88,
+      "max": 100,
+      "spread": 12,
+      "above_threshold": 10,
+      "below_threshold": 0
+    },
+    "mid_eng_manager_vercel": {
+      "expect": "borderline",
+      "scores": [
+        84,
+        88,
+        88,
+        87,
+        91,
+        92,
+        87,
+        86,
+        89,
+        93
+      ],
+      "mean": 88.5,
+      "stdev": 2.66,
+      "min": 84,
+      "max": 93,
+      "spread": 9,
+      "above_threshold": 10,
+      "below_threshold": 0
+    },
+    "mid_analyst_datadog": {
+      "expect": "borderline",
+      "scores": [
+        72,
+        80,
+        67,
+        73,
+        71,
+        72,
+        71,
+        74,
+        67,
+        74
+      ],
+      "mean": 72.1,
+      "stdev": 3.53,
+      "min": 67,
+      "max": 80,
+      "spread": 13,
+      "above_threshold": 8,
+      "below_threshold": 2
+    },
+    "weak_owner_plumbing": {
+      "expect": "weak",
+      "scores": [
+        22,
+        20,
+        31,
+        20,
+        26,
+        24,
+        26,
+        23,
+        28,
+        26
+      ],
+      "mean": 24.6,
+      "stdev": 3.32,
+      "min": 20,
+      "max": 31,
+      "spread": 11,
+      "above_threshold": 0,
+      "below_threshold": 10
+    }
+  },
+  "checks": [
+    {
+      "check": "reliability:strong_ceo_vercel",
+      "pass": true,
+      "scores": [
+        85,
+        92,
+        97,
+        90,
+        93,
+        92,
+        96,
+        95,
+        94,
+        95
+      ],
+      "mean": 92.9,
+      "stdev": 3.3,
+      "spread": 12,
+      "detail": "mean 92.9 stdev 3.30 range 85-97 (bar: stdev <= 5.0)"
+    },
+    {
+      "check": "reliability:strong_cto_hashicorp",
+      "pass": true,
+      "scores": [
+        95,
+        92,
+        95,
+        89,
+        95,
+        94,
+        92,
+        100,
+        88,
+        95
+      ],
+      "mean": 93.5,
+      "stdev": 3.26,
+      "spread": 12,
+      "detail": "mean 93.5 stdev 3.26 range 88-100 (bar: stdev <= 5.0)"
+    },
+    {
+      "check": "reliability:mid_eng_manager_vercel",
+      "pass": true,
+      "scores": [
+        84,
+        88,
+        88,
+        87,
+        91,
+        92,
+        87,
+        86,
+        89,
+        93
+      ],
+      "mean": 88.5,
+      "stdev": 2.66,
+      "spread": 9,
+      "detail": "mean 88.5 stdev 2.66 range 84-93 (bar: stdev <= 5.0)"
+    },
+    {
+      "check": "reliability:mid_analyst_datadog",
+      "pass": true,
+      "scores": [
+        72,
+        80,
+        67,
+        73,
+        71,
+        72,
+        71,
+        74,
+        67,
+        74
+      ],
+      "mean": 72.1,
+      "stdev": 3.53,
+      "spread": 13,
+      "detail": "mean 72.1 stdev 3.53 range 67-80 (bar: stdev <= 5.0)"
+    },
+    {
+      "check": "reliability:weak_owner_plumbing",
+      "pass": true,
+      "scores": [
+        22,
+        20,
+        31,
+        20,
+        26,
+        24,
+        26,
+        23,
+        28,
+        26
+      ],
+      "mean": 24.6,
+      "stdev": 3.32,
+      "spread": 11,
+      "detail": "mean 24.6 stdev 3.32 range 20-31 (bar: stdev <= 5.0)"
+    },
+    {
+      "check": "threshold_stability",
+      "pass": false,
+      "detail": "straddles cutoff: mid_analyst_datadog (8/10 above 70, range 67-80)",
+      "flippers": [
+        "mid_analyst_datadog (8/10 above 70, range 67-80)"
+      ]
+    },
+    {
+      "check": "discriminant",
+      "pass": true,
+      "detail": "worst strong 85 - best weak 31 = 54 (bar: >= 25)"
+    },
+    {
+      "check": "sensitivity:seniority",
+      "pass": false,
+      "detail": "CTO 74 -> Intern 69 = -5 (bar: >= 10)"
+    },
+    {
+      "check": "invariance:cosmetic",
+      "pass": true,
+      "detail": "|92.9 - 96| = 3.1 (bar: <= 8)"
+    }
+  ],
+  "passed": 7,
+  "graded": 9
+}
