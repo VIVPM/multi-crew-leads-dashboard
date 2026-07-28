@@ -19,7 +19,10 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 - **Structured JSON logging** — every log line is correlated by `request_id`/`job_id`/`lead_id`, so one request's or job's full story is a single grep away.
 - **Observability** — optional OpenTelemetry tracing of every crew/agent/LLM call via targeted openinference instrumentors, exported to Langfuse and/or Grafana Cloud (which also receives a `jobs_processed_total` metric powering no-activity/failure alerts), enabled automatically when the matching env vars are set.
 - **YAML-driven agents** — all agent roles, task prompts, and workflow logic configurable in `backend/config/` without code changes.
+- **Bulk CSV import** — add leads one at a time or upload a CSV; rows are validated per line, duplicates (by email) are skipped, and processing runs in batches of 10 with live progress.
+- **Borderline scores are flagged, not hidden** — repeat scoring of the same lead varies by ~±3.5 points, so leads landing within 65–75 of the 70 email cutoff are badged **Borderline** with an explanation, rather than silently drafting (or not) on a coin flip.
 - **Red-team test suite** — adversarial inputs (fake companies, prompt injection, contradictory data) with saved pass/fail reports.
+- **Scoring evaluation harness** — reliability checks (repeatability, discrimination, seniority sensitivity, invariance) plus a human gold-set comparison for accuracy.
 
 ---
 
@@ -82,6 +85,8 @@ Three separate `Crew` objects (not one monolith), because `company` needs to be 
 │   ├── security.py           # bcrypt hashing + access/refresh session tokens
 │   ├── logging_setup.py      # structured JSON logs + request/job/lead correlation IDs
 │   ├── adversarial_testing.py # red-team test suite (needs backend/.venv — see below)
+│   ├── scoring_eval.py       # Tier 1: scoring reliability (repeatability, sensitivity)
+│   ├── scoring_gold_set.py   # Tier 2: agent vs human-scored gold set (accuracy)
 │   ├── test_crews.py         # crew smoke test + CrewAI eval runs (needs backend/.venv — see below)
 │   ├── requirements.txt      # pinned Python dependencies
 │   └── config/               # agent & task YAML definitions (all three crews)
@@ -202,6 +207,24 @@ At most **10 leads** can be processed per request; job status is `pending → ru
 - **Unit tests (no network):** `python tests/test_security.py` — also run in CI (`.github/workflows/ci.yml`) along with syntax checks, frontend lint, and build.
 - **Crew smoke test + eval:** `python backend/test_crews.py` (needs `GEMINI_API_KEY`/`TAVILY_API_KEY`; makes real LLM calls).
 - **Red teaming:** `python backend/adversarial_testing.py` runs adversarial leads (fake company, prompt injection, contradictory data, incomplete lead, biased framing, duplicates) and saves a report to `adversarial_results/` at the repo root. Latest run: **6/6 passed** — see `adversarial_results/run_2026-07-18_15-32-27.json`.
+
+### Scoring evaluation
+
+Two tiers, because "is the score stable?" and "is the score right?" are different questions — there's no point collecting human labels for a scorer that can't reproduce its own number.
+
+**Tier 1 — reliability** (`python backend/scoring_eval.py`, reports in `scoring_eval_results/`). Scores 5 leads 10× each plus seniority/invariance probes, serving company research from cache so the variance measured is the scorer's rather than the web's. Use `--only <reliability|sensitivity|invariance>` to re-run one section. Latest run: **8/9 checks passed**:
+
+| Check | Result |
+|---|---|
+| Reliability (5 leads × 10) | stdev **2.66–3.53** |
+| Discriminant | **54-point** gap (worst strong 85 vs best weak 31) |
+| Sensitivity (seniority) | CTO **90.2** → Intern **65.2** = **−25.0**, no overlap |
+| Invariance (cosmetic) | **3.1** points drift |
+| Threshold stability | **failed** — a lead at mean 72.1 (range 67–80) drafted an email on 8 of 10 identical runs |
+
+That last one is why leads scoring 65–75 are badged **Borderline** in the UI: a hard cutoff sits on a score with ~±3.5 noise, so the honest fix is to say so rather than move the line. (Raising the threshold to 80 was measured and rejected — on the real distribution it barely changes who qualifies, 93% → 89%, while taking leads-near-the-edge from 0 to 8.)
+
+**Tier 2 — accuracy** (`python backend/scoring_gold_set.py`). `--export` writes a blind template (lead details, no agent score, spread evenly across the score range); hand-score each 0–100; `--compare <file>` reports MAE, mean signed error, % within 10, Spearman rank correlation, and the 70-threshold confusion matrix. **Scaffolded but not yet run** — it needs hand-scored labels. Its limits are real and worth quoting alongside any number it produces: a single rater (agreement with that person, not truth), imperfect blinding for leads already seen in the app, and small n.
 
 ### Evaluation Results
 
