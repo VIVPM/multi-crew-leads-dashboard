@@ -50,13 +50,48 @@ logger = logging.getLogger("backend")
 # ---------------------------------------------------------------------------
 # Supabase
 # ---------------------------------------------------------------------------
-from supabase import create_client
+import httpx
+from supabase import create_client, ClientOptions
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in backend/.env")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+class _RetryStaleConnTransport(httpx.HTTPTransport):
+    """Retry a read once when a pooled connection turns out to be already dead.
+
+    PostgREST closes idle keep-alive connections on its side; httpx only finds
+    out when it tries to reuse one, and raises RemoteProtocolError("Server
+    disconnected"), which surfaces to the user as a 500. Load testing measured
+    this at 15-20% of requests with 20 concurrent clients, and it clustered
+    right after idle periods rather than under pipeline load — i.e. it tracks
+    connection age, not traffic.
+
+    httpx's own `retries=` argument does not cover this; it only retries
+    connect failures. Retrying is restricted to methods that are safe to
+    replay: on a genuinely stale connection the request never reached the
+    server, but that is indistinguishable from one that arrived and whose
+    response was lost, so a POST is never retried.
+    """
+
+    _REPLAYABLE = frozenset({"GET", "HEAD", "OPTIONS"})
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return super().handle_request(request)
+        except httpx.RemoteProtocolError:
+            if request.method not in self._REPLAYABLE:
+                raise
+            logger.debug("Stale Supabase connection on %s, retrying once", request.url.path)
+            return super().handle_request(request)
+
+
+supabase = create_client(
+    SUPABASE_URL, SUPABASE_KEY,
+    options=ClientOptions(httpx_client=httpx.Client(transport=_RetryStaleConnTransport())),
+)
 
 SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 if not os.getenv("SECRET_KEY"):
