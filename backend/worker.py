@@ -2,8 +2,12 @@
 worker.py — background processor for lead-scoring jobs.
 
 Run alongside the API server:  python backend/worker.py
-Scale throughput by running more worker processes; job claiming is
-guarded by a conditional status update so workers never double-process.
+Scale throughput by running more worker processes: job claiming is guarded
+by a conditional status update so workers never double-process, and a
+starting worker only reaps jobs that have outlived their own time budget,
+so it cannot kill work another worker still has in flight. That second
+half was added after load testing measured a second worker destroying
+100% of the first one's running jobs (see fail_stale_running_jobs).
 """
 
 import os
@@ -135,9 +139,13 @@ try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
-from pipeline import process_leads  # noqa: E402
+from pipeline import process_leads, PIPELINE_TIMEOUT_S  # noqa: E402
 
 POLL_INTERVAL_S = 3
+
+# Mirrors process_leads' max_retries default — used only to bound how long a
+# job could still legitimately be running.
+PIPELINE_MAX_ATTEMPTS = 3
 
 # Jobs from different users share nothing (own leads, own API keys) and have
 # no legitimate reason to serialize — this bounds how many run at once in
@@ -218,17 +226,51 @@ def cache_set_company(key: str, company_name: str, data: dict) -> None:
         logger.exception("Failed to write company research cache (non-fatal)")
 
 
+def _job_time_budget_s(job: dict) -> float:
+    """Longest a job can legitimately stay 'running' before it must be dead.
+
+    process_leads caps each attempt at PIPELINE_TIMEOUT_S * lead count and
+    retries up to max_retries times, so anything past that product has no way
+    of still being alive.
+    """
+    return PIPELINE_TIMEOUT_S * max(1, len(job.get("leads") or [])) * PIPELINE_MAX_ATTEMPTS
+
+
 def fail_stale_running_jobs():
-    """Jobs left 'running' by a crashed/killed worker are marked failed on startup."""
-    # assumes workers restart together; use a started_at lease when running many workers
-    stale = supabase.table("jobs").update({
+    """Fail jobs abandoned by a crashed worker — but only those.
+
+    This used to fail every 'running' job on startup, which is safe with one
+    worker and catastrophic with two: a booting worker wiped out everything the
+    running worker had in flight. Now a job is only reaped once it has been
+    running longer than it could possibly need.
+    """
+    rows = supabase.table("jobs").select("id,leads,started_at").eq(
+        "status", "running").execute().data or []
+    now = datetime.now(timezone.utc)
+
+    stale_ids = []
+    for job in rows:
+        started = job.get("started_at")
+        if not started:
+            # Claimed before started_at existed (or by an older worker) — no way
+            # to age it, so treat it as abandoned rather than leave it stuck.
+            stale_ids.append(job["id"])
+            continue
+        started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        if (now - started_dt).total_seconds() > _job_time_budget_s(job):
+            stale_ids.append(job["id"])
+
+    if not stale_ids:
+        logger.info("No stale jobs to clean up (%d still running elsewhere)", len(rows))
+        return
+
+    supabase.table("jobs").update({
         "status": "failed",
-        "error": "Worker restarted while the job was running. Please re-process the lead.",
+        "error": "Worker stopped while the job was running. Please re-process the lead.",
         "gemini_api_key": None,
         "tavily_api_key": None,
-    }).eq("status", "running").execute()
-    if stale.data:
-        logger.warning("Marked %d stale running job(s) as failed", len(stale.data))
+    }).in_("id", stale_ids).execute()
+    logger.warning("Marked %d stale running job(s) as failed", len(stale_ids))
 
 
 def claim_next_job():
@@ -246,7 +288,9 @@ def claim_next_job():
     job = pending.data[0]
     claimed = (
         supabase.table("jobs")
-        .update({"status": "running"})
+        # started_at is what lets another worker's startup sweep age this job
+        # instead of assuming it is abandoned
+        .update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", job["id"])
         .eq("status", "pending")  # conditional update: loses the race harmlessly
         .execute()
