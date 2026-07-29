@@ -87,6 +87,8 @@ Three separate `Crew` objects (not one monolith), because `company` needs to be 
 │   ├── adversarial_testing.py # red-team test suite (needs backend/.venv — see below)
 │   ├── scoring_eval.py       # Tier 1: scoring reliability (repeatability, sensitivity)
 │   ├── scoring_gold_set.py   # Tier 2: agent vs human-scored gold set (accuracy)
+│   ├── load_test.py          # worker drain + multi-worker safety (LLM stubbed); --calibrate for real cost
+│   ├── load_test_api.py      # API latency, idle vs saturated worker (LLM stubbed)
 │   ├── test_crews.py         # crew smoke test + CrewAI eval runs (needs backend/.venv — see below)
 │   ├── requirements.txt      # pinned Python dependencies
 │   └── config/               # agent & task YAML definitions (all three crews)
@@ -192,7 +194,7 @@ At most **10 leads** can be processed per request; job status is `pending → ru
 
 ## Scaling notes
 
-- Lead processing is decoupled from HTTP via the `jobs` table. Each `worker.py` process runs up to `MAX_CONCURRENT_JOBS` (default 10) jobs concurrently via `asyncio` — unrelated users' jobs run in parallel, not queued behind each other one at a time. Add more `worker.py` processes to raise the ceiling further.
+- Lead processing is decoupled from HTTP via the `jobs` table. Each `worker.py` process runs up to `MAX_CONCURRENT_JOBS` (default 10) jobs concurrently via `asyncio` — unrelated users' jobs run in parallel, not queued behind each other one at a time. Add more `worker.py` processes to raise the ceiling further; running several is safe (load-tested), since a starting worker ages each `running` job against its own time budget instead of assuming everything in flight is abandoned. Requires the `started_at` column from `migrations.sql`.
 - Access tokens are stateless (HMAC-signed) and refresh tokens live in the shared `refresh_tokens` table, so any API instance can serve or refresh any session — instances scale horizontally behind a load balancer; set the same `SECRET_KEY` on every one.
 - The login rate limiter is Supabase-backed (`login_failures` table), not in-memory, so the lockout holds correctly across multiple API instances.
 - Company research (facts + cultural fit) is cached per `(company, ICP)` pair — `COMPANY_CACHE_TTL_DAYS` (default 7) bounds how long a company shutting down / getting acquired could go undetected; `ProcessLeadsRequest.force_refresh` bypasses the cache for a batch, exposed in the UI as a **Force refresh** checkbox on the lead form.
@@ -235,6 +237,29 @@ Fixing the **ICP text** — dropping the "Enterprise" size framing and adding an
 A follow-up attempt to enforce the same idea *structurally* (a researched `has_competing_solution` flag plus a hard score cap) was built, measured, and **reverted**: MAE rose to 22.60 and Spearman fell to 0.43, because the flag fired on 11 of 20 leads and pinned them all at the cap — destroying ranking information while missing the actual builders. Prompt-level framing beat structural enforcement here.
 
 Limits worth quoting alongside every number above: a single rater (agreement with that person, not truth), imperfect blinding for leads already seen in the app, n=20, and the scorer's own ~±3.5-point run-to-run noise, so small differences aren't signal.
+
+### Load testing
+
+Pointing a load tool at `POST /leads/process` would measure how fast Supabase inserts a row — a queue's whole job is absorbing load, so that number is large and meaningless. Instead the LLM is stubbed at the pipeline boundary and the parts we actually own are tested: job claiming, concurrency bounding, queue wait, multi-worker safety, and API latency. That costs nothing and runs in minutes, versus ~6 hours and ~$11 to drain 400 leads for real.
+
+**Worker drain** (`python backend/load_test.py --jobs 40 --workers 2`, reports in `load_test_results/`). Seeds real job rows and spawns real worker processes; only `process_leads` and `persist_results` are stubbed, so cross-process claim contention is genuine. It refuses to start if real jobs are pending, and cleans up after itself.
+
+This found the one critical bug: `fail_stale_running_jobs()` marked **every** `running` job failed on startup with no worker filter, so a second worker booting destroyed the first worker's in-flight work — measured **0 done / 4 failed**. Fixed with a `started_at` column and a per-job time budget (`PIPELINE_TIMEOUT_S × lead count × 3`) so only genuinely abandoned jobs are reaped; the same test now gives **4 done / 0 failed**. Claim round trip is 576ms and 31% of contested claims lose the race, both left alone deliberately — filling 10 slots costs ~5.9s against ~520s of real work per job.
+
+**API under saturation** (`python backend/load_test_api.py`). Compares latency with an idle queue against a fully saturated worker, 20 concurrent clients:
+
+| Endpoint | idle p95 | saturated p95 | |
+|---|---|---|---|
+| `GET /` | 31ms | 32ms | ×1.0 |
+| `GET /leads` | 906ms | 1094ms | ×1.2 |
+| `GET /jobs` | 718ms | 719ms | ×1.0 |
+| `POST /auth/login` | 2391ms | 2484ms | ×1.0 |
+
+So `RUN_WORKER_IN_PROCESS=1` is safe under load — the in-process worker gets its own thread and event loop, and the work is I/O-bound. This run also caught a bug unrelated to the worker: 15–20% of requests were returning 500 from `httpx.RemoteProtocolError("Server disconnected")`, PostgREST closing idle keep-alive connections that httpx only discovers on reuse. It clustered *after idle periods* rather than under load. Fixed with a transport that replays once for `GET`/`HEAD`/`OPTIONS` only — a stale connection is indistinguishable from a lost response, so POSTs must never replay — taking errors from 46–76 per run to **0 across ~2,700 requests**, with throughput up ~29%.
+
+**Real-cost calibration** (`python backend/load_test.py --calibrate 5`) is the only part that spends money (~$0.03/lead). It validates the stub's timing model against reality and corrected two figures: real cost is **$0.029/lead uncached**, and real time is **~52s/lead in a batch**, not the ~106s assumed from stored runs — because `analysis_runs.duration_seconds` records the whole *job's* elapsed time on every lead, not per-lead time. Corrected capacity: **~700 leads/hour per worker**, before Gemini quota.
+
+Everything above was measured locally. Instance size, proxy timeouts and cold starts are platform questions a local run can't answer, so a smaller confirmation run against Render is still worth doing.
 
 ### Evaluation Results
 
