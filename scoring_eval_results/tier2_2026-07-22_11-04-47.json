@@ -1,0 +1,117 @@
+{
+  "timestamp": "2026-07-22T11:04:47.971023",
+  "n": 20,
+  "mae": 33.0,
+  "mean_signed_error": 33.0,
+  "within_10_pct": 35.0,
+  "spearman_rho": -0.067,
+  "threshold": 70,
+  "confusion": {
+    "both_email": 7,
+    "agent_only": 11,
+    "human_only": 0,
+    "neither": 2
+  },
+  "pairs": [
+    {
+      "name": "Alex Nguyen",
+      "agent": 4,
+      "human": 3.0
+    },
+    {
+      "name": "Marcus Webb",
+      "agent": 28,
+      "human": 4.0
+    },
+    {
+      "name": "Krish Subramanian",
+      "agent": 82,
+      "human": 72.0
+    },
+    {
+      "name": "Girish Mathrubootham",
+      "agent": 83,
+      "human": 75.0
+    },
+    {
+      "name": "Priya Nair",
+      "agent": 84,
+      "human": 58.0
+    },
+    {
+      "name": "Jamie Dimon",
+      "agent": 85,
+      "human": 78.0
+    },
+    {
+      "name": "Patrick Collison",
+      "agent": 85,
+      "human": 60.0
+    },
+    {
+      "name": "Sarah OConnor",
+      "agent": 86,
+      "human": 85.0
+    },
+    {
+      "name": "Tim Cook",
+      "agent": 89,
+      "human": 40.0
+    },
+    {
+      "name": "Mark Zuckerberg",
+      "agent": 90,
+      "human": 32.0
+    },
+    {
+      "name": "Michael Chen",
+      "agent": 91,
+      "human": 88.0
+    },
+    {
+      "name": "Armon Dadgar",
+      "agent": 91,
+      "human": 82.0
+    },
+    {
+      "name": "Sundar Pichai",
+      "agent": 92,
+      "human": 30.0
+    },
+    {
+      "name": "Guillermo Rauch",
+      "agent": 94,
+      "human": 58.0
+    },
+    {
+      "name": "Jeff Bezos",
+      "agent": 95,
+      "human": 28.0
+    },
+    {
+      "name": "Sridhar Vembu",
+      "agent": 96,
+      "human": 42.0
+    },
+    {
+      "name": "Olivier Pomel",
+      "agent": 96,
+      "human": 62.0
+    },
+    {
+      "name": "Elon Musk",
+      "agent": 98,
+      "human": 22.0
+    },
+    {
+      "name": "Marc Benioff",
+      "agent": 100,
+      "human": 18.0
+    },
+    {
+      "name": "Ant Wilson",
+      "agent": 100,
+      "human": 72.0
+    }
+  ]
+}
