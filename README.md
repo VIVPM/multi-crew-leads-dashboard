@@ -224,7 +224,17 @@ Two tiers, because "is the score stable?" and "is the score right?" are differen
 
 That last one is why leads scoring 65–75 are badged **Borderline** in the UI: a hard cutoff sits on a score with ~±3.5 noise, so the honest fix is to say so rather than move the line. (Raising the threshold to 80 was measured and rejected — on the real distribution it barely changes who qualifies, 93% → 89%, while taking leads-near-the-edge from 0 to 8.)
 
-**Tier 2 — accuracy** (`python backend/scoring_gold_set.py`). `--export` writes a blind template (lead details, no agent score, spread evenly across the score range); hand-score each 0–100; `--compare <file>` reports MAE, mean signed error, % within 10, Spearman rank correlation, and the 70-threshold confusion matrix. **Scaffolded but not yet run** — it needs hand-scored labels. Its limits are real and worth quoting alongside any number it produces: a single rater (agreement with that person, not truth), imperfect blinding for leads already seen in the app, and small n.
+**Tier 2 — accuracy** (`python backend/scoring_gold_set.py`). `--export` writes a blind template (lead details, no agent score, spread evenly across the score range); hand-score each 0–100; `--compare <file>` reports MAE, mean signed error, % within 10, Spearman rank correlation, and the 70-threshold confusion matrix. `--compare <file> --rescore` re-runs the pipeline against the currently saved ICP **without touching stored lead scores**, so a prompt or rubric change can be measured against the same gold set as an experiment rather than a mutation.
+
+Run against 20 hand-scored leads, the scorer was **systematically inflated and mis-ordered**: MAE 33.0, mean signed error **+33.0** (higher than the human on every lead), **Spearman −0.07**, and 11 leads emailed that the human would not have contacted. Near-zero rank correlation was the serious half — pure inflation can be recalibrated away, but disagreeing on the *ordering* cannot.
+
+The cause was a missing **build-vs-buy** notion. Splitting the gold set by "does this company already ship its own agent platform" was decisive: such companies scored **+57.6** over the human, everyone else **+12.9 with Spearman +0.70**. Company size was never the problem — mega-caps that *don't* build agent platforms were already near-perfect (JPMorgan +7, HSBC +1, Shopify +3).
+
+Fixing the **ICP text** — dropping the "Enterprise" size framing and adding an explicit anti-ICP disqualifier — moved it to **MAE 20.05, bias +14.75, Spearman +0.61, 4 false positives**. That configuration is what's live.
+
+A follow-up attempt to enforce the same idea *structurally* (a researched `has_competing_solution` flag plus a hard score cap) was built, measured, and **reverted**: MAE rose to 22.60 and Spearman fell to 0.43, because the flag fired on 11 of 20 leads and pinned them all at the cap — destroying ranking information while missing the actual builders. Prompt-level framing beat structural enforcement here.
+
+Limits worth quoting alongside every number above: a single rater (agreement with that person, not truth), imperfect blinding for leads already seen in the app, n=20, and the scorer's own ~±3.5-point run-to-run noise, so small differences aren't signal.
 
 ### Evaluation Results
 
@@ -249,11 +259,7 @@ The pipeline was evaluated with CrewAI's built-in evaluation framework (`backend
 
 - **Email Specialist**: 10.0 / 9.0 across runs (avg 9.5)
 
-| Crew | Agents | Average Score | Execution Time |
-|---|---|---|---|
-| Company | 1 | 10.0 / 10 | ~21 s |
-| Personal Research + Scoring | 2 | 10.0 / 10 | ~20 s |
-| Email | 1 | 9.5 / 10 | ~11 s |
+> These are LLM-as-judge scores for **output quality** — whether each crew's report is well-formed and on-task. They say nothing about whether a *lead score is correct*; that's what the two-tier scoring evaluation below measures.
 
 ---
 
