@@ -13,3 +13,6 @@ CLAUDE.md
 upgrade_roadmap.txt
 company_icp.txt
 gold_set_template.csv
+
+# transient server stderr from load_test_api.py (rewritten every run)
+load_test_results/*.log

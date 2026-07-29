@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-07-22T10:54:33.620000+00:00",
+  "tag": "LOADTEST-e62c7e73",
+  "config": {
+    "jobs": 20,
+    "workers": 4,
+    "leads_per_job": 10,
+    "lead_seconds": 0.5,
+    "max_concurrent": 10,
+    "timeout": 180.0,
+    "cleanup": false,
+    "worker_mode": false
+  },
+  "claims": {
+    "win": 20,
+    "miss": 19
+  },
+  "worker_boot_s": [
+    53.55879068374634,
+    53.59179067611694,
+    54.1257905960083,
+    53.580790758132935
+  ],
+  "drain_s": 73.96799999999348,
+  "done": 20,
+  "failed": 0,
+  "stuck": 0,
+  "peak_running": 19,
+  "queue_wait_p50": 59.63999999999942,
+  "queue_wait_p95": 65.21799999999348,
+  "service_p50": 8.73399999999674,
+  "service_p95": 12.702999999994063
+}
