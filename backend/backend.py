@@ -17,7 +17,6 @@ import logging
 import secrets
 import smtplib
 import sys
-import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -591,7 +590,7 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
             status_code=400,
             detail=f"At most {MAX_LEADS_PER_REQUEST} leads can be processed per request.",
         )
-    lead_ids = [l.get("id") for l in req.leads]
+    lead_ids = [lead.get("id") for lead in req.leads]
     if any(i is None for i in lead_ids):
         raise HTTPException(status_code=400, detail="Every lead must include its id.")
     owned = (

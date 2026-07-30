@@ -1,0 +1,27 @@
+# Ruff config for CI (.github/workflows/ci.yml) and local runs: `ruff check backend/ tests/`
+line-length = 120
+
+[lint]
+# Default rules (pycodestyle errors + pyflakes) are the right size for this
+# repo — they catch real mistakes (unused imports, undefined names, f-strings
+# with no placeholders) without turning every PR into a style argument.
+ignore = [
+    # Import-not-at-top is load-bearing here, not an oversight. Six modules
+    # deliberately run setup before importing:
+    #   pipeline.py    sets CREWAI_DISABLE_TELEMETRY before crewai is imported
+    #   worker.py      installs the OTel instrumentors before crewai/litellm,
+    #                  since the litellm instrumentor patches at import time
+    #   backend.py, load_test*.py, test_crews.py, scoring_*.py
+    #                  call load_dotenv() before importing anything that reads
+    #                  os.environ at module scope
+    # Moving these imports up would silently break tracing and config loading,
+    # so the rule is off rather than suppressed line-by-line in six files.
+    "E402",
+]
+
+[lint.per-file-ignores]
+# Test and eval harnesses print long measured-vs-expected lines; wrapping them
+# hurts readability more than the width does.
+"backend/scoring_eval.py" = ["E501"]
+"backend/load_test.py" = ["E501"]
+"backend/load_test_api.py" = ["E501"]

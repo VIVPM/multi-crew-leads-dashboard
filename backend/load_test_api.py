@@ -78,7 +78,7 @@ def serve_mode(port: int, lead_seconds: float, in_process_worker: bool) -> None:
 
     import backend as backend_mod
     backend_mod.persist_results = lambda leads, *_a, **_k: [
-        {"lead_id": l.get("id"), "stub": True} for l in leads
+        {"lead_id": lead.get("id"), "stub": True} for lead in leads
     ]
 
     import uvicorn

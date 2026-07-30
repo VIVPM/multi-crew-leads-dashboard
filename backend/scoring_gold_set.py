@@ -89,7 +89,7 @@ def export(n: int):
     print(f"(agent scores withheld from the file; their range is {min(agent)}-{max(agent)})")
     print("\nNext: score each lead 0-100 in the human_score column, judging only")
     print("from the lead's details — how good a prospect is this, really? Then:")
-    print(f"\n    python backend/scoring_gold_set.py --compare gold_set_template.csv")
+    print("\n    python backend/scoring_gold_set.py --compare gold_set_template.csv")
 
 
 def _ranks(xs):

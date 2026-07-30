@@ -67,7 +67,7 @@ def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
         return [None] * n, [None] * n, {}, [False] * n
 
     def stub_persist_results(leads, *_a, **_k):
-        return [{"lead_id": l.get("id"), "stub": True} for l in leads]
+        return [{"lead_id": lead.get("id"), "stub": True} for lead in leads]
 
     real_claim = worker.claim_next_job
 
@@ -277,8 +277,8 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
               f"worker, {claims['empty']} on an empty queue")
         if claims["lost"]:
             print(f"    -> {claims['lost'] / contested * 100:.0f}% of contested claims lost and slept 3s instead")
-            print(f"       of taking the next job (claim_next_job only ever looks at the")
-            print(f"       single oldest pending row).")
+            print("       of taking the next job (claim_next_job only ever looks at the")
+            print("       single oldest pending row).")
 
     out_dir = os.path.join(os.path.dirname(BASE_DIR), "load_test_results")
     os.makedirs(out_dir, exist_ok=True)
@@ -385,11 +385,11 @@ def calibrate(n_leads: int, base: str) -> None:
     pipeline_s = per_lead[0] if per_lead else wall
     print(f"  Pipeline time      {pipeline_s:.0f}s for {n} leads "
           f"-> {pipeline_s / n:.0f}s per lead")
-    print(f"  (analysis_runs.duration_seconds is per-job, duplicated across leads)")
+    print("  (analysis_runs.duration_seconds is per-job, duplicated across leads)")
     if costs:
         print(f"  Cost               ${sum(costs):.4f} total, ${sum(costs) / n:.4f}/lead (cache bypassed)")
     print(f"\n  Feed {pipeline_s / n:.0f} to --lead-seconds for an unscaled run; the scaled")
-    print(f"  default only preserves ratios.")
+    print("  default only preserves ratios.")
 
     out_dir = os.path.join(os.path.dirname(BASE_DIR), "load_test_results")
     os.makedirs(out_dir, exist_ok=True)
