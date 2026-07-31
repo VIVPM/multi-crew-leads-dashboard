@@ -28,42 +28,51 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 
 ## Architecture
 
+Six layers, read top to bottom. Each arrow is a hand-off between layers — the shared services (data, external AI) are reached once per layer rather than by every agent, so the flow stays legible.
+
 ```mermaid
-graph LR
-    subgraph FE [React Frontend — Vite]
-        UI["📋 Leads Dashboard<br>(add · edit · search · export)"]
-        ICP["📝 Company profile / ICP<br>(main dashboard, required)"]
+graph TD
+    User(["👤 Sales rep"])
+
+    subgraph CLIENT ["1 · Client layer — React / Vite"]
+        UI["📋 Leads dashboard<br>add · edit · search · export · bulk CSV"]
+        ICP["📝 Company profile / ICP"]
     end
 
-    subgraph API [FastAPI Backend]
-        Auth["🔐 Auth<br>(bcrypt + access/refresh tokens + rate limit)"]
-        CRUD["🗂️ Lead CRUD"]
-        Enq["📨 POST /leads/process<br>→ 202 + job_id"]
-        Jobs["📊 GET /jobs/{id}"]
+    subgraph APP ["2 · Application layer — FastAPI"]
+        Auth["🔐 Auth · bcrypt · access/refresh tokens · rate-limit"]
+        REST["🗂️ Lead CRUD · POST /leads/process → 202 · GET /jobs/:id"]
     end
 
-    subgraph Worker [Background Worker]
-        W["worker.py<br>claims pending jobs"]
-        A1["🔎 Personal Research"] --> A3
-        A2["🏢 Company Research<br>+ Cultural Fit"] -.->|cache hit: skip| A3["🏆 Score & Validate"]
-        Cache[("🗄️ company_research_cache<br>keyed by company + ICP hash")]
-        A2 <-.-> Cache
-        A3 -->|score > 70| E1["✍️ Email Specialist<br>(draft + optimize)"]
-        W --> A1 & A2
+    subgraph CTRL ["3 · Control layer — worker.py"]
+        Claim["claims pending jobs · race-safe · concurrent<br>owns the company-research cache"]
     end
 
-    DB[("🗄️ Supabase<br>users · leads · jobs · analysis_runs<br>company_research_cache · refresh_tokens · login_failures")]
-    LLM["☁️ Google Gemini<br>2.5 Flash / Flash-Lite"]
-    Tavily["🔍 Tavily Search"]
-    Trace["📈 Langfuse<br>(optional OTel tracing)"]
+    subgraph AI ["4 · Reasoning layer — CrewAI · 4 agents"]
+        A1["🔎 Personal Research"] --> A3["🏆 Score &amp; Validate"]
+        A2["🏢 Company Research + Cultural Fit"] -.->|cache hit: skip| A3
+        A3 -->|score &gt; 70| E1["✍️ Email Specialist"]
+    end
 
-    UI --> API
-    ICP --> API
-    API --> DB
-    W --> DB
-    A1 & A2 & A3 & E1 --> LLM
-    A1 & A2 --> Tavily
-    W -.-> Trace
+    subgraph DATA ["5 · Data layer — Supabase / Postgres"]
+        Tbls[("users · leads · jobs · analysis_runs<br>company_research_cache · refresh_tokens · login_failures")]
+    end
+
+    subgraph EXT ["6 · External AI services"]
+        LLM["☁️ Google Gemini · 2.5 Flash / Flash-Lite"]
+        Tavily["🔍 Tavily web search"]
+    end
+
+    OBS["📈 Observability · cross-cutting<br>Langfuse + Grafana · traces · metrics · alerts"]
+
+    User --> CLIENT
+    CLIENT -->|HTTP + JWT| APP
+    APP -->|auth · CRUD · job status| DATA
+    APP -->|enqueue job| CTRL
+    CTRL -->|run crews| AI
+    AI -->|research + reasoning| EXT
+    CTRL -->|read cache · write results| DATA
+    CTRL -.->|traces · metrics| OBS
 ```
 
 Three separate `Crew` objects (not one monolith), because `company` needs to be independently skippable on a cache hit:
