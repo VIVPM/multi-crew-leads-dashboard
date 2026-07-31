@@ -90,10 +90,18 @@ Three separate `Crew` objects (not one monolith), because `company` needs to be 
 │   ├── load_test.py          # worker drain + multi-worker safety (LLM stubbed); --calibrate for real cost
 │   ├── load_test_api.py      # API latency, idle vs saturated worker (LLM stubbed)
 │   ├── test_crews.py         # crew smoke test + CrewAI eval runs (needs backend/.venv — see below)
+│   ├── Dockerfile            # one image, two commands (API via uvicorn, worker via python)
 │   ├── requirements.txt      # pinned Python dependencies
 │   └── config/               # agent & task YAML definitions (all three crews)
 ├── frontend/                 # React + Vite dashboard + landing page (Stripe-inspired design system)
-└── tests/test_security.py    # no-network unit tests (run in CI)
+│   ├── src/csv.js            # CSV import parser (bulk import)
+│   ├── src/csv.test.js       # 18 node:test checks for the parser (run in CI)
+│   ├── Dockerfile            # node build → nginx static serve
+│   └── nginx.conf            # SPA fallback + fingerprinted-asset caching
+├── tests/test_security.py    # no-network unit tests (run in CI)
+├── .github/workflows/ci.yml  # lint + tests + docker build + gated deploy
+├── docker-compose.yml        # local stack: api + worker + frontend
+└── ruff.toml                 # Python lint config
 ```
 
 ---
@@ -168,9 +176,20 @@ npm install
 npm run dev        # http://localhost:5173 (expects the API on localhost:8000)
 ```
 
-Set `VITE_BACKEND_URL` to point at a deployed backend in production builds.
+Set `VITE_BACKEND_URL` to point at a deployed backend in production builds. Vite inlines env vars at **build** time, so this must be set when the bundle is built, not when it's served.
 
-### 4. API keys (operator-held)
+### 4. Docker (optional)
+
+The whole stack runs in containers — Supabase stays remote (it's the system of record), so `backend/.env` must point at a real project:
+
+```bash
+docker compose up --build
+# frontend → http://localhost:5173   API → http://localhost:8000
+```
+
+Three services: `api` (uvicorn), `worker` (`python backend/worker.py`), and `frontend` (Vite build served by nginx). API and worker share one image — same dependencies, different start command. They run as separate services rather than via `RUN_WORKER_IN_PROCESS`, which is the shape the [load tests](#load-testing) validated; `docker compose up --scale worker=3` is safe now that jobs carry `started_at`. Both backend containers run non-root with a healthcheck on `GET /`.
+
+### 5. API keys (operator-held)
 
 Gemini and Tavily keys are provided once by the operator in `backend/.env` (`GEMINI_API_KEY` / `TAVILY_API_KEY`) — end users never enter keys, and the backend refuses to start without them:
 
@@ -206,7 +225,9 @@ At most **10 leads** can be processed per request; job status is `pending → ru
 
 > **Run these with the backend virtualenv's Python, not your system Python** — they import `pipeline.py`, which needs crewai and friends installed only in `backend/.venv`. Either activate it first (`backend\.venv\Scripts\activate` on Windows) or invoke it directly (`backend\.venv\Scripts\python.exe backend\test_crews.py`). Both scripts detect the wrong interpreter and tell you the exact command to use instead of failing with a bare traceback.
 
-- **Unit tests (no network):** `python tests/test_security.py` — also run in CI (`.github/workflows/ci.yml`) along with syntax checks, frontend lint, and build.
+- **Unit tests (no network):** `python tests/test_security.py` — run in CI (see [CI/CD](#cicd) below).
+- **CSV parser tests:** `cd frontend && npm test` — 18 checks (`node:test`, no jest/vitest) covering quoting, BOMs, missing columns, bad emails and the row cap. Run in CI.
+- **Lint:** `ruff check backend/ tests/` (config in `ruff.toml`) and `cd frontend && npm run lint`. Both run in CI.
 - **Crew smoke test + eval:** `python backend/test_crews.py` (needs `GEMINI_API_KEY`/`TAVILY_API_KEY`; makes real LLM calls).
 - **Red teaming:** `python backend/adversarial_testing.py` runs adversarial leads (fake company, prompt injection, contradictory data, incomplete lead, biased framing, duplicates) and saves a report to `adversarial_results/` at the repo root. Latest run: **6/6 passed** — see `adversarial_results/run_2026-07-18_15-32-27.json`.
 
@@ -285,6 +306,26 @@ The pipeline was evaluated with CrewAI's built-in evaluation framework (`backend
 - **Email Specialist**: 10.0 / 9.0 across runs (avg 9.5)
 
 > These are LLM-as-judge scores for **output quality** — whether each crew's report is well-formed and on-task. They say nothing about whether a *lead score is correct*; that's what the two-tier scoring evaluation below measures.
+
+---
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push and pull request, as four jobs:
+
+| Job | Does |
+|---|---|
+| `backend` | `ruff` lint · `py_compile` all of `backend/*.py` + `tests/*.py` · no-network security unit tests |
+| `frontend` | `eslint` · `npm test` (18 CSV-parser checks) · `vite build` |
+| `docker` | builds both images (no push) — where the Dockerfiles are actually verified |
+| `deploy` | POSTs the Render deploy hooks — gated on the three jobs above **and** a push to `main` |
+
+**Deploy is gated on green, by design.** The `deploy` job fires the [Render deploy hooks](https://render.com/docs/deploy-hooks) only after tests pass, so a failing build can't ship. For that to hold, turn **off** Render's own auto-deploy-on-push (otherwise Render deploys instantly on push, before CI has judged the code) and add two repo secrets:
+
+- `RENDER_DEPLOY_HOOK_BACKEND`
+- `RENDER_DEPLOY_HOOK_FRONTEND`
+
+Without those secrets the `deploy` job skips cleanly with a message rather than failing, so CI is useful before deployment is wired up — you just don't get the "red build can't ship" guarantee until both are set.
 
 ---
 
