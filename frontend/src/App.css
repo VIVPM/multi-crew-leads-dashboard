@@ -970,7 +970,7 @@ body {
   align-items: center;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 120px 24px 96px;
+  padding: 120px 24px 40px;
   position: relative;
   isolation: isolate; /* keeps the z-index:-1 mesh above ancestor backgrounds */
 }

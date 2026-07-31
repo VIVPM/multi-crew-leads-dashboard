@@ -21,7 +21,7 @@ const STEPS = [
   {
     n: '3',
     title: 'Outreach, ready to send',
-    body: 'Leads scoring above 70 get a personalized, CTA-optimized email drafted by our email specialist — waiting in the dashboard.',
+    body: 'Leads scoring above the threshold get a personalized, CTA-optimized email drafted by our email specialist — waiting in the dashboard.',
   },
 ]
 
@@ -131,7 +131,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
       {/* How it works — a real sequence, so the numbers mean something */}
       <section className="lp-section" id="how">
         <Reveal>
-          <h2 className="lp-h2">From form to follow-up in three steps</h2>
+          <h2 className="lp-h2">From form to ready-to-send email in three steps</h2>
         </Reveal>
         <div className="lp-steps">
           {STEPS.map((s, i) => (
@@ -215,7 +215,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
       </section>
 
       <footer className="lp-footer">
-        <p>Sales Pipeline — built on CrewAI, Google Gemini, Tavily, and Supabase.</p>
         <p className="lp-copyright">© {new Date().getFullYear()} Sales Pipeline. All rights reserved.</p>
       </footer>
     </div>
