@@ -122,6 +122,16 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         </div>
       )}
 
+      {/* Say upfront how many can actually be scored, rather than letting them
+          click and find out afterwards. */}
+      {fileName && !running && leads.length > 0 && Number.isFinite(remaining) && leads.length > remaining && (
+        <div className="alert alert-info">
+          {remaining === 0
+            ? `No credits left today — all ${leads.length} will be saved unscored and can be processed tomorrow.`
+            : `Only ${remaining} of these can be scored today (${remaining} credit${remaining === 1 ? '' : 's'} left); the other ${leads.length - remaining} will be saved unscored for tomorrow.`}
+        </div>
+      )}
+
       {running && (
         <div className="alert alert-info">
           {progress

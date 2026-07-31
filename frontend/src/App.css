@@ -130,7 +130,31 @@ body {
   overflow-x: hidden;
 }
 
-.page-header { margin-bottom: 1.5rem; }
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.credits-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0.3rem 0.7rem;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  white-space: nowrap;
+}
+.credits-badge strong {
+  margin-right: 0.28rem;
+  color: var(--primary);
+  font-weight: 600;
+}
 
 .page-title {
   font-size: 26px;
@@ -251,13 +275,6 @@ body {
 /* ============================================================
    Form elements
    ============================================================ */
-.credits-line {
-  margin: 0 0 1rem;
-  font-size: 0.8rem;
-  color: var(--ink-secondary);
-}
-.credits-line strong { color: var(--primary); font-weight: 600; }
-
 .form-group { margin-bottom: 0.9rem; }
 
 .form-group label {
@@ -309,7 +326,9 @@ body {
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-2);
-  /* reset the trigger's small italic figure styling */
+  /* reset the trigger's small italic figure styling — white-space especially:
+     the credits badge sets nowrap, which would otherwise inherit here and stop
+     the tooltip text wrapping at all */
   font-size: 0.74rem;
   font-style: normal;
   font-weight: 300;
@@ -317,6 +336,7 @@ body {
   letter-spacing: normal;
   text-align: left;
   text-transform: none;
+  white-space: normal;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
@@ -350,6 +370,17 @@ body {
 }
 .field-hint-pop::before { left: 13px; border-bottom-color: var(--hairline); }
 .field-hint-pop::after  { left: 13px; border-width: 5px; border-bottom-color: var(--canvas); margin-left: 1px; margin-bottom: -1px; }
+
+/* Anchor the popover to the trigger's right edge — for hints near the right
+   side of the page, where the default left-anchored one would run off-screen. */
+.field-hint--end .field-hint-pop { left: auto; right: -10px; }
+.field-hint--end .field-hint-pop::before { left: auto; right: 13px; }
+.field-hint--end .field-hint-pop::after {
+  left: auto;
+  right: 13px;
+  margin-left: 0;
+  margin-right: 1px;
+}
 
 .form-group input,
 .form-group select,

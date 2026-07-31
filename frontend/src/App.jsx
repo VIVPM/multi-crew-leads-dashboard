@@ -216,6 +216,25 @@ export default function App() {
       <main className="main-content">
         <div className="page-header">
           <h1 className="page-title">Sales Pipeline — Lead Scoring &amp; Email Generation</h1>
+          {credits && (
+            <span className="credits-badge">
+              <strong>{credits.remaining}</strong> credit{credits.remaining === 1 ? '' : 's'}
+              <span
+                className="field-hint field-hint--end"
+                tabIndex={0}
+                role="img"
+                aria-label={`${credits.remaining} of ${credits.cap} daily lead credits left. 1 credit scores 1 lead. Resets tomorrow.`}
+              >
+                i
+                <span className="field-hint-pop" aria-hidden="true">
+                  <strong>{credits.remaining} of {credits.cap}</strong> daily lead credits left.
+                  <span className="field-hint-eg">1 credit scores 1 lead · resets tomorrow</span>
+                  Processing a lead costs 1 credit. A bulk import scores as many as you have
+                  credits for and saves the rest, unscored, for another day.
+                </span>
+              </span>
+            </span>
+          )}
         </div>
 
         {globalMsg && (
@@ -257,13 +276,6 @@ export default function App() {
               Bulk import
             </button>
           </div>
-
-          {credits && (
-            <p className="credits-line">
-              <strong>{credits.remaining}</strong> of {credits.cap} daily lead credits left
-              <span className="muted"> · 1 credit scores 1 lead · resets tomorrow</span>
-            </p>
-          )}
 
           {entryMode === 'single' && (
             <LeadForm
