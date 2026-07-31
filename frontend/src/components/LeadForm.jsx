@@ -4,6 +4,15 @@ const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 const MAX_LEN = 255
 const SOURCES = ['Website', 'Referral', 'Event', 'Social Media', 'Other']
 
+// Shown on hover of the ⓘ beside the Use Case field. Native title tooltip
+// (same mechanism as the force-refresh checkbox) — newlines render in-browser.
+const USE_CASE_HINT =
+  'What this lead is trying to achieve that your product can help with — written ' +
+  'as a short goal in their own words, not a description of your product.\n\n' +
+  'e.g. "automate customer-support triage" or "cut lead-response time"\n\n' +
+  'The crew uses it to judge how well your product fits this lead, and to explain ' +
+  'in the drafted email why your product suits that goal.'
+
 const INDUSTRIES = [
   'Technology & Software',
   'Finance & Banking',
@@ -109,7 +118,19 @@ export default function LeadForm({ lead, onSave, onCancel }) {
             <input type="email" value={fields.email} onChange={e => set('email', e.target.value)} placeholder="email@company.com" disabled={loading} />
           </div>
           <div className="form-group">
-            <label>Use Case</label>
+            <label>
+              Use Case
+              <span className="field-hint" tabIndex={0} role="img" aria-label={USE_CASE_HINT}>
+                i
+                <span className="field-hint-pop" aria-hidden="true">
+                  <strong>Use case</strong> — what this lead is trying to achieve that your
+                  product can help with, in their own words (not a pitch of your product).
+                  <span className="field-hint-eg">"automate customer-support triage" · "cut lead-response time"</span>
+                  The crew uses it to score fit and to explain, in the drafted email, why your
+                  product suits that goal.
+                </span>
+              </span>
+            </label>
             <input value={fields.use_case} onChange={e => set('use_case', e.target.value)} placeholder="e.g. Automate support" disabled={loading} />
           </div>
           <div className="form-group">

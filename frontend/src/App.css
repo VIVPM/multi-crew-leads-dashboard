@@ -261,6 +261,89 @@ body {
   margin-bottom: 0.3rem;
 }
 
+/* Round ⓘ next to a field label — hover/focus shows a styled popover */
+.field-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 0.35rem;
+  border: 1px solid var(--ink-secondary);
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+  user-select: none;
+  opacity: 0.7;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+.field-hint:hover,
+.field-hint:focus-visible {
+  opacity: 1;
+  border-color: var(--primary);
+  color: var(--primary);
+  outline: none;
+}
+
+.field-hint-pop {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: -10px;
+  z-index: 30;
+  width: 262px;
+  padding: 0.7rem 0.8rem;
+  background: var(--canvas);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  /* reset the trigger's small italic figure styling */
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 300;
+  line-height: 1.55;
+  letter-spacing: normal;
+  text-align: left;
+  text-transform: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+.field-hint:hover .field-hint-pop,
+.field-hint:focus-within .field-hint-pop {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.field-hint-pop strong { font-weight: 600; color: var(--ink); }
+.field-hint-eg {
+  display: block;
+  margin: 0.45rem 0;
+  padding: 0.32rem 0.45rem;
+  background: var(--canvas-soft);
+  border-radius: var(--r-sm);
+  color: var(--ink-secondary);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.7rem;
+}
+/* upward arrow, bordered: outline triangle + fill triangle on top */
+.field-hint-pop::before,
+.field-hint-pop::after {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  border: 6px solid transparent;
+}
+.field-hint-pop::before { left: 13px; border-bottom-color: var(--hairline); }
+.field-hint-pop::after  { left: 13px; border-width: 5px; border-bottom-color: var(--canvas); margin-left: 1px; margin-bottom: -1px; }
+
 .form-group input,
 .form-group select,
 .form-group textarea {
