@@ -2,12 +2,11 @@ import { useState, useRef } from 'react'
 import { api, friendlyError } from '../api'
 import { toLeads, MAX_ROWS } from '../csv'
 
-// Must match MAX_LEADS_PER_REQUEST in backend.py — processing is enqueued in
-// chunks of this size, one job per chunk, run one after another so a big
-// import can't stampede the shared Gemini/Tavily rate limits.
-const BATCH_SIZE = 10
+// Matches MAX_LEADS_PER_REQUEST / DAILY_LEAD_CAP in backend.py — one job, run
+// once, since a day's whole allowance fits in a single request now.
+const BATCH_SIZE = 5
 
-export default function BulkImport({ onImported, onMessage, processBatch, canProcess, onNeedIcp }) {
+export default function BulkImport({ onImported, onMessage, processBatch, canProcess, onNeedIcp, remaining, cap = 5 }) {
   const [leads, setLeads] = useState([])
   const [errors, setErrors] = useState([])
   const [fileName, setFileName] = useState('')
@@ -40,9 +39,9 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
     setRunning(true)
     setErrors([])
     try {
-      // Create every row first, then process the created rows in batches —
-      // /leads/process needs real lead ids and caps each call at BATCH_SIZE.
-      // The server skips rows whose email this user already has.
+      // Create every row first (creation is free — no LLM), then score only as
+      // many as today's remaining credits allow. Creating rows we can't score
+      // today isn't waste: they're saved and can be processed on later days.
       const { created, skipped } = await api('POST', '/leads/bulk', { leads })
       const dupeNote = skipped.length ? ` ${skipped.length} skipped as already imported.` : ''
       onImported()
@@ -53,27 +52,32 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         return
       }
 
-      const batches = []
-      for (let i = 0; i < created.length; i += BATCH_SIZE) batches.push(created.slice(i, i + BATCH_SIZE))
+      // The server enforces the same cap, so a stale `remaining` just means the
+      // one call fails safe (those rows stay saved, unscored).
+      const budget = Number.isFinite(remaining) ? Math.max(0, remaining) : BATCH_SIZE
+      const toProcess = created.slice(0, budget)
+      const deferred = created.length - toProcess.length
 
-      let done = 0
-      let failed = 0
-      for (let i = 0; i < batches.length; i++) {
-        setProgress({ done, total: created.length, batch: i + 1, batches: batches.length })
+      let scored = 0
+      if (toProcess.length > 0) {
+        setProgress({ done: 0, total: toProcess.length })
         try {
-          await processBatch(batches[i])
+          await processBatch(toProcess)
+          scored = toProcess.length
         } catch {
-          failed += batches[i].length // keep going; the rest of the file still gets processed
+          /* cap race or processing error — leave them saved, unscored */
         }
-        done += batches[i].length
-        setProgress({ done, total: created.length, batch: i + 1, batches: batches.length })
+        setProgress({ done: toProcess.length, total: toProcess.length })
         onImported()
       }
-      onMessage(
-        failed
-          ? `Imported ${created.length} lead(s); ${failed} could not be processed. They're saved but unscored — open the lead and use Edit → Save and process to retry (re-importing the file will skip them as duplicates).${dupeNote}`
-          : `Imported and processed ${created.length} lead(s).${dupeNote}`
-      )
+
+      const failedNow = toProcess.length - scored
+      const parts = [`Imported ${created.length} lead(s).`]
+      if (scored) parts.push(`Scored ${scored} today.`)
+      if (deferred) parts.push(`${deferred} over today's ${cap}-credit limit — saved for tomorrow.`)
+      if (failedNow) parts.push(`${failedNow} couldn't be processed — saved unscored.`)
+      if (deferred || failedNow) parts.push('Retry with Edit → Save and process; re-importing skips them as duplicates.')
+      onMessage(parts.join(' ') + dupeNote)
       reset()
     } catch (e) {
       setErrors([friendlyError(e)])
@@ -89,8 +93,8 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
       <p className="muted">
         Upload a CSV with the columns <strong>Name, Company, Email</strong> (required) and
         optionally Job Title, Use Case, Industry, Location, Source. A file exported
-        from this app imports back as-is. Up to {MAX_ROWS} rows; they're processed{' '}
-        {BATCH_SIZE} at a time.
+        from this app imports back as-is. Up to {MAX_ROWS} rows can be added; up to{' '}
+        {cap} are scored per day (1 credit each), the rest saved for later.
       </p>
 
       {/* native file input is unstyleable across browsers — hide it and drive
@@ -121,7 +125,7 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
       {running && (
         <div className="alert alert-info">
           {progress
-            ? `Processing batch ${progress.batch} of ${progress.batches} — ${progress.done} of ${progress.total} lead(s) done. This can take a few minutes per batch; keep this tab open.`
+            ? `Scoring ${progress.total} lead(s) — this can take a minute or two; keep this tab open.`
             : 'Creating leads…'}
           {progress && (
             <div className="bulk-progress-track">

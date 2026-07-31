@@ -251,6 +251,13 @@ body {
 /* ============================================================
    Form elements
    ============================================================ */
+.credits-line {
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+.credits-line strong { color: var(--primary); font-weight: 600; }
+
 .form-group { margin-bottom: 0.9rem; }
 
 .form-group label {

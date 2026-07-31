@@ -99,7 +99,9 @@ if not os.getenv("SECRET_KEY"):
         "restarts or be shared across instances. Set SECRET_KEY in backend/.env."
     )
 
-MAX_LEADS_PER_REQUEST = 10
+# Matches DAILY_LEAD_CAP: a request bigger than the daily allowance could never
+# fully process anyway, so there's no reason to accept more in one call.
+MAX_LEADS_PER_REQUEST = 5
 # CSV import ceiling. Rows are only *created* here — processing still goes
 # through /leads/process in MAX_LEADS_PER_REQUEST-sized batches, so this
 # doesn't let anyone queue an unbounded amount of LLM work in one call.
@@ -110,6 +112,10 @@ LOGIN_WINDOW_S = 900
 # 500/day, which is the web-interface limit) — a safety net so a bug can't
 # silently blow through the account's real limit and get it flagged.
 EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
+# Per-user leads processed per UTC day. The keys are operator-held (below), so
+# every processed lead is LLM spend on one shared quota — this caps both the
+# cost and the shared rate limit if the app is broadcast publicly.
+DAILY_LEAD_CAP = int(os.getenv("DAILY_LEAD_CAP", "5"))
 
 # Operator-held keys — users no longer bring their own Gemini/Tavily keys.
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -419,6 +425,29 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
     return {"message": "Email sending settings saved."}
 
 
+def _leads_used_today(user_id: str) -> int:
+    """Leads this user has submitted for processing since UTC midnight.
+
+    This is the whole "credit" mechanism: remaining = cap - this. Reset is free —
+    at midnight the window moves and the count is 0 again, so there's no credits
+    table and no nightly restore job. The row count stays small because the cap
+    itself bounds how many jobs a user can create per day.
+    """
+    since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = (
+        supabase.table("jobs").select("leads")
+        .eq("user_id", user_id).gte("created_at", since.isoformat()).execute()
+    ).data or []
+    return sum(len(r.get("leads") or []) for r in rows)
+
+
+@app.get("/account/credits")
+def get_credits(user_id: str = Depends(current_user)):
+    """Daily lead credits: 1 credit = 1 processed lead, cap per UTC day, auto-reset."""
+    used = _leads_used_today(user_id)
+    return {"cap": DAILY_LEAD_CAP, "used": used, "remaining": max(0, DAILY_LEAD_CAP - used)}
+
+
 # =============================================================================
 # Lead CRUD endpoints (all ownership-checked)
 # =============================================================================
@@ -598,6 +627,22 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
     )
     if len(owned.data or []) != len(set(lead_ids)):
         raise HTTPException(status_code=404, detail="One or more leads not found.")
+
+    # Daily lead credits — counts every submitted lead (any job status; a failed
+    # run still spent LLM calls). Rejects before enqueue so an over-limit attempt
+    # costs nothing.
+    used_today = _leads_used_today(user_id)
+    if used_today + len(req.leads) > DAILY_LEAD_CAP:
+        remaining = max(0, DAILY_LEAD_CAP - used_today)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Daily limit reached — {DAILY_LEAD_CAP} leads per day. "
+                f"You've used {used_today} today"
+                + (f", so you can process {remaining} more." if remaining
+                   else ". Try again tomorrow.")
+            ),
+        )
 
     profile = supabase.table("users").select("company_context").eq("id", user_id).execute()
     company_context = (profile.data[0].get("company_context") if profile.data else None) or ""

@@ -53,6 +53,7 @@ export default function App() {
   const [entryMode, setEntryMode] = useState(null) // null | 'single' | 'bulk'
   const [editingLead, setEditingLead] = useState(null)
   const [globalMsg, setGlobalMsg] = useState(null)
+  const [credits, setCredits] = useState(null) // { cap, used, remaining } — daily lead allowance
 
   const [companyContext, setCompanyContext] = useState('')
   const [companyContextLoaded, setCompanyContextLoaded] = useState(false)
@@ -67,6 +68,7 @@ export default function App() {
     setLoggedIn(true)
     fetchLeads(uid)
     fetchCompanyContext()
+    fetchCredits()
   }
 
   function resetToLoggedOut() {
@@ -106,8 +108,12 @@ export default function App() {
     finally { setCompanyContextLoaded(true) }
   }, [])
 
+  const fetchCredits = useCallback(async () => {
+    try { setCredits(await api('GET', '/account/credits')) } catch { /* non-critical badge */ }
+  }, [])
+
   useEffect(() => {
-    if (saved) { fetchLeads(saved.userId); fetchCompanyContext() }
+    if (saved) { fetchLeads(saved.userId); fetchCompanyContext(); fetchCredits() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Leads ---
@@ -168,6 +174,7 @@ export default function App() {
     } catch (e) {
       // Processing failed — lead was saved, still refresh so it appears in the table
       await fetchLeads()
+      fetchCredits()
       setStatus(null)
       setEntryMode(null)
       setEditingLead(null)
@@ -176,6 +183,7 @@ export default function App() {
     }
 
     await fetchLeads()
+    fetchCredits()
     setStatus(null)
     setEntryMode(null)
     setEditingLead(null)
@@ -250,6 +258,13 @@ export default function App() {
             </button>
           </div>
 
+          {credits && (
+            <p className="credits-line">
+              <strong>{credits.remaining}</strong> of {credits.cap} daily lead credits left
+              <span className="muted"> · 1 credit scores 1 lead · resets tomorrow</span>
+            </p>
+          )}
+
           {entryMode === 'single' && (
             <LeadForm
               key={editingLead?.id ?? 'new'}
@@ -264,10 +279,12 @@ export default function App() {
               selected file and the running progress. */}
           <div style={{ display: entryMode === 'bulk' ? 'block' : 'none' }}>
             <BulkImport
-              onImported={fetchLeads}
+              onImported={() => { fetchLeads(); fetchCredits() }}
               onMessage={text => setGlobalMsg({ type: 'success', text })}
               canProcess={!!companyContext?.trim()}
               onNeedIcp={() => setShowIcpDialog(true)}
+              remaining={credits?.remaining}
+              cap={credits?.cap ?? 5}
               processBatch={async batch => {
                 const { job_id } = await api('POST', '/leads/process', { leads: batch })
                 return waitForJob(job_id)
