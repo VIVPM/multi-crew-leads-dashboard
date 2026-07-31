@@ -1,0 +1,57 @@
+# Local stack: API + worker + frontend. Supabase stays remote — it is the
+# system of record and there is no local Postgres to stand in for it, so
+# backend/.env must point at a real project.
+#
+#   docker compose up --build
+#   frontend -> http://localhost:5173,  API -> http://localhost:8000
+#
+# api and worker deliberately run as separate services rather than relying on
+# RUN_WORKER_IN_PROCESS. That flag exists for single-service PaaS deploys; when
+# you can run two containers, running two is the shape the load tests actually
+# validated, and it lets the worker be scaled or restarted on its own.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: backend/.env
+    environment:
+      # Off here: the worker service below owns job processing. Leaving it on
+      # would put a second worker inside the API container, which is legal now
+      # that jobs carry started_at, but pointless and harder to reason about.
+      RUN_WORKER_IN_PROCESS: "0"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "backend/worker.py"]
+    env_file: backend/.env
+    # Waits for the API's healthcheck rather than just its start, because
+    # worker.py imports backend.backend and would exit if that module fails
+    # on bad config. Failing loudly once beats a crash-loop.
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    # Scale with `docker compose up --scale worker=3`. Safe since the started_at
+    # lease landed — before that, a second worker failed the first one's jobs.
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Baked into the bundle at build time (Vite), so changing this needs a
+        # rebuild, not a restart. localhost works because the browser resolves
+        # it, not the container.
+        VITE_BACKEND_URL: "http://localhost:8000"
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped

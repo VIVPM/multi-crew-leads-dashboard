@@ -1,0 +1,31 @@
+# Keeping the build context small matters here: the repo carries a ~1GB venv
+# and node_modules that would otherwise be shipped to the daemon on every build.
+.git
+.github
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+frontend/dist
+
+# Secrets: backend/.env is mounted at runtime via env_file, never baked into a
+# layer — an image with credentials in it leaks them to anyone who can pull it.
+**/.env
+**/.env.*
+
+# Local-only notes and generated output
+upgrade_roadmap.txt
+evaluation_plan.txt
+migrations.sql
+CLAUDE.md
+.claude
+company_icp.txt
+gold_set_template.csv
+scoring_eval_results
+adversarial_results
+adversial_results
+load_test_results
+sample_leads.csv
+*.md
+!README.md
