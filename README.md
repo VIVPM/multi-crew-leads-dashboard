@@ -231,96 +231,61 @@ Processing is capped at **5 leads per account per day** (the daily credit allowa
 - The login rate limiter is Supabase-backed (`login_failures` table), not in-memory, so the lockout holds correctly across multiple API instances.
 - Company research (facts + cultural fit) is cached per `(company, ICP)` pair — `COMPANY_CACHE_TTL_DAYS` (default 7) bounds how long a company shutting down / getting acquired could go undetected; `ProcessLeadsRequest.force_refresh` bypasses the cache for a batch, exposed in the UI as a **Force refresh** checkbox on the lead form.
 - Concurrent requests for the same brand-new company don't duplicate the research: the first cache miss atomically claims the row (`company_key` is unique), so a second concurrent miss waits on the winner instead of re-running Tavily + Gemini itself.
+- `GET /leads` returns only the columns the list renders. `scoring_result` and `email_draft` are ~78% of a lead row but are only shown once a card is expanded, so they come from `GET /leads/{lead_id}/detail` on demand — measured **~100KB → 15.8KB** for a 50-lead account on the most-requested endpoint. Trade-off: search no longer matches text *inside* drafts or scoring JSON (server-side search would be the fix if that's ever wanted).
+- Every route in `backend.py` is a sync `def`, so FastAPI runs each in a worker thread — anyio caps that pool at 40 by default, which is the first ceiling under load. The two hottest read endpoints (`GET /leads`, `GET /jobs/{id}`) use a genuinely async Supabase client instead, so they suspend on I/O rather than holding a thread. Converting more routes means converting *every* blocking call inside them too; a half-converted `async def` blocks the whole event loop, which is worse than leaving it sync.
 
 ---
+
 
 ## Testing & Evaluation
 
-> **Run these with the backend virtualenv's Python, not your system Python** — they import `pipeline.py`, which needs crewai and friends installed only in `backend/.venv`. Either activate it first (`backend\.venv\Scripts\activate` on Windows) or invoke it directly (`backend\.venv\Scripts\python.exe backend\test_crews.py`). Both scripts detect the wrong interpreter and tell you the exact command to use instead of failing with a bare traceback.
+> Run these with the backend virtualenv (`backend\.venv\Scripts\python.exe ...`), not system Python — they import `pipeline.py`. Each script detects the wrong interpreter and prints the right command.
 
-- **Unit tests (no network):** `python tests/test_security.py` — run in CI (see [CI/CD](#cicd) below).
-- **CSV parser tests:** `cd frontend && npm test` — 18 checks (`node:test`, no jest/vitest) covering quoting, BOMs, missing columns, bad emails and the row cap. Run in CI.
-- **Lint:** `ruff check backend/ tests/` (config in `ruff.toml`) and `cd frontend && npm run lint`. Both run in CI.
-- **Crew smoke test + eval:** `python backend/test_crews.py` (needs `GEMINI_API_KEY`/`TAVILY_API_KEY`; makes real LLM calls).
-- **Red teaming:** `python backend/adversarial_testing.py` runs adversarial leads (fake company, prompt injection, contradictory data, incomplete lead, biased framing, duplicates) and saves a report to `adversarial_results/` at the repo root. Latest run: **6/6 passed** — see `adversarial_results/run_2026-07-18_15-32-27.json`.
+| What | Command | Runs in CI |
+|---|---|---|
+| Unit tests (no network) | `python tests/test_security.py` | ✅ |
+| CSV parser (18 checks) | `cd frontend && npm test` | ✅ |
+| Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
+| Crew smoke test | `python backend/test_crews.py` | — (real LLM calls) |
+| Red teaming | `python backend/adversarial_testing.py` | — (real LLM calls) |
+
+Red teaming covers fake companies, prompt injection, contradictory data and biased framing. Latest: **6/6 passed** (`adversarial_results/`).
 
 ### Scoring evaluation
 
-Two tiers, because "is the score stable?" and "is the score right?" are different questions — there's no point collecting human labels for a scorer that can't reproduce its own number.
+Two tiers, because "is the score stable?" and "is the score right?" are different questions.
 
-**Tier 1 — reliability** (`python backend/scoring_eval.py`, reports in `scoring_eval_results/`). Scores 5 leads 10× each plus seniority/invariance probes, serving company research from cache so the variance measured is the scorer's rather than the web's. Use `--only <reliability|sensitivity|invariance>` to re-run one section. Latest run: **8/9 checks passed**:
+**Tier 1 — reliability** (`python backend/scoring_eval.py`): 5 leads × 10 runs plus sensitivity/invariance probes, company research served from cache so the variance measured is the scorer's, not the web's. **8/9 passed** — stdev 2.66–3.53, a 54-point discriminant gap, seniority sensitivity −25.0.
 
-| Check | Result |
-|---|---|
-| Reliability (5 leads × 10) | stdev **2.66–3.53** |
-| Discriminant | **54-point** gap (worst strong 85 vs best weak 31) |
-| Sensitivity (seniority) | CTO **90.2** → Intern **65.2** = **−25.0**, no overlap |
-| Invariance (cosmetic) | **3.1** points drift |
-| Threshold stability | **failed** — a lead at mean 72.1 (range 67–80) drafted an email on 8 of 10 identical runs |
+The one failure is structural: a hard cutoff at 70 sits on a score with ~±3.5 run-to-run noise, so a lead at mean 72.1 drafted an email on 8 of 10 identical runs. Handled by badging 65–75 as **Borderline** in the UI rather than moving the line — raising the threshold to 80 was measured and made it worse (leads-near-the-edge 0 → 8).
 
-That last one is why leads scoring 65–75 are badged **Borderline** in the UI: a hard cutoff sits on a score with ~±3.5 noise, so the honest fix is to say so rather than move the line. (Raising the threshold to 80 was measured and rejected — on the real distribution it barely changes who qualifies, 93% → 89%, while taking leads-near-the-edge from 0 to 8.)
+**Tier 2 — accuracy** (`python backend/scoring_gold_set.py`): `--export` writes a blind template, you hand-score 0–100, `--compare` reports MAE / bias / Spearman / confusion matrix. `--rescore` re-runs the pipeline against the current ICP without touching stored scores, so a prompt change can be measured as an experiment.
 
-**Tier 2 — accuracy** (`python backend/scoring_gold_set.py`). `--export` writes a blind template (lead details, no agent score, spread evenly across the score range); hand-score each 0–100; `--compare <file>` reports MAE, mean signed error, % within 10, Spearman rank correlation, and the 70-threshold confusion matrix. `--compare <file> --rescore` re-runs the pipeline against the currently saved ICP **without touching stored lead scores**, so a prompt or rubric change can be measured against the same gold set as an experiment rather than a mutation.
+Against 20 hand-scored leads the scorer was inflated **and** mis-ordered — MAE 33.0, bias +33.0, Spearman −0.07. Mis-ordering was the serious half: inflation can be recalibrated, disagreement about ranking cannot.
 
-Run against 20 hand-scored leads, the scorer was **systematically inflated and mis-ordered**: MAE 33.0, mean signed error **+33.0** (higher than the human on every lead), **Spearman −0.07**, and 11 leads emailed that the human would not have contacted. Near-zero rank correlation was the serious half — pure inflation can be recalibrated away, but disagreeing on the *ordering* cannot.
+The cause was a missing **build-vs-buy** notion. Companies that ship their own agent platform scored **+57.6** over the human; everyone else **+12.9 with Spearman +0.70**. Size was never the issue (JPMorgan +7, HSBC +1, Shopify +3). Rewriting the ICP text alone — dropping the "Enterprise" framing, adding an explicit anti-ICP disqualifier — reached **MAE 20.05, Spearman +0.61**, which is what's live. Enforcing the same idea *structurally* (a `has_competing_solution` flag with a hard cap) measured worse and was reverted.
 
-The cause was a missing **build-vs-buy** notion. Splitting the gold set by "does this company already ship its own agent platform" was decisive: such companies scored **+57.6** over the human, everyone else **+12.9 with Spearman +0.70**. Company size was never the problem — mega-caps that *don't* build agent platforms were already near-perfect (JPMorgan +7, HSBC +1, Shopify +3).
-
-Fixing the **ICP text** — dropping the "Enterprise" size framing and adding an explicit anti-ICP disqualifier — moved it to **MAE 20.05, bias +14.75, Spearman +0.61, 4 false positives**. That configuration is what's live.
-
-A follow-up attempt to enforce the same idea *structurally* (a researched `has_competing_solution` flag plus a hard score cap) was built, measured, and **reverted**: MAE rose to 22.60 and Spearman fell to 0.43, because the flag fired on 11 of 20 leads and pinned them all at the cap — destroying ranking information while missing the actual builders. Prompt-level framing beat structural enforcement here.
-
-Limits worth quoting alongside every number above: a single rater (agreement with that person, not truth), imperfect blinding for leads already seen in the app, n=20, and the scorer's own ~±3.5-point run-to-run noise, so small differences aren't signal.
+> **Limits:** one rater, n=20, imperfect blinding, and ~±3.5 points of scorer noise. Small differences aren't signal.
 
 ### Load testing
 
-Pointing a load tool at `POST /leads/process` would measure how fast Supabase inserts a row — a queue's whole job is absorbing load, so that number is large and meaningless. Instead the LLM is stubbed at the pipeline boundary and the parts we actually own are tested: job claiming, concurrency bounding, queue wait, multi-worker safety, and API latency. That costs nothing and runs in minutes, versus ~6 hours and ~$11 to drain 400 leads for real.
+Pointing a load tool at `POST /leads/process` would measure how fast Supabase inserts a row — absorbing load is the queue's whole job. So the LLM is stubbed at the pipeline boundary and the parts we own get tested instead: job claiming, concurrency, and API latency. Free, and minutes instead of the ~6 hours and ~$11 a real 400-lead drain would cost.
 
-**Worker drain** (`python backend/load_test.py --jobs 40 --workers 2`, reports in `load_test_results/`). Seeds real job rows and spawns real worker processes; only `process_leads` and `persist_results` are stubbed, so cross-process claim contention is genuine. It refuses to start if real jobs are pending, and cleans up after itself.
+**Worker drain** (`python backend/load_test.py --jobs 40 --workers 2`) — real job rows, real worker processes, only the LLM stubbed. Found the one critical bug: `fail_stale_running_jobs()` failed *every* running job on startup, so a second worker booting destroyed the first one's in-flight work (**0 done / 4 failed**). Fixed with a `started_at` lease; same test now **4 done / 0 failed**.
 
-This found the one critical bug: `fail_stale_running_jobs()` marked **every** `running` job failed on startup with no worker filter, so a second worker booting destroyed the first worker's in-flight work — measured **0 done / 4 failed**. Fixed with a `started_at` column and a per-job time budget (`PIPELINE_TIMEOUT_S × lead count × 3`) so only genuinely abandoned jobs are reaped; the same test now gives **4 done / 0 failed**. Claim round trip is 576ms and 31% of contested claims lose the race, both left alone deliberately — filling 10 slots costs ~5.9s against ~520s of real work per job.
+**API concurrency** (`python backend/load_test_api.py --ramp --mix read --seed-leads 50`) — ramps concurrent users to find where it breaks. Against the deployed free tier (512MB / 0.1 vCPU):
 
-**API under saturation** (`python backend/load_test_api.py`). Compares latency with an idle queue against a fully saturated worker, 20 concurrent clients:
-
-| Endpoint | idle p95 | saturated p95 | |
+| Concurrent users | Throughput | p95 | Errors |
 |---|---|---|---|
-| `GET /` | 31ms | 32ms | ×1.0 |
-| `GET /leads` | 906ms | 1094ms | ×1.2 |
-| `GET /jobs` | 718ms | 719ms | ×1.0 |
-| `POST /auth/login` | 2391ms | 2484ms | ×1.0 |
+| 10 | 28 req/s | 532ms | 0% |
+| 25 | 35 req/s | 1.1s | 0% |
+| 50 | 35 req/s | 2.9s | 0% |
+| 100 | 27 req/s | 7.8s | 0% |
 
-So `RUN_WORKER_IN_PROCESS=1` is safe under load — the in-process worker gets its own thread and event loop, and the work is I/O-bound. This run also caught a bug unrelated to the worker: 15–20% of requests were returning 500 from `httpx.RemoteProtocolError("Server disconnected")`, PostgREST closing idle keep-alive connections that httpx only discovers on reuse. It clustered *after idle periods* rather than under load. Fixed with a transport that replays once for `GET`/`HEAD`/`OPTIONS` only — a stale connection is indistinguishable from a lost response, so POSTs must never replay — taking errors from 46–76 per run to **0 across ~2,700 requests**, with throughput up ~29%.
+**Zero errors to 100 concurrent users** — past ~25 it queues rather than fails. Those are clients hammering with no think time; real users pause between clicks, so 50 real users generate well under the sustained throughput. Two fixes came out of this: trimming the leads payload (~84% smaller, see [Scaling notes](#scaling-notes)) and a transport that retries connections PostgREST closed while idle, which had been causing 15–20% of requests to 500.
 
-**Real-cost calibration** (`python backend/load_test.py --calibrate 5`) is the only part that spends money (~$0.03/lead). It validates the stub's timing model against reality and corrected two figures: real cost is **$0.029/lead uncached**, and real time is **~52s/lead in a batch**, not the ~106s assumed from stored runs — because `analysis_runs.duration_seconds` records the whole *job's* elapsed time on every lead, not per-lead time. Corrected capacity: **~700 leads/hour per worker**, before Gemini quota.
+**Real-cost calibration** (`python backend/load_test.py --calibrate 5`) is the only part that spends money (~$0.03/lead). It corrected two figures: **$0.029/lead** uncached and **~52s/lead** in a batch — not the ~106s assumed, because `analysis_runs.duration_seconds` stores the whole *job's* time on every lead. Corrected capacity: **~700 leads/hour per worker**.
 
-Everything above was measured locally. Instance size, proxy timeouts and cold starts are platform questions a local run can't answer, so a smaller confirmation run against Render is still worth doing.
-
-### Evaluation Results
-
-The pipeline was evaluated with CrewAI's built-in evaluation framework (`backend/test_crews.py`, LLM-as-judge, no human baseline yet) across **two independent runs per crew** — one table per crew, since `crew.test()` evaluates a single `Crew` object at a time and, per the [Architecture](#architecture) above, there are three: `company`, `personal_scoring`, `email`.
-
-#### 🏢 Company Crew — Avg Score: **10.0 / 10** *(~21s execution)*
-
-![Company Research Evaluation](Screenshot%202026-07-18%20135356.png)
-
-- **Company Research & Cultural Fit Analyst**: 10.0 in both runs
-
-#### 🔎 Personal Research + Scoring Crew — Avg Score: **10.0 / 10** *(~20s execution)*
-
-![Personal Research & Scoring Evaluation](Screenshot%202026-07-18%20135402.png)
-
-- **Personal Research Specialist**: 10.0 in both runs
-- **Lead Scorer and Validator**: 10.0 in both runs
-
-#### ✍️ Email Crew — Avg Score: **9.5 / 10** *(~11s execution)*
-
-![Email Specialist Evaluation](Screenshot%202026-07-18%20135455.png)
-
-- **Email Specialist**: 10.0 / 9.0 across runs (avg 9.5)
-
-> These are LLM-as-judge scores for **output quality** — whether each crew's report is well-formed and on-task. They say nothing about whether a *lead score is correct*; that's what the two-tier scoring evaluation below measures.
-
----
 
 ## CI/CD
 
