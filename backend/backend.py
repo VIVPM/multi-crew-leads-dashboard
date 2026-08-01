@@ -254,7 +254,12 @@ def current_user(authorization: Optional[str] = Header(None)) -> str:
 
 # Supabase-backed (not in-memory) so the lockout holds across multiple API
 # instances, not just per-process.
-def _too_many_failures(username: str) -> bool:
+def _recent_failure_count(username: str) -> int:
+    """Recent failed attempts in the lockout window.
+
+    Returns the count rather than a bool so login can also decide whether the
+    clear-failures DELETE is needed at all — see the call site.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=LOGIN_WINDOW_S)).isoformat()
     resp = (
         supabase.table("login_failures")
@@ -263,7 +268,7 @@ def _too_many_failures(username: str) -> bool:
         .gte("failed_at", cutoff)
         .execute()
     )
-    return (resp.count or 0) >= LOGIN_MAX_FAILURES
+    return resp.count or 0
 
 
 def _record_login_failure(username: str) -> None:
@@ -357,7 +362,8 @@ def signup(req: SignupRequest):
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(req: LoginRequest):
-    if _too_many_failures(req.username):
+    recent_failures = _recent_failure_count(req.username)
+    if recent_failures >= LOGIN_MAX_FAILURES:
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in a few minutes.")
     user = supabase.table("users").select("*").eq("username", req.username).execute()
     if not user.data or not verify_password(req.password, user.data[0]["password"]):
@@ -370,7 +376,12 @@ def login(req: LoginRequest):
             {"password": hash_password(req.password)}
         ).eq("id", row["id"]).execute()
         logger.info("Migrated password hash to bcrypt for user: %s", req.username)
-    _clear_login_failures(req.username)
+    # Only pay for the DELETE when there is actually something to clear. Login
+    # is 4 sequential Supabase round trips and each one costs ~350ms on the
+    # deployed free tier, so skipping this on the overwhelmingly common
+    # no-prior-failures path removes ~25% of login latency for free.
+    if recent_failures:
+        _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
     return LoginResponse(
