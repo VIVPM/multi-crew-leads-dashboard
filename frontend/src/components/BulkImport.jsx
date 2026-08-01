@@ -2,16 +2,20 @@ import { useState, useRef } from 'react'
 import { api, friendlyError } from '../api'
 import { toLeads, MAX_ROWS } from '../csv'
 
-// Matches MAX_LEADS_PER_REQUEST / DAILY_LEAD_CAP in backend.py — one job, run
-// once, since a day's whole allowance fits in a single request now.
-const BATCH_SIZE = 5
+const STATUS_META = {
+  pending:    { icon: '○', label: 'Queued' },
+  processing: { icon: '',  label: 'Scoring…' }, // a spinner is rendered instead of an icon
+  done:       { icon: '✓', label: 'Scored' },
+  failed:     { icon: '✕', label: 'Failed' },
+}
 
-export default function BulkImport({ onImported, onMessage, processBatch, canProcess, onNeedIcp, remaining, cap = 5 }) {
+export default function BulkImport({ onImported, onMessage, processLead, canProcess, onNeedIcp, remaining, cap = 5 }) {
   const [leads, setLeads] = useState([])
   const [errors, setErrors] = useState([])
   const [fileName, setFileName] = useState('')
   const [running, setRunning] = useState(false)
-  const [progress, setProgress] = useState(null) // { done, total, batch, batches }
+  // null | 'creating' | { items: [{ name, status }], done, total }
+  const [progress, setProgress] = useState(null)
   const fileRef = useRef(null)
 
   function handleFile(e) {
@@ -34,14 +38,18 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // A bulk import has to fit within the day's remaining credits — block upfront
+  // and ask for a smaller file, rather than importing some and deferring the rest.
+  const overBudget = Number.isFinite(remaining) && leads.length > remaining
+
   async function handleStart() {
     if (!canProcess) { onNeedIcp(); return }
+    if (overBudget) return // the button is disabled in this state; guard anyway
     setRunning(true)
     setErrors([])
+    setProgress('creating')
     try {
-      // Create every row first (creation is free — no LLM), then score only as
-      // many as today's remaining credits allow. Creating rows we can't score
-      // today isn't waste: they're saved and can be processed on later days.
+      // Create every row first (creation is free — no LLM), then score them.
       const { created, skipped } = await api('POST', '/leads/bulk', { leads })
       const dupeNote = skipped.length ? ` ${skipped.length} skipped as already imported.` : ''
       onImported()
@@ -52,31 +60,31 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         return
       }
 
-      // The server enforces the same cap, so a stale `remaining` just means the
-      // one call fails safe (those rows stay saved, unscored).
-      const budget = Number.isFinite(remaining) ? Math.max(0, remaining) : BATCH_SIZE
-      const toProcess = created.slice(0, budget)
-      const deferred = created.length - toProcess.length
+      // One lead per job, sequentially, so the team watches each finish in turn.
+      // The count is within budget (blocked above); the server enforces the cap
+      // too, so a stale count merely fails that one lead rather than over-spending.
+      const items = created.map(l => ({ name: l.name || l.company || 'Lead', status: 'pending' }))
+      setProgress({ items: [...items], done: 0, total: items.length })
 
-      let scored = 0
-      if (toProcess.length > 0) {
-        setProgress({ done: 0, total: toProcess.length })
+      let scored = 0, failed = 0
+      for (let i = 0; i < created.length; i++) {
+        items[i].status = 'processing'
+        setProgress({ items: [...items], done: scored + failed, total: items.length })
         try {
-          await processBatch(toProcess)
-          scored = toProcess.length
+          await processLead(created[i])
+          items[i].status = 'done'
+          scored++
         } catch {
-          /* cap race or processing error — leave them saved, unscored */
+          items[i].status = 'failed'
+          failed++
         }
-        setProgress({ done: toProcess.length, total: toProcess.length })
-        onImported()
+        setProgress({ items: [...items], done: scored + failed, total: items.length })
+        onImported() // refresh the table + credit badge as each one lands
       }
 
-      const failedNow = toProcess.length - scored
       const parts = [`Imported ${created.length} lead(s).`]
-      if (scored) parts.push(`Scored ${scored} today.`)
-      if (deferred) parts.push(`${deferred} over today's ${cap}-credit limit — saved for tomorrow.`)
-      if (failedNow) parts.push(`${failedNow} couldn't be processed — saved unscored.`)
-      if (deferred || failedNow) parts.push('Retry with Edit → Save and process; re-importing skips them as duplicates.')
+      if (scored) parts.push(`Scored ${scored}.`)
+      if (failed) parts.push(`${failed} couldn't be processed — saved unscored (retry with Edit → Save and process).`)
       onMessage(parts.join(' ') + dupeNote)
       reset()
     } catch (e) {
@@ -86,15 +94,16 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
     }
   }
 
-  const pct = progress ? Math.round((progress.done / progress.total) * 100) : 0
+  const active = progress && progress !== 'creating'
+  const pct = active ? Math.round((progress.done / progress.total) * 100) : 0
 
   return (
     <div className="lead-form-body">
       <p className="muted">
         Upload a CSV with the columns <strong>Name, Company, Email</strong> (required) and
         optionally Job Title, Use Case, Industry, Location, Source. A file exported
-        from this app imports back as-is. Up to {MAX_ROWS} rows can be added; up to{' '}
-        {cap} are scored per day (1 credit each), the rest saved for later.
+        from this app imports back as-is. Up to {MAX_ROWS} rows parse, and an import
+        must fit your daily credits ({cap}/day, 1 credit scores 1 lead).
       </p>
 
       {/* native file input is unstyleable across browsers — hide it and drive
@@ -115,33 +124,50 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         <div key={i} className="alert alert-error">{e}</div>
       ))}
 
-      {fileName && !running && leads.length > 0 && (
+      {fileName && !running && leads.length > 0 && !overBudget && (
         <div className="alert alert-success">
           {fileName}: {leads.length} valid lead(s) ready to import
           {errors.length ? ` (${errors.length} row(s) skipped)` : ''}.
         </div>
       )}
 
-      {/* Say upfront how many can actually be scored, rather than letting them
-          click and find out afterwards. */}
-      {fileName && !running && leads.length > 0 && Number.isFinite(remaining) && leads.length > remaining && (
-        <div className="alert alert-info">
+      {/* Hard block: the file has more leads than credits left today. */}
+      {fileName && !running && leads.length > 0 && overBudget && (
+        <div className="alert alert-error">
           {remaining === 0
-            ? `No credits left today — all ${leads.length} will be saved unscored and can be processed tomorrow.`
-            : `Only ${remaining} of these can be scored today (${remaining} credit${remaining === 1 ? '' : 's'} left); the other ${leads.length - remaining} will be saved unscored for tomorrow.`}
+            ? `You have no credits left today, but this file has ${leads.length} lead(s). Try again tomorrow, or process leads individually.`
+            : `This file has ${leads.length} lead(s) but you have only ${remaining} credit${remaining === 1 ? '' : 's'} left today. Upload a file with at most ${remaining} lead${remaining === 1 ? '' : 's'} and process the rest tomorrow.`}
         </div>
       )}
 
-      {running && (
-        <div className="alert alert-info">
-          {progress
-            ? `Scoring ${progress.total} lead(s) — this can take a minute or two; keep this tab open.`
-            : 'Creating leads…'}
-          {progress && (
-            <div className="bulk-progress-track">
-              <div className="bulk-progress-bar" style={{ width: `${pct}%` }} />
-            </div>
-          )}
+      {progress === 'creating' && (
+        <div className="alert alert-info processing-row">
+          <span className="spinner" aria-hidden="true" />
+          <span>Creating leads…</span>
+        </div>
+      )}
+
+      {active && (
+        <div className="alert alert-info bulk-progress">
+          <div className="bulk-progress-head">
+            Scoring {progress.done} of {progress.total} — keep this tab open.
+          </div>
+          <div className="bulk-progress-track">
+            <div className="bulk-progress-bar" style={{ width: `${pct}%` }} />
+          </div>
+          <ul className="bulk-progress-list">
+            {progress.items.map((it, i) => (
+              <li key={i} className={`bulk-progress-item is-${it.status}`}>
+                <span className="bulk-progress-icon">
+                  {it.status === 'processing'
+                    ? <span className="spinner spinner-sm" aria-hidden="true" />
+                    : STATUS_META[it.status].icon}
+                </span>
+                <span className="bulk-progress-name">{it.name}</span>
+                <span className="bulk-progress-state">{STATUS_META[it.status].label}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -149,7 +175,7 @@ export default function BulkImport({ onImported, onMessage, processBatch, canPro
         <button
           className="btn btn-success"
           onClick={handleStart}
-          disabled={running || leads.length === 0}
+          disabled={running || leads.length === 0 || overBudget}
         >
           {running ? 'Importing…' : `Import & process${leads.length ? ` ${leads.length} lead(s)` : ''}`}
         </button>

@@ -94,8 +94,9 @@ export default function LeadForm({ lead, onSave, onCancel }) {
       ))}
 
       {status === 'processing' && (
-        <div className="alert alert-info">
-          The AI crew is scoring this lead and drafting an email — this can take a few minutes.
+        <div className="alert alert-info processing-row">
+          <span className="spinner" aria-hidden="true" />
+          <span>The AI crew is researching this lead, scoring it, and drafting an email — this can take a few minutes.</span>
         </div>
       )}
 
