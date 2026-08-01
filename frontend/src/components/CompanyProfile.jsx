@@ -49,14 +49,23 @@ export default function CompanyProfile({ value, loaded, expanded, onToggleExpand
           <p className="muted" style={{ marginTop: '0.5rem' }}>
             Describe your company, product, and ideal customer profile — every
             lead's cultural-fit score and outreach email are measured against this.
-            Required before you can process a lead.
+            Include a <strong>Weak fit</strong> and a <strong>Not a fit</strong> line:
+            spelling out who's marginal and who to disqualify is what makes the score
+            trustworthy, not just who's a strong fit. Required before you can process a lead.
           </p>
           <div className="form-group" style={{ marginTop: '0.75rem' }}>
             <textarea
-              rows={6}
+              rows={9}
               value={text}
               onChange={e => setText(e.target.value)}
-              placeholder={'Company Name: Acme Inc.\nProduct: ...\nICP: ...\nPitch: ...'}
+              placeholder={
+                'Company Name: Acme Inc.\n' +
+                'Product: what you sell, in one line\n' +
+                'Pitch: your one-sentence value proposition\n' +
+                'ICP: who is a strong fit — industry, size, and the buying signals you look for\n' +
+                'Weak fit: who is only a marginal fit and why (e.g. too small, no budget, no real use case)\n' +
+                'Not a fit: who to disqualify and why (e.g. direct competitors, or those who would build this themselves)'
+              }
               disabled={!loaded}
             />
           </div>
