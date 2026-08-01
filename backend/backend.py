@@ -109,24 +109,10 @@ class _AsyncRetryStaleConnTransport(httpx.AsyncHTTPTransport):
             return await super().handle_async_request(request)
 
 
-# Second client, async, used ONLY by the handful of hot read-only endpoints
-# that browsing/polling traffic hits hardest (GET /leads, GET /jobs/{id}).
-# Load testing found these degrade badly under concurrency because every sync
-# `def` route runs in FastAPI's thread pool (anyio's default is a hardcoded
-# 40 threads — not something this repo set), and each thread held for a
-# Supabase round-trip is real memory on a 512MB instance. A true async client
-# lets many of these reads be in flight as cheap suspended coroutines instead
-# of 1-thread-each. Deliberately NOT rolled out to every endpoint in one pass:
-# write/auth routes are unchanged here, so this stays a narrow, low-risk
-# slice rather than a whole-app rewrite (see the half-converted-is-worse-
-# than-not-converted warning in git history / conversation — mixing a sync
-# blocking call into an async def freezes the entire event loop, not just
-# that request, so nothing here should be copied into a route without also
-# switching every blocking call inside it).
-#
-# Created in an async startup hook (registered below, once `app` exists), not
-# at module import time: acreate_client must be awaited, and there is no
-# running event loop yet at import time.
+# Async client for the hot read-only endpoints (GET /leads, GET /jobs/{id}),
+# which suspend on I/O instead of holding one of anyio's 40 threads each.
+# Only use this in a route where every blocking call is also async — a sync
+# call inside an async def blocks the whole event loop.
 supabase_async = None
 
 SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
@@ -136,12 +122,9 @@ if not os.getenv("SECRET_KEY"):
         "restarts or be shared across instances. Set SECRET_KEY in backend/.env."
     )
 
-# Per-user leads processed per UTC day. The Gemini/Tavily keys are
-# operator-held (below), so every processed lead is the operator's spend on one
-# shared quota — this caps both the cost and the shared rate limit if the app
-# is broadcast publicly. Required, with no default on purpose: a silent
-# fallback would mean a deploy that forgot to set it quietly runs on someone's
-# guess of what the spend limit should be.
+# Leads per user per UTC day. Keys are operator-held, so this caps the
+# operator's spend. Required with no default — a forgotten deploy setting
+# should fail loudly rather than run on a guessed limit.
 _daily_lead_cap = os.getenv("DAILY_LEAD_CAP")
 if not _daily_lead_cap:
     raise RuntimeError(
@@ -156,22 +139,12 @@ except ValueError:
 if DAILY_LEAD_CAP < 1:
     raise RuntimeError(f"DAILY_LEAD_CAP must be at least 1, got {DAILY_LEAD_CAP}")
 
-# A single request larger than the whole daily allowance could never fully
-# process, so there is no reason to accept one. Derived rather than repeated,
-# so raising the cap raises this with it.
 MAX_LEADS_PER_REQUEST = DAILY_LEAD_CAP
-# CSV import ceiling. Rows are only *created* here — processing still goes
-# through /leads/process, which enforces the daily cap, so this doesn't let
-# anyone queue an unbounded amount of LLM work in one call.
-MAX_BULK_IMPORT = 200
+MAX_BULK_IMPORT = 200          # CSV rows per import; processing still hits the daily cap
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
-# Well under Gmail's real ~100/day SMTP-relay ceiling (not the often-quoted
-# 500/day, which is the web-interface limit) — a safety net so a bug can't
-# silently blow through the account's real limit and get it flagged.
-EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
+EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))  # under Gmail's ~100/day SMTP limit
 
-# Operator-held keys — users no longer bring their own Gemini/Tavily keys.
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 
@@ -199,17 +172,9 @@ async def _init_async_supabase():
         options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
     )
 
-# Optional: HTTP-layer tracing (every endpoint, not just LLM calls) to
-# Grafana Cloud only — Langfuse (see worker.py) stays focused on CrewAI/
-# LiteLLM spans, this covers the rest of the app (auth, lead CRUD) that
-# Langfuse was never meant to show. Non-fatal if unset.
-#
-# opentelemetry-instrumentation-fastapi is intentionally NOT in
-# requirements.txt: it pins opentelemetry-semantic-conventions==0.65b0,
-# which conflicts with the opentelemetry-sdk==1.42.1 that crewai needs
-# (that pin is exactly 0.63b1). So the ImportError below is the expected
-# state, not a failure — it's logged as a quiet INFO rather than an ERROR
-# with a traceback. Genuine misconfiguration still logs at ERROR.
+# Optional HTTP-layer tracing to Grafana Cloud. The FastAPI instrumentor isn't
+# in requirements.txt — its semantic-conventions pin conflicts with the
+# opentelemetry-sdk crewai needs — so the ImportError below is expected.
 if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     try:
         from opentelemetry.sdk.trace import TracerProvider
@@ -296,15 +261,9 @@ def _clear_login_failures(username: str) -> None:
     supabase.table("login_failures").delete().eq("username", username).execute()
 
 
-# Sign-up abuse guard, keyed by client IP: caps how many accounts one network
-# can create per window. Each account carries its own daily lead credits, so
-# without this someone could farm free credits by scripting sign-ups.
-#
-# Supabase-backed, same as the login lockout above and for the same reason —
-# the limit holds across API instances, not just per-process, so it survives a
-# restart and a horizontal scale-out. One row per created account; the endpoint
-# counts rows in the last SIGNUP_WINDOW_S. Keyed by IP (a network) rather than
-# username (an identity) because that's the thing being rate-limited here.
+# Caps accounts created per IP per window, so daily lead credits can't be
+# farmed by scripting sign-ups. Supabase-backed like the login lockout, so it
+# holds across instances and restarts.
 SIGNUP_MAX_PER_IP = int(os.getenv("SIGNUP_MAX_PER_IP", "10"))  # accounts per window
 SIGNUP_WINDOW_S = int(os.getenv("SIGNUP_WINDOW_S", "3600"))    # 1 hour
 
@@ -425,14 +384,10 @@ def signup(req: SignupRequest, request: Request):
         raise HTTPException(status_code=500, detail="Signup failed. Please try again.")
     row = created.data[0]
     uid = str(row["id"])
-    # Count this account against the IP's window only once it actually exists —
-    # failed attempts (dup username, etc.) create no account and no credits, so
-    # they don't consume the budget. This is what the limit above reads back.
+    # Only count accounts that were actually created against the IP's window
     _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
-    # Sign them straight in, same response shape as /auth/login — there's no
-    # reason to make someone re-type the credentials they just chose. The
-    # insert returns the new row, so we already have the id to mint tokens.
+    # Sign them straight in rather than sending them to the login screen
     return LoginResponse(
         user_id=uid, username=req.username,
         token=make_token(uid, SECRET_KEY),
@@ -456,10 +411,8 @@ def login(req: LoginRequest):
             {"password": hash_password(req.password)}
         ).eq("id", row["id"]).execute()
         logger.info("Migrated password hash to bcrypt for user: %s", req.username)
-    # Only pay for the DELETE when there is actually something to clear. Login
-    # is 4 sequential Supabase round trips and each one costs ~350ms on the
-    # deployed free tier, so skipping this on the overwhelmingly common
-    # no-prior-failures path removes ~25% of login latency for free.
+    # Skip the DELETE when there's nothing to clear — saves a ~350ms round trip
+    # on the common path
     if recent_failures:
         _clear_login_failures(req.username)
     uid = str(row["id"])
@@ -538,9 +491,7 @@ def get_email_settings(user_id: str = Depends(current_user)):
         "smtp_host": row.get("email_smtp_host") or "",
         "smtp_port": row.get("email_smtp_port") or 587,
         "from_address": row.get("email_from_address") or "",
-        # Never return the password — same principle as never returning a
-        # user's login password hash. The frontend shows "configured" or
-        # not; re-entering it is how you change it, not editing in place.
+        # Never return the stored password; the frontend only shows whether one is set
         "configured": bool(row.get("email_from_address")),
     }
 
@@ -596,11 +547,9 @@ def _get_owned_lead(lead_id: str, user_id: str) -> dict:
     return resp.data[0]
 
 
-# Columns the leads list actually renders. Deliberately excludes the two heavy
-# ones — scoring_result (~850 chars) and email_draft (~900 chars) — which
-# together were ~78% of the payload but are only shown once a user expands a
-# single lead. Those come from GET /leads/{lead_id}/detail instead. Measured on
-# a 50-lead account: ~112KB per list load down to ~25KB.
+# Columns the list view renders. scoring_result and email_draft are excluded —
+# they were ~78% of the payload and are only needed when a lead is expanded,
+# so they come from GET /leads/{lead_id}/detail instead.
 LEAD_LIST_COLUMNS = (
     "id,name,job_title,company,email,use_case,industry,location,source,"
     "score,created_at,email_sent_at"
@@ -614,11 +563,7 @@ async def get_leads(
     limit: int = Query(500, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    # 500 is generous enough that today's users never notice a
-    # cap, but it's a real cap now — this used to be select() with no
-    # limit at all, unbounded no matter how many leads a user accumulated.
-    # limit/offset are accepted (not yet used by the frontend) so real
-    # paged UI can be added later without another backend change.
+    # limit/offset are accepted but unused by the frontend so far
     if user_id != auth_user:
         raise HTTPException(status_code=403, detail="Forbidden.")
     resp = await (
@@ -670,8 +615,7 @@ def create_leads_bulk(req: BulkLeadsRequest, user_id: str = Depends(current_user
     step, and it shouldn't silently double every lead. Duplicates *within*
     the uploaded file are collapsed the same way.
     """
-    # One column for this user's leads; compared lowercased so Bob@x.com and
-    # bob@x.com count as the same person. O(existing leads) per import.
+    # Compared lowercased so Bob@x.com and bob@x.com count as the same person
     existing = supabase.table("leads").select("email").eq("user_id", user_id).execute().data or []
     seen = {(r.get("email") or "").strip().lower() for r in existing}
 
@@ -796,9 +740,8 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
     if len(owned.data or []) != len(set(lead_ids)):
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
-    # Daily lead credits — counts every submitted lead (any job status; a failed
-    # run still spent LLM calls). Rejects before enqueue so an over-limit attempt
-    # costs nothing.
+    # Counts every submitted lead, including failed runs — those still spent
+    # LLM calls. Checked before enqueue so an over-limit attempt costs nothing.
     used_today = _leads_used_today(user_id)
     if used_today + len(req.leads) > DAILY_LEAD_CAP:
         remaining = max(0, DAILY_LEAD_CAP - used_today)
@@ -900,9 +843,8 @@ def _persist_one_lead(
         update_payload["email_draft"] = email_draft.raw
     supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
 
-    # CrewAI reports token usage per crew, not per task, so per-agent rows are
-    # exact only where a crew has a single agent (company, email); the scoring
-    # crew's two agents split its own measured total. See crew_buckets below.
+    # CrewAI reports tokens per crew, not per task, so per-agent rows are exact
+    # only for single-agent crews (company, email).
     score_usage = score_obj.token_usage
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
@@ -923,12 +865,7 @@ def _persist_one_lead(
 
     email_tasks = (email_draft.tasks_output if email_draft else None) or []
 
-    # Attribute tokens per crew, not across all crews at once. Each crew is its
-    # own kickoff() with its own measured token_usage, so a crew's number is
-    # real; only agents *within* one crew share an even split. That makes the
-    # company and email crews (one agent each) exact, and leaves the estimate
-    # confined to the two agents of the scoring crew. Lumping them together used
-    # to give every agent an identical number regardless of actual usage.
+    # One bucket per crew, so only agents within the same crew share a split
     crew_buckets = []
     if score_obj.company_output is not None:
         company_out = score_obj.company_output

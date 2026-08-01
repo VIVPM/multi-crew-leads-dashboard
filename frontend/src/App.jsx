@@ -15,8 +15,7 @@ const SESSION_KEY = 'sp_session'
 const JOB_POLL_MS = 5000
 const JOB_DEADLINE_MS = 20 * 60 * 1000 // give a batch up to 20 minutes
 
-// The session lasts as long as the refresh token is valid (14 days server-side),
-// not a frontend timer: the 60-min access token is refreshed silently in api.js.
+// Session length is server-side (14-day refresh token), not a frontend timer
 function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
@@ -60,8 +59,7 @@ export default function App() {
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [entryMode, setEntryMode] = useState('single') // 'single' | 'bulk'
   const [editingLead, setEditingLead] = useState(null)
-  // Bumped after a process or cancel to remount LeadForm with a clean slate,
-  // since the form now lives on a persistent page instead of being unmounted.
+  // Bumped after a process or cancel to remount LeadForm with a clean slate
   const [formResetKey, setFormResetKey] = useState(0)
   const [globalMsg, setGlobalMsg] = useState(null)
   const [credits, setCredits] = useState(null) // { cap, used, remaining } — daily lead allowance
@@ -102,8 +100,7 @@ export default function App() {
     resetToLoggedOut()
   }
 
-  // api.js fires this when the refresh token itself is dead (expired/revoked) —
-  // the session can't be silently renewed, so drop to the login screen.
+  // Fired by api.js when the refresh token is dead and can't be renewed
   useEffect(() => {
     const onExpired = () => resetToLoggedOut()
     window.addEventListener('sp-auth-expired', onExpired)
@@ -143,9 +140,7 @@ export default function App() {
     }
   }, [userId])
 
-  // Poll the processing job until it finishes; returns the job row. onProgress,
-  // if given, is called each poll with the job's {stage: state} progress map so
-  // the caller can render a live step tracker.
+  // Poll a job until it finishes. onProgress receives its {stage: state} map each poll.
   async function waitForJob(jobId, onProgress) {
     const deadline = Date.now() + JOB_DEADLINE_MS
     while (Date.now() < deadline) {
@@ -158,8 +153,7 @@ export default function App() {
     throw new Error('Processing is taking longer than expected — refresh the page later to see results.')
   }
 
-  // Save lead then enqueue processing — called by LeadForm. setSteps (if given)
-  // receives the live {stage: state} progress map for the step tracker.
+  // Save the lead, then enqueue processing — called by LeadForm
   async function handleSaveAndProcess(fields, setStatus, forceRefresh = false, setSteps) {
     if (!companyContext?.trim()) {
       setShowIcpDialog(true)

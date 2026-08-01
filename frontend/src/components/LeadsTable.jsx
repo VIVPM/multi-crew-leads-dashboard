@@ -3,10 +3,8 @@ import { api, friendlyError } from '../api'
 
 const PAGE_SIZES = [10, 25, 50, 100]
 
-// Scores above EMAIL_THRESHOLD get an email drafted. Repeated scoring of the
-// same lead varies by roughly +/-3.5 points (see scoring_eval_results/), so a
-// lead landing inside this band could fall either side of the cutoff on a
-// different run. Rather than hide that, say so and let a human decide.
+// Repeat scoring of the same lead varies by ~+/-3.5 points, so a lead in this
+// band could land either side of the cutoff on a different run.
 const EMAIL_THRESHOLD = 70
 const BORDERLINE_LOW = 65
 const BORDERLINE_HIGH = 75
@@ -182,19 +180,15 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [sending, setSending] = useState(false)
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [sentMsg, setSentMsg] = useState(null)
-  // scoring_result and email_draft are ~78% of a lead row, and are only shown
-  // here, so the list endpoint no longer sends them — they're fetched the
-  // first time this card is expanded.
+  // Heavy fields aren't in the list response; fetched when the card expands
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
   const isBorderline =
     lead.score != null && lead.score >= BORDERLINE_LOW && lead.score <= BORDERLINE_HIGH
 
-  // NOTE: detailLoading must NOT be a dependency here. Setting it would
-  // re-run this effect, and the cleanup below would flip `cancelled` on the
-  // request that is still in flight — leaving the card stuck on "Loading…"
-  // forever. `detail` alone is the right guard against refetching.
+  // detailLoading must not be a dependency — it would re-run this effect and
+  // cancel the in-flight request, leaving the card stuck on "Loading…".
   useEffect(() => {
     if (!open || detail) return
     let cancelled = false
@@ -229,8 +223,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
     try {
       await api('PUT', `/leads/${lead.id}`, { email_draft: emailDraft })
       setEditingEmail(false)
-      // The list response no longer carries email_draft, so refreshing it alone
-      // would drop the edit from view — keep the fetched detail in sync here.
+      // The list response has no email_draft, so keep the fetched detail in sync
       setDetail(d => ({ ...(d || {}), email_draft: emailDraft }))
       onRefresh()
     } catch (e) {

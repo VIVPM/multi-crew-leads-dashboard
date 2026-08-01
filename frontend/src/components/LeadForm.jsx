@@ -4,8 +4,7 @@ const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 const MAX_LEN = 255
 const SOURCES = ['Website', 'Referral', 'Event', 'Social Media', 'Other']
 
-// Shown on hover of the ⓘ beside the Use Case field. Native title tooltip
-// (same mechanism as the force-refresh checkbox) — newlines render in-browser.
+// Tooltip shown on the ⓘ beside the Use Case field
 const USE_CASE_HINT =
   'What this lead is trying to achieve that your product can help with — written ' +
   'as a short goal in their own words, not a description of your product.\n\n' +
@@ -13,9 +12,7 @@ const USE_CASE_HINT =
   'The crew uses it to judge how well your product fits this lead, and to explain ' +
   'in the drafted email why your product suits that goal.'
 
-// The pipeline's stages, in the order they run (company research feeds scoring,
-// so it goes first). The worker reports each as its agent's task finishes; keys
-// match the stage names in pipeline.py's on_stage calls.
+// Pipeline stages in run order; keys match pipeline.py's on_stage names
 const PROCESS_STEPS = [
   ['company', 'Company research & cultural fit'],
   ['personal_research', 'Personal research'],
@@ -23,9 +20,8 @@ const PROCESS_STEPS = [
   ['email', 'Email draft'],
 ]
 
-// Renders the live step tracker from the job's {stage: state} progress map.
-// A step is done/cached once the worker reports it; the first not-yet-reported
-// step is the one currently running. Reuses the bulk-import progress styling.
+// Live step tracker. The first stage the worker hasn't reported yet is the
+// one currently running.
 function StepTracker({ steps }) {
   const p = steps || {}
   const currentIdx = PROCESS_STEPS.findIndex(([key]) => !p[key])
@@ -105,8 +101,7 @@ function validate(fields) {
 }
 
 export default function LeadForm({ lead, onSave, onCancel }) {
-  // initialized from props; the parent keys this component by lead id so a
-  // different lead remounts the form with fresh state
+  // The parent keys this component by lead id, so a different lead remounts it
   const [fields, setFields] = useState(() => ({
     name: lead?.name || '',
     job_title: lead?.job_title || '',
@@ -129,8 +124,7 @@ export default function LeadForm({ lead, onSave, onCancel }) {
   async function handleSubmit(e) {
     e.preventDefault()
     const errs = validate(fields)
-    // Surface one problem at a time (in field order) — the next appears
-    // only after the current one is fixed, instead of a wall of errors.
+    // Show one problem at a time, in field order
     if (errs.length) { setErrors([errs[0]]); return }
     setErrors([])
     try {

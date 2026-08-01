@@ -18,9 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# Windows' console defaults to cp1252, which can't print the emoji CrewAI's
-# internal event-bus logging emits — only matters when this runs standalone
-# (python backend/worker.py); the in-process mode inherits backend.py's setup.
+# cp1252 consoles can't print the emoji CrewAI's event bus logs
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -28,12 +26,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# Load .env directly rather than relying on backend.py's load_dotenv() side
-# effect — the Langfuse/litellm instrumentation setup below now runs BEFORE
-# backend.backend is imported (ordering requirement, see comment below), so
-# that side effect isn't available yet. dotenv doesn't override already-set
-# real env vars, so this is a no-op in the in-process (RUN_WORKER_IN_PROCESS)
-# case where backend.py has already loaded them.
+# Loaded here because the tracing setup below runs before backend.backend is imported
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
@@ -42,21 +35,9 @@ from logging_setup import configure_logging, job_context  # noqa: E402
 configure_logging()  # idempotent — no-op if backend.py already configured it in-process
 logger = logging.getLogger("worker")
 
-# Optional: Langfuse tracing of every agent/task/LLM call. Must run BEFORE
-# crewai/litellm are imported anywhere (the litellm instrumentor patches
-# litellm at import time) — hence this sits above `from pipeline import
-# process_leads` below, not after it.
-#
-# Targeted instrumentors (CrewAI + LiteLLM only) exporting straight to
-# Langfuse's own OTLP endpoint, instead of OpenLit's blanket ~40-library
-# auto-instrumentation sweep — same Langfuse project, roughly half the
-# import/startup time (measured: ~23.7s with OpenLit vs ~12-14s here, same
-# machine). Neither the `langfuse` nor `openlit` packages are needed at all.
-#
-# Dual-exported to Grafana Cloud too when configured: one shared
-# TracerProvider, one span processor per destination, same CrewAI/LiteLLM
-# spans sent to both — no re-instrumentation, Langfuse keeps the nicer
-# LLM-specific UX (prompts/evals), Grafana adds infra correlation.
+# Optional OTLP tracing of agent/task/LLM calls, exported to Langfuse and/or
+# Grafana Cloud. Must run before crewai/litellm are imported — the litellm
+# instrumentor patches litellm at import time.
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 _have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
@@ -102,12 +83,7 @@ if _have_langfuse or _have_grafana:
 else:
     logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
 
-# Job outcome as a real metric (not just trace spans) — this is what
-# alerting actually needs: "no jobs processed in N minutes" and "a job
-# failed" are both trivial PromQL queries against a counter, where the
-# same signal from Tempo would need TraceQL-based alerting (less mature,
-# not available on this stack — no metrics-generator running). Same OTLP
-# gateway/credentials as the trace export above, just the /v1/metrics path.
+# Job outcomes as a counter metric, so alerting can query it directly
 _jobs_processed_counter = None
 if _have_grafana:
     try:
@@ -133,8 +109,7 @@ if _have_grafana:
     except Exception:
         logger.exception("Failed to initialize job metrics (non-fatal)")
 
-# The API module is `backend.backend` when served by uvicorn from the repo
-# root, but plain `backend` when this file runs standalone (python backend/worker.py).
+# Import path differs between uvicorn (repo root) and standalone
 try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
@@ -143,20 +118,12 @@ from pipeline import process_leads, PIPELINE_TIMEOUT_S  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
-# Mirrors process_leads' max_retries default — used only to bound how long a
-# job could still legitimately be running.
+# Mirrors process_leads' max_retries — bounds how long a job can legitimately run
 PIPELINE_MAX_ATTEMPTS = 3
 
-# Jobs from different users share nothing (own leads, own API keys) and have
-# no legitimate reason to serialize — this bounds how many run at once in
-# this process, not how many CAN run (build_crews() makes fresh Crew objects
-# per job, so there's no shared-state reason to keep this at 1). Real ceiling
-# is Gemini/Tavily rate limits on whichever key each job brings, which this
-# worker has no visibility into — so this is a blunt cap, not a tuned one.
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 
-# Short deliberately: company status can change (shut down, acquired) between
-# lookups, and a wrong "still viable" read is worse than the cost of a re-fetch.
+# Short TTL: a company can shut down or get acquired between lookups
 COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
 
 
@@ -175,14 +142,16 @@ def _cache_row(key: str) -> Optional[dict]:
 
 
 def cache_get_company(key: str) -> Optional[dict]:
+    """Return cached company research, or None if the caller should research it.
+
+    On a miss, claims the key first so concurrent misses for the same company
+    don't all pay for the same research. company_key is unique, so exactly one
+    caller wins the claim; the rest wait for its result.
+    """
     hit = _cache_row(key)
     if hit is not None:
         return hit
 
-    # Cache miss — claim this key so concurrent requests for the same
-    # brand-new company don't all pay for the same Tavily + Gemini research.
-    # company_key is unique (migrations.sql), so this insert is atomic:
-    # exactly one concurrent caller wins it.
     try:
         supabase.table("company_research_cache").insert({
             "company_key": key,
@@ -195,10 +164,7 @@ def cache_get_company(key: str) -> Optional[dict]:
     except Exception:
         pass  # someone else already claimed this key — wait on them instead
 
-    # if the winner crashes mid-research, every request for this
-    # key pays this one 30s wait before falling back to researching it
-    # itself, which also heals the stuck placeholder row via cache_set's
-    # upsert. Rare, and self-healing, so not worth a lease/heartbeat.
+    # Wait for the winner; if it crashed, fall through and research it ourselves
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         time.sleep(2)
@@ -218,31 +184,22 @@ def cache_set_company(key: str, company_name: str, data: dict) -> None:
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        # Atomic upsert (company_key is unique) — replaces the old
-        # select-then-insert-or-update, which could race two concurrent
-        # writers into two rows for the same key.
+        # Upsert rather than select-then-write, so two writers can't create two rows
         supabase.table("company_research_cache").upsert(row, on_conflict="company_key").execute()
     except Exception:
         logger.exception("Failed to write company research cache (non-fatal)")
 
 
 def _job_time_budget_s(job: dict) -> float:
-    """Longest a job can legitimately stay 'running' before it must be dead.
-
-    process_leads caps each attempt at PIPELINE_TIMEOUT_S * lead count and
-    retries up to max_retries times, so anything past that product has no way
-    of still being alive.
-    """
+    """Longest a job can legitimately stay 'running' before it must be dead."""
     return PIPELINE_TIMEOUT_S * max(1, len(job.get("leads") or [])) * PIPELINE_MAX_ATTEMPTS
 
 
 def fail_stale_running_jobs():
     """Fail jobs abandoned by a crashed worker — but only those.
 
-    This used to fail every 'running' job on startup, which is safe with one
-    worker and catastrophic with two: a booting worker wiped out everything the
-    running worker had in flight. Now a job is only reaped once it has been
-    running longer than it could possibly need.
+    A job is reaped only once it has been running longer than it could possibly
+    need, so a booting worker can't kill another worker's in-flight jobs.
     """
     rows = supabase.table("jobs").select("id,leads,started_at").eq(
         "status", "running").execute().data or []
@@ -252,8 +209,7 @@ def fail_stale_running_jobs():
     for job in rows:
         started = job.get("started_at")
         if not started:
-            # Claimed before started_at existed (or by an older worker) — no way
-            # to age it, so treat it as abandoned rather than leave it stuck.
+            # No timestamp to age it against, so treat it as abandoned
             stale_ids.append(job["id"])
             continue
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -288,8 +244,6 @@ def claim_next_job():
     job = pending.data[0]
     claimed = (
         supabase.table("jobs")
-        # started_at is what lets another worker's startup sweep age this job
-        # instead of assuming it is abandoned
         .update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", job["id"])
         .eq("status", "pending")  # conditional update: loses the race harmlessly
@@ -302,17 +256,9 @@ def claim_next_job():
 
 async def run_job(job: dict) -> list:
     leads = job["leads"]
-    # pipeline.py does its own {"lead_data": lead} wrapping per kickoff call
-    # (it needs the raw dict itself for cache keys / correlation IDs)
     start = time.time()
 
-    # Live progress for the UI: pipeline.py calls this as each agent's task
-    # finishes; we stamp the running stage map onto the job row so the frontend
-    # poll can render a step tracker. One lead per job in practice, so stages
-    # don't interleave; last state per stage wins (a retry re-emits the same
-    # keys harmlessly). Runs in the pipeline's worker thread — the sync client
-    # write is fine there, it doesn't touch the event loop.
-    # ponytail: one small UPDATE per task (~3-4/job), trivial beside the LLM calls.
+    # Stage updates for the UI's progress tracker, written as each agent finishes
     progress: dict = {}
 
     def _on_stage(stage: str, state: str) -> None:
@@ -332,15 +278,13 @@ async def run_job(job: dict) -> list:
 
 
 def finish_job(job_id: str, **fields):
-    # API keys are wiped as soon as the job leaves the running state
+    """Mark a job done or failed, wiping its stored API keys."""
     fields.update({"gemini_api_key": None, "tavily_api_key": None})
     supabase.table("jobs").update(fields).eq("id", job_id).execute()
 
 
 async def process_one_job(job: dict) -> None:
-    """Runs one job to completion; failures here are per-job, not per-process
-    — one job's CrewAI error, timeout, or exception never touches the others
-    running alongside it."""
+    """Run one job to completion. Failures are contained to this job."""
     with job_context(job["id"]):
         logger.info("Claimed job (%d lead(s))", len(job["leads"]))
         try:
@@ -368,9 +312,7 @@ async def main():
 
     in_flight: set = set()
     while True:
-        # Only claim as many jobs as we can actually start right now — a job
-        # claimed but not yet running would sit at status="running" without
-        # being worked on, invisible to other workers that could take it.
+        # Only claim what we can start now, so no job sits claimed but unworked
         while len(in_flight) < MAX_CONCURRENT_JOBS:
             try:
                 job = claim_next_job()
@@ -386,8 +328,7 @@ async def main():
         if not in_flight:
             await asyncio.sleep(POLL_INTERVAL_S)
         else:
-            # Wake as soon as a slot frees up (to claim more work sooner) or
-            # after the normal poll interval, whichever happens first.
+            # Wake when a slot frees up or the poll interval elapses
             await asyncio.wait(in_flight, timeout=POLL_INTERVAL_S, return_when=asyncio.FIRST_COMPLETED)
 
 

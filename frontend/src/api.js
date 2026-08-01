@@ -27,9 +27,8 @@ async function doFetch(method, path, body, token) {
   return fetch(`${BACKEND}${path}`, opts);
 }
 
-// Exchange the (long-lived) refresh token for a fresh access token and update
-// the stored session. Returns the new access token, or null if it failed
-// (refresh token expired/revoked → the user must log in again).
+// Exchange the refresh token for a new access token and update the stored
+// session. Returns null if the refresh token is expired or revoked.
 async function refreshAccessToken() {
   const s = readSession();
   if (!s?.refreshToken) return null;
@@ -52,9 +51,8 @@ async function refreshAccessToken() {
 export async function api(method, path, body) {
   let res = await doFetch(method, path, body, readSession()?.token);
 
-  // Access token expired mid-session → silently refresh once and retry, so the
-  // user isn't kicked to login every hour. Only when we actually have a refresh
-  // token (i.e. logged in) and not on the refresh call itself.
+  // Access token expired mid-session — refresh once and retry, so the user
+  // isn't kicked to login every hour.
   if (res.status === 401 && path !== "/auth/refresh" && readSession()?.refreshToken) {
     const newToken = await refreshAccessToken();
     if (newToken) {

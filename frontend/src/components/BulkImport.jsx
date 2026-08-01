@@ -10,9 +10,7 @@ const STATUS_META = {
 }
 
 // `cap` and `remaining` come from GET /account/credits and are undefined until
-// that call lands. No default is invented here — the server owns that number
-// (DAILY_LEAD_CAP), and guessing it locally would show the user a limit that
-// isn't the one actually enforced.
+// it lands. No local default — the server owns the real limit.
 export default function BulkImport({ onImported, onMessage, processLead, canProcess, onNeedIcp, remaining, cap }) {
   const [leads, setLeads] = useState([])
   const [errors, setErrors] = useState([])
@@ -42,8 +40,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  // A bulk import has to fit within the day's remaining credits — block upfront
-  // and ask for a smaller file, rather than importing some and deferring the rest.
+  // An import must fit the day's remaining credits — blocked upfront, not partially run
   const overBudget = Number.isFinite(remaining) && leads.length > remaining
 
   async function handleStart() {
@@ -64,9 +61,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
         return
       }
 
-      // One lead per job, sequentially, so the team watches each finish in turn.
-      // The count is within budget (blocked above); the server enforces the cap
-      // too, so a stale count merely fails that one lead rather than over-spending.
+      // One lead per job, sequentially, so each result appears as it lands
       const items = created.map(l => ({ name: l.name || l.company || 'Lead', status: 'pending' }))
       setProgress({ items: [...items], done: 0, total: items.length })
 

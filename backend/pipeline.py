@@ -168,9 +168,7 @@ class _CombinedScoreOutput:
         self._scoring_output = scoring_output
         self._company_output = company_output
 
-    # The two crews are separate kickoff() calls, each with its own real
-    # token_usage. Exposed individually so the analysis breakdown can attribute
-    # tokens per crew instead of splitting one merged total across both.
+    # Exposed separately so the analysis breakdown can attribute tokens per crew
     @property
     def scoring_output(self):
         return self._scoring_output
@@ -315,9 +313,7 @@ def _score_one_lead(
 
     company_output = None
     if cached:
-        # No company crew runs, so its task_callback never fires — report the
-        # cache hit ourselves so the progress tracker shows it instead of a
-        # step stuck on "queued".
+        # The company crew never runs on a hit, so report its stage here
         if on_stage:
             on_stage("company", "cached")
         company_summary = format_company_summary(cached)
@@ -413,12 +409,9 @@ async def process_leads(
     task_timing: List[Dict] = []
     start_ref: List[float] = [0.0]
 
-    # Which pipeline stage each agent belongs to, taken from the crews' own
-    # agent objects (not hardcoded role strings) so it can't drift from the
-    # YAML. output.agent in the callback is that same agent's role.
-    # Keys are stripped: the YAML uses folded scalars (`role: >`), so every role
-    # carries a trailing newline, and a mismatch here would silently freeze the
-    # progress tracker rather than fail loudly.
+    # Maps each agent to its pipeline stage, read off the crews themselves so it
+    # can't drift from the YAML. Roles are stripped — folded scalars (`role: >`)
+    # leave a trailing newline.
     stage_by_role = {
         crews["company"].agents[0].role.strip(): "company",
         crews["personal_scoring"].agents[0].role.strip(): "personal_research",
@@ -432,9 +425,7 @@ async def process_leads(
             else getattr(output.agent, "role", str(output.agent))
         )
         task_timing.append({"agent": agent_name, "ts": time.time()})
-        # A task finishing means its stage is done — report it for the live
-        # progress tracker. Company-on-cache-hit is reported from _score_one_lead
-        # instead (that crew never runs), and a skipped email simply never fires.
+        # A finished task means its stage is done
         if on_stage:
             stage = stage_by_role.get(agent_name.strip())
             if stage:
