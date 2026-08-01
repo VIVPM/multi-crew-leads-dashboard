@@ -1,0 +1,223 @@
+========================================================================
+5 MINUTE DEMO SCRIPT — Sales Pipeline Lead Scorer
+Single lead + bulk upload
+========================================================================
+
+
+BEFORE YOU RECORD
+------------------------------------------------------------------------
+1. CREDITS. Badge top right must say 5. If it says less you've already
+   used some today and the bulk part won't run. This demo uses 4.
+
+2. FILES ready on your desktop:
+      sample_leads_5.csv   (to show the limit stopping you)
+      sample_leads_3.csv   (the one that runs)
+
+3. Log in before recording. Don't film the login.
+
+4. THE WAITING. This is the thing to plan around.
+      One lead      = about 52 seconds
+      Three in bulk = about 2 and a half minutes
+   You can talk over the single one, the script covers it. You can't
+   talk for 2 and a half minutes over the bulk one, so record it
+   normally and speed that bit up about 4x when you edit.
+   Real recording lands around 7 minutes. Edited, about 5.
+
+5. Read it out loud once before recording. If a line feels weird in
+   your mouth, change it. It's your voice, not mine.
+
+
+========================================================================
+0:00 - 0:25     INTRO
+ON SCREEN: the app, Add a lead page
+========================================================================
+"Hi, I'm Vivek. Today I'll show you a tool I built for sales teams.
+
+So when leads come in, someone's got to figure out which ones are
+actually worth calling, and then write to them. That eats hours.
+
+This does both. You give it a lead, it looks them up, scores them out
+of 100, and writes the email."
+
+
+========================================================================
+0:25 - 0:55     SETTINGS
+ON SCREEN: menu > Settings > open "Your company & ICP"
+========================================================================
+"First it needs to know what you sell and who you're selling to. This
+box here is probably the most important thing in the app.
+
+You describe your company, then who's a good fit, who's a weak fit, and
+who's just not a fit.
+
+And that last bit is the one people skip. If you only describe your
+perfect customer, everyone looks perfect. You've got to tell it who to
+say no to. I'll come back to that at the end."
+
+
+========================================================================
+0:55 - 1:20     ADD ONE LEAD
+ON SCREEN: menu > Add new lead. Fill the form while you talk.
+========================================================================
+"Okay so let me add a lead. Name, company, email.
+
+This box is the use case. That's what they're trying to solve. Not what
+I'm selling, what they actually need. That's what tells it whether my
+product fits their problem or not.
+
+And then Save and process."
+
+  >> CLICK NOW. Clock starts.
+
+
+========================================================================
+1:20 - 2:20     WHILE IT RUNS   (about 52 seconds)
+ON SCREEN: the spinner
+========================================================================
+"So while that's going, here's what's happening underneath.
+
+There are four agents and they run one after another.
+
+First one looks up the person. Their job, how senior they are, whether
+they can actually sign off on anything.
+
+Second one looks up the company. How big it is, what they do, whether
+they match the profile I just wrote.
+
+Third one takes both of those and scores it out of 100. And it's not
+just a number, it breaks it down and tells you why.
+
+The fourth only runs if the score's high enough. That one writes the
+email.
+
+And they're searching the web while they do this, so it's not working
+off old training data. It's looking at what's there now."
+
+  >> If it's still going, add:
+     "The company research gets saved too, so the next lead from the
+      same company skips a step and comes back quicker."
+
+
+========================================================================
+2:20 - 2:55     THE RESULT
+ON SCREEN: the finished lead, expanded
+========================================================================
+"Right, done. There's the score.
+
+And you can see why it got it. How senior the person is, company size,
+how well they fit. Plus notes on anything that didn't add up.
+
+And here's the email it wrote. It knows their job, their company, what
+they asked about. I'd read that once and send it. Or edit it here if I
+want to change something."
+
+
+========================================================================
+2:55 - 3:20     BULK: the limit stops me
+ON SCREEN: Bulk import tab. Choose sample_leads_5.csv
+========================================================================
+"Now nobody really adds leads one at a time. You come back from an
+event with a list.
+
+So let me upload a file. This one's got five leads in it.
+
+And it stops me. I've got four credits left, file's got five, so it
+tells me straight away and asks for a smaller one.
+
+Every lead costs real money to run, so there's a daily limit. And I'd
+rather it tell me now than import everything and die halfway through."
+
+
+========================================================================
+3:20 - 3:40     BULK: running it
+ON SCREEN: choose sample_leads_3.csv, click Import and process
+========================================================================
+"So, smaller file. Three leads, four credits.
+
+Now watch this list. It does them one at a time and you can see each
+one go from waiting, to being scored, to done.
+
+I did that deliberately. One bar sitting at zero for three minutes
+doesn't tell you anything."
+
+  >> CLICK NOW. Speed this section up when you edit.
+
+
+========================================================================
+3:40 - 4:30     WHILE BULK RUNS   (2.5 min real, speed up to ~50s)
+ON SCREEN: the per lead list ticking through
+========================================================================
+"Couple of things while these finish.
+
+None of this actually runs in the web page. When I hit process it drops
+the job in a queue and a separate worker picks it up. That's why the
+app doesn't freeze, and I could close this tab right now and it'd still
+finish.
+
+And that limit from a second ago. Each lead's about three cents in AI
+calls, and that's my money, not the user's. So without a cap, one
+person uploading a thousand leads gets expensive fast. Everyone gets
+five a day and it resets overnight.
+
+I load tested it as well. Fifty people using it at once, no errors."
+
+
+========================================================================
+4:30 - 4:50     DASHBOARD
+ON SCREEN: menu > Dashboard
+========================================================================
+"All three done.
+
+And the dashboard gives you the overview. Scores, what industries
+they're coming from, where they came from, how many over time.
+
+So a manager can see what's going on without opening every single
+lead."
+
+
+========================================================================
+4:50 - 5:00     THE ENDING
+ON SCREEN: Lead details, high scores visible
+========================================================================
+"Last thing.
+
+Look at these scores. Nearly everything's in the nineties. So I sat
+down and scored twenty of them by hand myself, then compared.
+
+The tool was coming out about fifteen points too high. And worse, it
+was ranking them in nearly the wrong order.
+
+I fixed most of that by writing down who's not a fit. It's still not
+perfect. But I know exactly how imperfect, because I actually measured
+it.
+
+That's it. Thanks for watching."
+
+
+========================================================================
+IF YOU RUN LONG
+========================================================================
+Cut in this order:
+  1. The dashboard bit (4:30).
+  2. The load testing line.
+  3. "Or edit it here if I want to change something."
+
+Don't cut:
+  - The use case explanation. It's why the scoring works at all.
+  - The five lead file getting blocked. Free to show, nothing runs.
+  - The ending.
+
+
+========================================================================
+CREDIT MATH
+========================================================================
+  Start                    5
+  Single lead             -1    leaves 4
+  5 lead file blocked      0    nothing runs, costs nothing
+  3 lead file             -3    leaves 1
+  --------------------------------------------------------------
+  Used                     4 of 5
+
+No room for a second take the same day. If you want retakes, raise
+DAILY_LEAD_CAP in backend/.env before you record, or do the single and
+bulk parts on different days.

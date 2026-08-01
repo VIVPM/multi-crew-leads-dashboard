@@ -136,12 +136,33 @@ if not os.getenv("SECRET_KEY"):
         "restarts or be shared across instances. Set SECRET_KEY in backend/.env."
     )
 
-# Matches DAILY_LEAD_CAP: a request bigger than the daily allowance could never
-# fully process anyway, so there's no reason to accept more in one call.
-MAX_LEADS_PER_REQUEST = 5
+# Per-user leads processed per UTC day. The Gemini/Tavily keys are
+# operator-held (below), so every processed lead is the operator's spend on one
+# shared quota — this caps both the cost and the shared rate limit if the app
+# is broadcast publicly. Required, with no default on purpose: a silent
+# fallback would mean a deploy that forgot to set it quietly runs on someone's
+# guess of what the spend limit should be.
+_daily_lead_cap = os.getenv("DAILY_LEAD_CAP")
+if not _daily_lead_cap:
+    raise RuntimeError(
+        "DAILY_LEAD_CAP must be set (leads each account may process per day). "
+        "Set it in backend/.env locally and in the environment of whatever "
+        "hosts this in production."
+    )
+try:
+    DAILY_LEAD_CAP = int(_daily_lead_cap)
+except ValueError:
+    raise RuntimeError(f"DAILY_LEAD_CAP must be a whole number, got {_daily_lead_cap!r}")
+if DAILY_LEAD_CAP < 1:
+    raise RuntimeError(f"DAILY_LEAD_CAP must be at least 1, got {DAILY_LEAD_CAP}")
+
+# A single request larger than the whole daily allowance could never fully
+# process, so there is no reason to accept one. Derived rather than repeated,
+# so raising the cap raises this with it.
+MAX_LEADS_PER_REQUEST = DAILY_LEAD_CAP
 # CSV import ceiling. Rows are only *created* here — processing still goes
-# through /leads/process in MAX_LEADS_PER_REQUEST-sized batches, so this
-# doesn't let anyone queue an unbounded amount of LLM work in one call.
+# through /leads/process, which enforces the daily cap, so this doesn't let
+# anyone queue an unbounded amount of LLM work in one call.
 MAX_BULK_IMPORT = 200
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
@@ -149,10 +170,6 @@ LOGIN_WINDOW_S = 900
 # 500/day, which is the web-interface limit) — a safety net so a bug can't
 # silently blow through the account's real limit and get it flagged.
 EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
-# Per-user leads processed per UTC day. The keys are operator-held (below), so
-# every processed lead is LLM spend on one shared quota — this caps both the
-# cost and the shared rate limit if the app is broadcast publicly.
-DAILY_LEAD_CAP = int(os.getenv("DAILY_LEAD_CAP", "5"))
 
 # Operator-held keys — users no longer bring their own Gemini/Tavily keys.
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]

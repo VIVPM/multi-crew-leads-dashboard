@@ -9,7 +9,11 @@ const STATUS_META = {
   failed:     { icon: '✕', label: 'Failed' },
 }
 
-export default function BulkImport({ onImported, onMessage, processLead, canProcess, onNeedIcp, remaining, cap = 5 }) {
+// `cap` and `remaining` come from GET /account/credits and are undefined until
+// that call lands. No default is invented here — the server owns that number
+// (DAILY_LEAD_CAP), and guessing it locally would show the user a limit that
+// isn't the one actually enforced.
+export default function BulkImport({ onImported, onMessage, processLead, canProcess, onNeedIcp, remaining, cap }) {
   const [leads, setLeads] = useState([])
   const [errors, setErrors] = useState([])
   const [fileName, setFileName] = useState('')
@@ -103,7 +107,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
         Upload a CSV with the columns <strong>Name, Company, Email</strong> (required) and
         optionally Job Title, Use Case, Industry, Location, Source. A file exported
         from this app imports back as-is. Up to {MAX_ROWS} rows parse, and an import
-        must fit your daily credits ({cap}/day, 1 credit scores 1 lead).
+        must fit your daily credits{cap ? ` (${cap}/day, 1 credit scores 1 lead)` : ''}.
       </p>
 
       {/* native file input is unstyleable across browsers — hide it and drive

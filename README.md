@@ -15,7 +15,7 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 - **Asynchronous job queue** — processing runs in a background worker; the API responds instantly and the UI polls job status, so long LLM runs never block requests.
 - **Token-based auth** — signup/login with bcrypt password hashing; a short-lived 60-minute access token plus a revocable 14-day refresh token (stored server-side as a hash) that the frontend renews silently, so a session lasts without a hard hourly logout and logout revokes it server-side; every lead endpoint is ownership-checked; login is rate-limited (5 failed attempts → 15-minute lockout).
 - **Operator-held API keys** — Gemini and Tavily keys are supplied once by the operator in `backend/.env`; end users never enter keys.
-- **Daily lead credits** — since the keys are operator-held, every processed lead is the operator's LLM spend on one shared quota, so each account gets a daily allowance (`DAILY_LEAD_CAP`, default **5**; 1 credit = 1 lead). The dashboard shows credits remaining, over-limit requests are rejected before any spend, and the count resets at UTC midnight — no credits table or reset job, since "remaining" is just `cap − leads-processed-today`. Guards cost and the shared rate limit if the app is broadcast publicly.
+- **Daily lead credits** — since the keys are operator-held, every processed lead is the operator's LLM spend on one shared quota, so each account gets a daily allowance set by `DAILY_LEAD_CAP` (1 credit = 1 lead). It's required with no default: a deploy that forgets it fails at startup rather than silently running on a guessed spend limit. The dashboard shows credits remaining, over-limit requests are rejected before any spend, and the count resets at UTC midnight — no credits table or reset job, since "remaining" is just `cap − leads-processed-today`.
 - **Editable & sendable email drafts** — click **Edit** on a lead's drafted email to revise it inline, or **Send** to deliver it through your own connected email account (per-user SMTP settings — a Gmail App Password or any SMTP provider; a daily cap guards the account).
 - **Structured JSON logging** — every log line is correlated by `request_id`/`job_id`/`lead_id`, so one request's or job's full story is a single grep away.
 - **Observability** — optional OpenTelemetry tracing of every crew/agent/LLM call via targeted openinference instrumentors, exported to Langfuse and/or Grafana Cloud (which also receives a `jobs_processed_total` metric powering no-activity/failure alerts), enabled automatically when the matching env vars are set.
@@ -150,6 +150,7 @@ SUPABASE_KEY=your_supabase_service_key
 SECRET_KEY=any_long_random_string   # signs access tokens; required in production
 GEMINI_API_KEY=your_gemini_key      # operator-held, powers all agents (required)
 TAVILY_API_KEY=your_tavily_key      # operator-held, web-search enrichment (required)
+DAILY_LEAD_CAP=5                    # leads each account may process per day (required)
 
 # Optional — run the job worker inside the API process (single-service deploys)
 RUN_WORKER_IN_PROCESS=1
@@ -164,9 +165,6 @@ GRAFANA_OTLP_AUTH=
 
 # Optional — daily per-user email send cap (default 80)
 EMAIL_SEND_DAILY_CAP=80
-
-# Optional — daily per-user lead-processing cap / credits (default 5)
-DAILY_LEAD_CAP=5
 ```
 
 Run the API and the worker (two terminals, from the repo root):
@@ -220,7 +218,7 @@ Gemini and Tavily keys are provided once by the operator in `backend/.env` (`GEM
 5. **Review results** — expand a lead card for the scoring breakdown and email draft; click **Edit** to revise the draft, or **Send** to email it (once your email account is connected). Open **📊 Analysis** for duration, token, and cost details (per-agent numbers are even-split estimates of the crew totals; a row marked **Cached** means company research was served from cache, **Skipped** means the email crew never ran because the score was ≤ 70 — both always listed at 0, so the breakdown always shows all 4 agents).
 6. **Search / export** — filter the table and export the filtered set to CSV.
 
-Processing is capped at **5 leads per account per day** (the daily credit allowance, `DAILY_LEAD_CAP`); job status is `pending → running → done | failed`.
+Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit allowance); job status is `pending → running → done | failed`.
 
 ---
 

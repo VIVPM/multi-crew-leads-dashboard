@@ -282,7 +282,7 @@ export default function App() {
                 canProcess={!!companyContext?.trim()}
                 onNeedIcp={() => setShowIcpDialog(true)}
                 remaining={credits?.remaining}
-                cap={credits?.cap ?? 5}
+                cap={credits?.cap}
                 processLead={async lead => {
                   const { job_id } = await api('POST', '/leads/process', { leads: [lead] })
                   return waitForJob(job_id)
