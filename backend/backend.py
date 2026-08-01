@@ -361,20 +361,31 @@ class EmailSettingsRequest(BaseModel):
 # Auth endpoints
 # =============================================================================
 
-@app.post("/auth/signup")
+@app.post("/auth/signup", response_model=LoginResponse)
 def signup(req: SignupRequest):
     existing = supabase.table("users").select("id").eq("username", req.username).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Username already exists.")
     try:
-        supabase.table("users").insert(
+        created = supabase.table("users").insert(
             {"username": req.username, "password": hash_password(req.password)}
         ).execute()
     except Exception:
         # unique constraint (migrations.sql) closes the check-then-insert race
         raise HTTPException(status_code=400, detail="Username already exists.")
+    if not created.data:
+        raise HTTPException(status_code=500, detail="Signup failed. Please try again.")
+    row = created.data[0]
+    uid = str(row["id"])
     logger.info("New user signed up: %s", req.username)
-    return {"message": "Signup successful."}
+    # Sign them straight in, same response shape as /auth/login — there's no
+    # reason to make someone re-type the credentials they just chose. The
+    # insert returns the new row, so we already have the id to mint tokens.
+    return LoginResponse(
+        user_id=uid, username=req.username,
+        token=make_token(uid, SECRET_KEY),
+        refresh_token=_issue_refresh_token(row["id"]),
+    )
 
 
 @app.post("/auth/login", response_model=LoginResponse)

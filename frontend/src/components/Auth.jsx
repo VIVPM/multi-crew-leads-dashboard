@@ -27,16 +27,12 @@ export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
     }
     setLoading(true)
     try {
-      if (mode === 'signup') {
-        await api('POST', '/auth/signup', { username, password })
-        setMessage({ type: 'success', text: 'Signup successful. Please login.' })
-        setMode('login')
-        setUsername('')
-        setPassword('')
-      } else {
-        const data = await api('POST', '/auth/login', { username, password })
-        onLogin(data.user_id, data.username, data.token, data.refresh_token)
-      }
+      // Signup and login return the same token shape, and signup now signs the
+      // new user straight in — so both paths go to the main window, no second
+      // "please log in" step.
+      const path = mode === 'signup' ? '/auth/signup' : '/auth/login'
+      const data = await api('POST', path, { username, password })
+      onLogin(data.user_id, data.username, data.token, data.refresh_token)
     } catch (err) {
       setMessage({ type: 'error', text: friendlyError(err) })
     } finally {
