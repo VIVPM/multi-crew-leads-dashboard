@@ -16,3 +16,11 @@ gold_set_template.csv
 
 # transient server stderr from load_test_api.py (rewritten every run)
 load_test_results/*.log
+
+# Every eval/load run writes a timestamped report, so these pile up fast. One
+# representative result per test type is committed as evidence for the numbers
+# quoted in README.md; new runs stay local. (Files already tracked are
+# unaffected by these rules — this only stops future ones being added.)
+load_test_results/*.json
+scoring_eval_results/*.json
+adversarial_results/*.json
