@@ -51,6 +51,9 @@ supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 LOAD_USER = "loadtest@local"
 LOAD_PASS = "loadtest-pw-9137"
+# Distinctive email prefix so seeded perf rows can be deleted precisely without
+# ever touching a real lead.
+LEAD_SEED_PREFIX = "perf-seed-"
 
 
 # =============================================================================
@@ -90,8 +93,21 @@ def serve_mode(port: int, lead_seconds: float, in_process_worker: bool) -> None:
 # =============================================================================
 
 async def _hammer(base: str, token: str, user_id: str, job_id: str,
-                  concurrency: int, duration: float) -> dict:
-    """Fire the read mix a real browser makes, and record every latency."""
+                  concurrency: int, duration: float, mix: str = "all") -> dict:
+    """Fire a request mix and record every latency.
+
+    mix="all" includes a login on every cycle. That is deliberately harsh and
+    NOT what real traffic looks like — a real user logs in once and then
+    browses for the rest of the session, so login is a tiny fraction of
+    requests, not 1-in-4. It also distorts the run: login is slow enough that
+    a client's first cycle can outlast the whole duration window, so every
+    client completes exactly one cycle and "requests" collapses to
+    4 x concurrency regardless of how fast the server is.
+
+    mix="read" is the realistic steady-state: the dashboard/leads/job-polling
+    calls an open browser actually makes. Use this to answer "how many people
+    can be using the app at once".
+    """
     results: dict = {"health": [], "leads": [], "job": [], "login": []}
     errors = {"count": 0, "samples": []}
     stop = time.monotonic() + duration
@@ -101,15 +117,18 @@ async def _hammer(base: str, token: str, user_id: str, job_id: str,
     # measure the client's own pool, not the server. Scale it to concurrency.
     limits = httpx.Limits(max_connections=concurrency + 20, max_keepalive_connections=concurrency)
 
+    cycle = [
+        ("health", "GET", "/", {}),
+        ("leads", "GET", f"/leads/{user_id}", {"headers": auth}),
+        ("job", "GET", f"/jobs/{job_id}", {"headers": auth}),
+    ]
+    if mix == "all":
+        cycle.append(("login", "POST", "/auth/login",
+                      {"json": {"username": LOAD_USER, "password": LOAD_PASS}}))
+
     async def one_client(client: httpx.AsyncClient) -> None:
         while time.monotonic() < stop:
-            for name, method, url, kwargs in (
-                ("health", "GET", "/", {}),
-                ("leads", "GET", f"/leads/{user_id}", {"headers": auth}),
-                ("job", "GET", f"/jobs/{job_id}", {"headers": auth}),
-                ("login", "POST", "/auth/login",
-                 {"json": {"username": LOAD_USER, "password": LOAD_PASS}}),
-            ):
+            for name, method, url, kwargs in cycle:
                 t = time.monotonic()
                 try:
                     r = await client.request(method, url, timeout=30, **kwargs)
@@ -127,10 +146,15 @@ async def _hammer(base: str, token: str, user_id: str, job_id: str,
                 if time.monotonic() >= stop:
                     return
 
+    started = time.monotonic()
     async with httpx.AsyncClient(base_url=base, limits=limits) as client:
         await asyncio.gather(*[one_client(client) for _ in range(concurrency)])
+    # Real elapsed, not the nominal duration: a slow in-flight request (login,
+    # especially) can run well past the stop time, so dividing by `duration`
+    # would overstate throughput.
+    elapsed = time.monotonic() - started
 
-    return {"lat": results, "errors": errors}
+    return {"lat": results, "errors": errors, "elapsed": elapsed}
 
 
 RAMP_LEVELS = [10, 25, 50, 100, 200, 300, 400, 500]
@@ -144,7 +168,8 @@ def _agg(lat: dict, keys: tuple) -> list:
 
 
 def run_ramp(base: str, token: str, user_id: str, job_id: str,
-             levels: list, duration: float) -> list:
+             levels: list, duration: float, stop_pct: float = 25,
+             mix: str = "all") -> list:
     """Step concurrency up and watch where it breaks — this is the answer to
     "how many concurrent users can use this without breaking".
 
@@ -165,7 +190,7 @@ def run_ramp(base: str, token: str, user_id: str, job_id: str,
     baseline_p95 = None
     for level in levels:
         print(f"  concurrency {level:4} ...", end="", flush=True)
-        res = asyncio.run(_hammer(base, token, user_id, job_id, level, duration))
+        res = asyncio.run(_hammer(base, token, user_id, job_id, level, duration, mix))
         fast = _agg(res["lat"], ("health", "leads", "job"))
         login = res["lat"]["login"]
         n_ok = sum(len(v) for v in res["lat"].values())
@@ -174,19 +199,22 @@ def run_ramp(base: str, token: str, user_id: str, job_id: str,
         err_pct = (n_err / n_total * 100) if n_total else 0.0
         p50, p95 = pctl(fast, 50), pctl(fast, 95)
         lp95 = pctl(login, 95)
+        rps = n_total / res["elapsed"] if res.get("elapsed") else 0.0
         if baseline_p95 is None and fast:
             baseline_p95 = p95
         degraded = bool(baseline_p95) and p95 > 3 * baseline_p95
         flag = "  <-- ERRORS" if err_pct > 1 else ("  <-- latency degrading" if degraded else "")
-        print(f"\r  {level:4} users   {n_total:5} req   {err_pct:5.1f}% err   "
-              f"fast p50 {p50:6.0f}ms p95 {p95:6.0f}ms   login p95 {lp95:6.0f}ms{flag}")
+        login_col = f"   login p95 {lp95:6.0f}ms" if mix == "all" else ""
+        print(f"\r  {level:4} users   {n_total:5} req   {rps:5.1f} req/s   {err_pct:5.1f}% err   "
+              f"fast p50 {p50:6.0f}ms p95 {p95:6.0f}ms{login_col}{flag}")
         rows.append({
             "concurrency": level, "requests": n_total, "errors": n_err,
             "error_pct": round(err_pct, 1), "fast_p50_ms": p50, "fast_p95_ms": p95,
-            "login_p95_ms": lp95, "req_per_s": round(n_total / duration, 1),
+            "login_p95_ms": lp95, "req_per_s": round(rps, 1),
+            "elapsed_s": round(res.get("elapsed", 0), 1),
         })
-        if err_pct > 25:
-            print(f"  Error rate over 25% at {level} concurrent users — stopping the ramp here.")
+        if err_pct > stop_pct:
+            print(f"  Error rate over {stop_pct:g}% at {level} concurrent users — stopping the ramp here.")
             break
     return rows
 
@@ -218,15 +246,23 @@ def ramp_report(rows: list, args, tag: str) -> None:
     print("  LLM fully stubbed (pipeline.process_leads never runs) — zero Gemini/Tavily calls, $0.")
 
 
-def wait_for_health(base: str, timeout: float = 90) -> bool:
+def wait_for_health(base: str, timeout: float = 120) -> bool:
+    """Wait for the target to answer.
+
+    The per-request timeout is generous on purpose: a Render free-tier service
+    spins down after 15 minutes idle, and on the next request Render holds the
+    connection open while the instance cold-starts (tens of seconds). A short
+    per-request timeout kills each attempt before that can ever complete, so
+    the whole wait fails against a server that is in fact coming up fine.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if httpx.get(f"{base}/", timeout=3).status_code == 200:
+            if httpx.get(f"{base}/", timeout=60).status_code == 200:
                 return True
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(2)
     return False
 
 
@@ -241,6 +277,48 @@ def ensure_user(base: str) -> tuple:
                  f"  login  -> {r.status_code} {r.text[:200]}")
     d = r.json()
     return d["token"], d["user_id"]
+
+
+def seed_leads(user_id: str, n: int) -> list:
+    """Give the test account realistic lead rows before measuring.
+
+    Without this the account has zero leads and GET /leads/{user_id} — the
+    endpoint browsing traffic hits hardest — returns an empty list, so the
+    measurement is of an empty result set rather than of real work. A real row
+    carries a ~850-char scoring_result and a ~900-char email_draft, and the
+    endpoint does select("*") with a limit of 500, so payload size is a large
+    part of what that endpoint actually costs.
+    """
+    scoring = {
+        "personal_info": {"name": "Load Test", "job_title": "VP Engineering",
+                          "role_relevance": 8, "professional_background": "x" * 180},
+        "company_info": {"company_name": "Loadco", "industry": "Technology & Software",
+                         "company_size": 5000, "market_presence": 7},
+        "lead_score": {"score": 82, "demographic_score": 25, "firmographic_score": 24,
+                       "behavioral_score": 33,
+                       "scoring_criteria": ["role relevance", "company size", "cultural fit"],
+                       "validation_notes": "y" * 200},
+    }
+    draft = ("Subject: Quick question about your outbound workflow\n\n" + "z" * 850)
+    rows = [{
+        "user_id": user_id,
+        "name": f"Perf Lead {i}", "job_title": "VP Engineering",
+        "company": f"Loadco {i}", "email": f"{LEAD_SEED_PREFIX}{i}@example.com",
+        "use_case": "Automate lead qualification", "industry": "Technology & Software",
+        "location": "Bengaluru, India", "source": "Website",
+        "score": 82, "scoring_result": scoring, "email_draft": draft,
+    } for i in range(n)]
+    created = []
+    for i in range(0, len(rows), 50):
+        created += supabase.table("leads").insert(rows[i:i + 50]).execute().data or []
+    return created
+
+
+def cleanup_seeded_leads(user_id: str) -> int:
+    deleted = (supabase.table("leads").delete()
+               .eq("user_id", user_id)
+               .like("email", f"{LEAD_SEED_PREFIX}%").execute().data) or []
+    return len(deleted)
 
 
 def insert_done_probe(tag: str, user_id: str) -> str:
@@ -345,6 +423,18 @@ def main() -> None:
                          "instead of the fixed-concurrency idle/saturated test")
     ap.add_argument("--ramp-levels", default=",".join(str(n) for n in RAMP_LEVELS))
     ap.add_argument("--ramp-duration", type=float, default=8)
+    ap.add_argument("--seed-leads", type=int, default=0,
+                    help="insert N realistic lead rows for the test account first, so "
+                         "GET /leads measures a real payload instead of an empty list. "
+                         "Removed again at the end of the run.")
+    ap.add_argument("--mix", choices=("all", "read"), default="all",
+                    help="'read' drops login from the cycle — the realistic steady state, since a "
+                         "real user logs in once and then browses. 'all' logs in every cycle, "
+                         "which is deliberately harsh and distorts throughput.")
+    ap.add_argument("--ramp-stop-pct", type=float, default=25,
+                    help="stop the ramp once a level's error rate exceeds this percent. "
+                         "Lower this for a live deployment you want to stop hammering at the "
+                         "first real sign of trouble rather than riding it out to 500.")
     ap.add_argument("--base-url", default=None,
                     help="hit an already-running server (e.g. a Render deployment) instead of "
                          "spawning a local stub. Only valid with --ramp: the idle/saturated test's "
@@ -388,6 +478,7 @@ def main() -> None:
                                stdout=api_log, stderr=subprocess.STDOUT)
 
     running = 0
+    seeded_for_user = None  # set once we know the user id, so finally can clean up
     try:
         if not wait_for_health(base):
             sys.exit(f"Could not reach {base} — "
@@ -406,11 +497,17 @@ def main() -> None:
             probe = (supabase.table("jobs").select("id").eq("our_company_context", tag)
                      .limit(1).execute().data or [{}])[0].get("id", str(uuid.uuid4()))
 
+        if args.seed_leads:
+            seeded_for_user = user_id
+            seeded = seed_leads(user_id, args.seed_leads)
+            print(f"Seeded {len(seeded)} lead(s) so GET /leads returns a realistic payload")
+
         if args.ramp:
             levels = [int(x) for x in args.ramp_levels.split(",") if x.strip()]
             print(f"Ramping concurrency through {levels}, {args.ramp_duration:.0f}s each "
                   f"(worker off — isolating the API's own ceiling)...")
-            rows = run_ramp(base, token, user_id, probe, levels, args.ramp_duration)
+            rows = run_ramp(base, token, user_id, probe, levels, args.ramp_duration,
+                            args.ramp_stop_pct, args.mix)
             ramp_report(rows, args, tag)
         else:
             print(f"Phase 1/2: idle, {args.concurrency} clients for {args.duration}s...")
@@ -432,6 +529,8 @@ def main() -> None:
                 api.kill()
             api_log.close()
             print(f"  Server log: {api_log_path}")
+        if args.seed_leads and seeded_for_user:
+            print(f"  Removed {cleanup_seeded_leads(seeded_for_user)} seeded lead(s)")
         cleanup(tag)
 
 
