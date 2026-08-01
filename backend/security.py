@@ -24,8 +24,21 @@ REFRESH_TTL_S = 14 * 24 * 3600  # 14 days
 # Passwords
 # ---------------------------------------------------------------------------
 
+# bcrypt's default cost is 12 rounds. Load testing against the deployed
+# Render free tier (0.1 vCPU) measured 18-29s p95 login latency at just
+# 10-25 concurrent users — bcrypt is deliberately CPU-heavy, and a tenth of a
+# core doesn't parallelize concurrent hashing, it serializes it. Cost 10 is
+# ~4x less CPU time per hash (each step doubles/halves the work) and is
+# still within bcrypt's commonly-accepted range for production use — a real
+# but modest tradeoff, made explicitly here rather than silently. This only
+# affects hashes created from now on: bcrypt embeds the cost used in the hash
+# string itself, and checkpw reads it back out automatically, so existing
+# cost-12 hashes keep verifying correctly with no migration needed.
+_BCRYPT_ROUNDS = 10
+
+
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(_BCRYPT_ROUNDS)).decode()
 
 
 def is_legacy_hash(hashed: str) -> bool:
