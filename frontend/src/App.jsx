@@ -41,6 +41,13 @@ function clearSession() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+const PAGE_TITLES = {
+  'add-lead': 'Add a lead',
+  dashboard: 'Dashboard',
+  leads: 'Lead details',
+  settings: 'Settings',
+}
+
 export default function App() {
   const saved = loadSession()
   const [loggedIn, setLoggedIn] = useState(!!saved)
@@ -48,10 +55,14 @@ export default function App() {
   const [userId, setUserId] = useState(saved?.userId ?? null)
   const [username, setUsername] = useState(saved?.username ?? '')
 
+  const [page, setPage] = useState('add-lead') // 'add-lead' | 'dashboard' | 'leads' | 'settings'
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(false)
-  const [entryMode, setEntryMode] = useState(null) // null | 'single' | 'bulk'
+  const [entryMode, setEntryMode] = useState('single') // 'single' | 'bulk'
   const [editingLead, setEditingLead] = useState(null)
+  // Bumped after a process or cancel to remount LeadForm with a clean slate,
+  // since the form now lives on a persistent page instead of being unmounted.
+  const [formResetKey, setFormResetKey] = useState(0)
   const [globalMsg, setGlobalMsg] = useState(null)
   const [credits, setCredits] = useState(null) // { cap, used, remaining } — daily lead allowance
 
@@ -77,7 +88,8 @@ export default function App() {
     setUserId(null)
     setUsername('')
     setLeads([])
-    setEntryMode(null)
+    setPage('add-lead')
+    setEntryMode('single')
     setEditingLead(null)
     setCompanyContext('')
     setCompanyContextLoaded(false)
@@ -176,8 +188,9 @@ export default function App() {
       await fetchLeads()
       fetchCredits()
       setStatus(null)
-      setEntryMode(null)
+      setEntryMode('single')
       setEditingLead(null)
+      setFormResetKey(k => k + 1)
       setGlobalMsg({ type: 'error', text: `Lead saved but processing failed: ${friendlyError(e)}` })
       return
     }
@@ -185,8 +198,9 @@ export default function App() {
     await fetchLeads()
     fetchCredits()
     setStatus(null)
-    setEntryMode(null)
+    setEntryMode('single')
     setEditingLead(null)
+    setFormResetKey(k => k + 1)
     const r = job.results?.[0]
     if (!r) {
       setGlobalMsg({ type: 'warning', text: 'Processing finished but no result was recorded.' })
@@ -200,6 +214,7 @@ export default function App() {
   function handleEditLead(lead) {
     setEditingLead(lead)
     setEntryMode('single')
+    setPage('add-lead')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -211,30 +226,17 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <Navbar onLogout={handleLogout} username={username} />
+      <Navbar
+        username={username}
+        page={page}
+        onNavigate={setPage}
+        onLogout={handleLogout}
+        credits={credits}
+      />
 
       <main className="main-content">
         <div className="page-header">
-          <h1 className="page-title">Sales Pipeline — Lead Scoring &amp; Email Generation</h1>
-          {credits && (
-            <span className="credits-badge">
-              <strong>{credits.remaining}</strong> credit{credits.remaining === 1 ? '' : 's'}
-              <span
-                className="field-hint field-hint--end"
-                tabIndex={0}
-                role="img"
-                aria-label={`${credits.remaining} of ${credits.cap} daily lead credits left. 1 credit scores 1 lead. Resets tomorrow.`}
-              >
-                i
-                <span className="field-hint-pop" aria-hidden="true">
-                  <strong>{credits.remaining} of {credits.cap}</strong> daily lead credits left.
-                  <span className="field-hint-eg">1 credit scores 1 lead · resets tomorrow</span>
-                  Processing a lead costs 1 credit. A bulk import scores as many as you have
-                  credits for and saves the rest, unscored, for another day.
-                </span>
-              </span>
-            </span>
-          )}
+          <h1 className="page-title">{PAGE_TITLES[page]}</h1>
         </div>
 
         {globalMsg && (
@@ -244,79 +246,80 @@ export default function App() {
           </div>
         )}
 
-        <CompanyProfile
-          value={companyContext}
-          loaded={companyContextLoaded}
-          expanded={companyProfileExpanded}
-          onToggleExpanded={setCompanyProfileExpanded}
-          onSaved={setCompanyContext}
-          onMessage={text => setGlobalMsg({ type: 'success', text })}
-        />
+        {/* ---- Add a lead ---- */}
+        {page === 'add-lead' && (
+          <div className="card lead-form-card">
+            <div className="lead-entry-tabs">
+              <button
+                className={`lead-entry-tab ${entryMode === 'single' ? 'active' : ''}`}
+                onClick={() => { setEditingLead(null); setFormResetKey(k => k + 1); setEntryMode('single') }}
+              >
+                {editingLead ? 'Edit lead' : 'Add new lead'}
+              </button>
+              <button
+                className={`lead-entry-tab ${entryMode === 'bulk' ? 'active' : ''}`}
+                onClick={() => { setEditingLead(null); setEntryMode('bulk') }}
+              >
+                Bulk import
+              </button>
+            </div>
 
-        <EmailSettings onMessage={text => setGlobalMsg({ type: 'success', text })} />
+            {entryMode === 'single' && (
+              <LeadForm
+                key={`${editingLead?.id ?? 'new'}-${formResetKey}`}
+                lead={editingLead}
+                onSave={handleSaveAndProcess}
+                onCancel={() => { setEditingLead(null); setFormResetKey(k => k + 1) }}
+              />
+            )}
 
-        <div className="card lead-form-card">
-          <div className="lead-entry-tabs">
-            <button
-              className={`lead-entry-tab ${entryMode === 'single' ? 'active' : ''}`}
-              onClick={() => {
-                setEditingLead(null)
-                setEntryMode(entryMode === 'single' ? null : 'single')
-              }}
-            >
-              {editingLead ? 'Edit lead' : 'Add new lead'}
-            </button>
-            <button
-              className={`lead-entry-tab ${entryMode === 'bulk' ? 'active' : ''}`}
-              onClick={() => {
-                setEditingLead(null)
-                setEntryMode(entryMode === 'bulk' ? null : 'bulk')
-              }}
-            >
-              Bulk import
-            </button>
+            {/* Kept mounted (hidden) so switching tabs mid-import doesn't throw
+                away the selected file and the running progress. */}
+            <div style={{ display: entryMode === 'bulk' ? 'block' : 'none' }}>
+              <BulkImport
+                onImported={() => { fetchLeads(); fetchCredits() }}
+                onMessage={text => setGlobalMsg({ type: 'success', text })}
+                canProcess={!!companyContext?.trim()}
+                onNeedIcp={() => setShowIcpDialog(true)}
+                remaining={credits?.remaining}
+                cap={credits?.cap ?? 5}
+                processLead={async lead => {
+                  const { job_id } = await api('POST', '/leads/process', { leads: [lead] })
+                  return waitForJob(job_id)
+                }}
+              />
+            </div>
           </div>
+        )}
 
-          {entryMode === 'single' && (
-            <LeadForm
-              key={editingLead?.id ?? 'new'}
-              lead={editingLead}
-              onSave={handleSaveAndProcess}
-              onCancel={() => { setEntryMode(null); setEditingLead(null) }}
-            />
-          )}
+        {/* ---- Dashboard ---- */}
+        {page === 'dashboard' && (
+          leadsLoading ? <p className="muted">Loading leads…</p> : <Dashboard leads={leads} />
+        )}
 
-          {/* Kept mounted (hidden) rather than conditionally rendered: switching
-              tabs mid-import would otherwise unmount this and throw away the
-              selected file and the running progress. */}
-          <div style={{ display: entryMode === 'bulk' ? 'block' : 'none' }}>
-            <BulkImport
-              onImported={() => { fetchLeads(); fetchCredits() }}
-              onMessage={text => setGlobalMsg({ type: 'success', text })}
-              canProcess={!!companyContext?.trim()}
-              onNeedIcp={() => setShowIcpDialog(true)}
-              remaining={credits?.remaining}
-              cap={credits?.cap ?? 5}
-              processBatch={async batch => {
-                const { job_id } = await api('POST', '/leads/process', { leads: batch })
-                return waitForJob(job_id)
-              }}
-            />
-          </div>
-        </div>
-
-        <section className="section">
-          <h2 className="section-title">Leads dashboard</h2>
-          {leadsLoading ? <p className="muted">Loading leads…</p> : <Dashboard leads={leads} />}
-        </section>
-
-        <section className="section">
-          <h2 className="section-title">All leads</h2>
-          {leadsLoading
+        {/* ---- Processed leads ---- */}
+        {page === 'leads' && (
+          leadsLoading
             ? <p className="muted">Loading…</p>
             : <LeadsTable leads={leads} onEdit={handleEditLead} onRefresh={fetchLeads} />
-          }
-        </section>
+        )}
+
+        {/* ---- Settings ---- */}
+        {page === 'settings' && (
+          <>
+            <CompanyProfile
+              value={companyContext}
+              loaded={companyContextLoaded}
+              expanded={companyProfileExpanded}
+              onToggleExpanded={setCompanyProfileExpanded}
+              onSaved={setCompanyContext}
+              onMessage={text => setGlobalMsg({ type: 'success', text })}
+            />
+            <div id="email-settings">
+              <EmailSettings onMessage={text => setGlobalMsg({ type: 'success', text })} />
+            </div>
+          </>
+        )}
       </main>
 
       {showIcpDialog && (
@@ -338,9 +341,11 @@ export default function App() {
                   className="btn btn-primary"
                   onClick={() => {
                     setShowIcpDialog(false)
+                    setPage('settings')
                     setCompanyProfileExpanded(true)
-                    document.getElementById('company-profile-card')
-                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    // let the Settings page render before scrolling to the card
+                    setTimeout(() => document.getElementById('company-profile-card')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
                   }}
                 >
                   Set it now

@@ -115,10 +115,70 @@ body {
   gap: 1rem;
 }
 
-.navbar-username {
-  font-size: 0.78rem;
-  color: var(--primary-subdued);
+/* the ICP-required dialog scrolls here; keep it clear of the sticky navbar */
+#company-profile-card { scroll-margin-top: 72px; }
+
+/* ---- Hamburger menu (top-right) ---- */
+.navbar-menu { position: relative; }
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 34px;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
+.menu-button:hover,
+.menu-button.is-open { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.4); }
+.menu-bars { display: inline-flex; flex-direction: column; gap: 3px; }
+.menu-bars i {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--on-primary);
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: 0.4rem;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.menu-account { padding: 0.45rem 0.6rem 0.35rem; display: flex; flex-direction: column; gap: 0.1rem; }
+.menu-account-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-secondary); }
+.menu-account-email { font-size: 0.85rem; color: var(--ink); font-weight: 500; word-break: break-all; }
+.menu-divider { height: 1px; background: var(--hairline); margin: 0.25rem 0; }
+.menu-item {
+  text-align: left;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.87rem;
+  color: var(--ink);
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--canvas-soft); outline: none; }
+.menu-item.is-active { background: var(--primary); color: var(--on-primary); font-weight: 500; }
+.menu-item-danger { color: #c11855; }
+.menu-item-danger:hover { background: #fff0f5; }
 
 /* Main content */
 .main-content {
@@ -576,6 +636,54 @@ body {
   border-radius: var(--pill);
   transition: width 0.3s ease;
 }
+
+/* Spinner — used for single-lead processing and the current bulk row */
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(83, 58, 253, 0.25);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: sp-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+.spinner-sm { width: 13px; height: 13px; }
+.processing-row { display: flex; align-items: center; gap: 0.6rem; }
+
+/* Per-lead progress list — the team watches each lead score one after another */
+.bulk-progress-head { font-weight: 500; }
+.bulk-progress-list {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.bulk-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+}
+.bulk-progress-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+.bulk-progress-name { flex: 1; color: var(--ink); }
+.bulk-progress-state { color: var(--ink-secondary); font-size: 0.75rem; white-space: nowrap; }
+.bulk-progress-item.is-pending { opacity: 0.55; }
+.bulk-progress-item.is-processing .bulk-progress-name { font-weight: 600; }
+.bulk-progress-item.is-done .bulk-progress-icon,
+.bulk-progress-item.is-done .bulk-progress-state { color: #1e7d34; }
+.bulk-progress-item.is-failed .bulk-progress-icon,
+.bulk-progress-item.is-failed .bulk-progress-state { color: #c11855; }
 
 /* The native file input can't be styled consistently, so it's hidden and the
    whole label acts as the control (keeps click + keyboard activation). */
