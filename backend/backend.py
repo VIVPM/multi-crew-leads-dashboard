@@ -50,7 +50,7 @@ logger = logging.getLogger("backend")
 # Supabase
 # ---------------------------------------------------------------------------
 import httpx
-from supabase import create_client, ClientOptions
+from supabase import create_client, ClientOptions, acreate_client, AsyncClientOptions
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -91,6 +91,43 @@ supabase = create_client(
     SUPABASE_URL, SUPABASE_KEY,
     options=ClientOptions(httpx_client=httpx.Client(transport=_RetryStaleConnTransport())),
 )
+
+
+class _AsyncRetryStaleConnTransport(httpx.AsyncHTTPTransport):
+    """Async counterpart of _RetryStaleConnTransport, for supabase_async below —
+    same fix, same reasoning."""
+
+    _REPLAYABLE = frozenset({"GET", "HEAD", "OPTIONS"})
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await super().handle_async_request(request)
+        except httpx.RemoteProtocolError:
+            if request.method not in self._REPLAYABLE:
+                raise
+            logger.debug("Stale async Supabase connection on %s, retrying once", request.url.path)
+            return await super().handle_async_request(request)
+
+
+# Second client, async, used ONLY by the handful of hot read-only endpoints
+# that browsing/polling traffic hits hardest (GET /leads, GET /jobs/{id}).
+# Load testing found these degrade badly under concurrency because every sync
+# `def` route runs in FastAPI's thread pool (anyio's default is a hardcoded
+# 40 threads — not something this repo set), and each thread held for a
+# Supabase round-trip is real memory on a 512MB instance. A true async client
+# lets many of these reads be in flight as cheap suspended coroutines instead
+# of 1-thread-each. Deliberately NOT rolled out to every endpoint in one pass:
+# write/auth routes are unchanged here, so this stays a narrow, low-risk
+# slice rather than a whole-app rewrite (see the half-converted-is-worse-
+# than-not-converted warning in git history / conversation — mixing a sync
+# blocking call into an async def freezes the entire event loop, not just
+# that request, so nothing here should be copied into a route without also
+# switching every blocking call inside it).
+#
+# Created in an async startup hook (registered below, once `app` exists), not
+# at module import time: acreate_client must be awaited, and there is no
+# running event loop yet at import time.
+supabase_async = None
 
 SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 if not os.getenv("SECRET_KEY"):
@@ -135,6 +172,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _init_async_supabase():
+    global supabase_async
+    supabase_async = await acreate_client(
+        SUPABASE_URL, SUPABASE_KEY,
+        options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
+    )
 
 # Optional: HTTP-layer tracing (every endpoint, not just LLM calls) to
 # Grafana Cloud only — Langfuse (see worker.py) stays focused on CrewAI/
@@ -460,7 +506,7 @@ def _get_owned_lead(lead_id: str, user_id: str) -> dict:
 
 
 @app.get("/leads/{user_id}")
-def get_leads(
+async def get_leads(
     user_id: str,
     auth_user: str = Depends(current_user),
     limit: int = Query(500, ge=1, le=500),
@@ -473,8 +519,8 @@ def get_leads(
     # paged UI can be added later without another backend change.
     if user_id != auth_user:
         raise HTTPException(status_code=403, detail="Forbidden.")
-    resp = (
-        supabase.table("leads")
+    resp = await (
+        supabase_async.table("leads")
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
@@ -672,9 +718,9 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
 
 
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str, user_id: str = Depends(current_user)):
-    resp = (
-        supabase.table("jobs")
+async def get_job(job_id: str, user_id: str = Depends(current_user)):
+    resp = await (
+        supabase_async.table("jobs")
         .select("id,user_id,status,results,error,created_at")
         .eq("id", job_id)
         .execute()
