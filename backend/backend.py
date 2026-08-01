@@ -516,6 +516,17 @@ def _get_owned_lead(lead_id: str, user_id: str) -> dict:
     return resp.data[0]
 
 
+# Columns the leads list actually renders. Deliberately excludes the two heavy
+# ones — scoring_result (~850 chars) and email_draft (~900 chars) — which
+# together were ~78% of the payload but are only shown once a user expands a
+# single lead. Those come from GET /leads/{lead_id}/detail instead. Measured on
+# a 50-lead account: ~112KB per list load down to ~25KB.
+LEAD_LIST_COLUMNS = (
+    "id,name,job_title,company,email,use_case,industry,location,source,"
+    "score,created_at,email_sent_at"
+)
+
+
 @app.get("/leads/{user_id}")
 async def get_leads(
     user_id: str,
@@ -532,13 +543,33 @@ async def get_leads(
         raise HTTPException(status_code=403, detail="Forbidden.")
     resp = await (
         supabase_async.table("leads")
-        .select("*")
+        .select(LEAD_LIST_COLUMNS)
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
         .execute()
     )
     return resp.data or []
+
+
+@app.get("/leads/{lead_id}/detail")
+async def get_lead_detail(lead_id: str, user_id: str = Depends(current_user)):
+    """The heavy fields for one lead, fetched when its card is expanded.
+
+    Two path segments, so this does not collide with the one-segment
+    GET /leads/{user_id} list route above.
+    """
+    resp = await (
+        supabase_async.table("leads")
+        .select("id,user_id,scoring_result,email_draft")
+        .eq("id", lead_id)
+        .execute()
+    )
+    if not resp.data or str(resp.data[0].get("user_id")) != user_id:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    row = resp.data[0]
+    row.pop("user_id", None)
+    return row
 
 
 @app.post("/leads")

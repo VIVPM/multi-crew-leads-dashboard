@@ -175,16 +175,38 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [showAnalysis, setShowAnalysis] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [editingEmail, setEditingEmail] = useState(false)
-  const [emailDraft, setEmailDraft] = useState(lead.email_draft || '')
+  const [emailDraft, setEmailDraft] = useState('')
   const [savingEmail, setSavingEmail] = useState(false)
   const [sending, setSending] = useState(false)
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [sentMsg, setSentMsg] = useState(null)
+  // scoring_result and email_draft are ~78% of a lead row, and are only shown
+  // here, so the list endpoint no longer sends them — they're fetched the
+  // first time this card is expanded.
+  const [detail, setDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
   const isBorderline =
     lead.score != null && lead.score >= BORDERLINE_LOW && lead.score <= BORDERLINE_HIGH
 
-  useEffect(() => { setEmailDraft(lead.email_draft || '') }, [lead.email_draft])
+  // NOTE: detailLoading must NOT be a dependency here. Setting it would
+  // re-run this effect, and the cleanup below would flip `cancelled` on the
+  // request that is still in flight — leaving the card stuck on "Loading…"
+  // forever. `detail` alone is the right guard against refetching.
+  useEffect(() => {
+    if (!open || detail) return
+    let cancelled = false
+    setDetailLoading(true)
+    api('GET', `/leads/${lead.id}/detail`)
+      .then(d => {
+        if (cancelled) return
+        setDetail(d)
+        setEmailDraft(d.email_draft || '')
+      })
+      .catch(e => { if (!cancelled) setErr(friendlyError(e)) })
+      .finally(() => { if (!cancelled) setDetailLoading(false) })
+    return () => { cancelled = true }
+  }, [open, detail, lead.id])
 
   async function handleDelete() {
     setShowDeleteConfirm(false)
@@ -205,6 +227,9 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
     try {
       await api('PUT', `/leads/${lead.id}`, { email_draft: emailDraft })
       setEditingEmail(false)
+      // The list response no longer carries email_draft, so refreshing it alone
+      // would drop the edit from view — keep the fetched detail in sync here.
+      setDetail(d => ({ ...(d || {}), email_draft: emailDraft }))
       onRefresh()
     } catch (e) {
       setErr(friendlyError(e))
@@ -251,7 +276,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
               <strong>Borderline ({lead.score}).</strong> This sits within a few points of
               the {EMAIL_THRESHOLD} cutoff, and re-scoring the same lead moves the number by
               a few points — so whether an email gets drafted is partly luck of the run.
-              {lead.email_draft
+              {detail?.email_draft
                 ? ' An email was drafted; read it before sending.'
                 : ' No email was drafted — if this lead looks worth it, use Edit → Save and process, or write to them directly.'}
             </div>
@@ -279,14 +304,16 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
             ) : null)}
           </div>
 
-          {lead.scoring_result && (
+          {detailLoading && <p className="muted">Loading scoring result and email draft…</p>}
+
+          {detail?.scoring_result && (
             <div className="lead-section">
               <div className="lead-section-title">Scoring result</div>
-              <pre className="lead-json">{JSON.stringify(lead.scoring_result, null, 2)}</pre>
+              <pre className="lead-json">{JSON.stringify(detail.scoring_result, null, 2)}</pre>
             </div>
           )}
 
-          {lead.email_draft && (
+          {detail?.email_draft && (
             <div className="lead-section">
               <div className="lead-section-header">
                 <div className="lead-section-title">Email draft</div>
@@ -320,7 +347,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
                     </button>
                     <button
                       className="btn btn-sm btn-outline"
-                      onClick={() => { setEditingEmail(false); setEmailDraft(lead.email_draft || '') }}
+                      onClick={() => { setEditingEmail(false); setEmailDraft(detail?.email_draft || '') }}
                       disabled={savingEmail}
                     >
                       Cancel
@@ -328,7 +355,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
                   </div>
                 </>
               ) : (
-                <pre className="lead-email">{lead.email_draft}</pre>
+                <pre className="lead-email">{detail.email_draft}</pre>
               )}
             </div>
           )}
