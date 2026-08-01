@@ -296,6 +296,48 @@ def _clear_login_failures(username: str) -> None:
     supabase.table("login_failures").delete().eq("username", username).execute()
 
 
+# Sign-up abuse guard, keyed by client IP: caps how many accounts one network
+# can create per window. Each account carries its own daily lead credits, so
+# without this someone could farm free credits by scripting sign-ups.
+#
+# Supabase-backed, same as the login lockout above and for the same reason —
+# the limit holds across API instances, not just per-process, so it survives a
+# restart and a horizontal scale-out. One row per created account; the endpoint
+# counts rows in the last SIGNUP_WINDOW_S. Keyed by IP (a network) rather than
+# username (an identity) because that's the thing being rate-limited here.
+SIGNUP_MAX_PER_IP = int(os.getenv("SIGNUP_MAX_PER_IP", "10"))  # accounts per window
+SIGNUP_WINDOW_S = int(os.getenv("SIGNUP_WINDOW_S", "3600"))    # 1 hour
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP. Behind Render (and most PaaS proxies) the real
+    client is the first entry in X-Forwarded-For; request.client.host would just
+    be the proxy. Spoofable if the app is ever reached directly instead of
+    through the proxy, so this is an abuse speed bump, not a hard identity."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _recent_signup_count(ip: str) -> int:
+    """How many accounts this IP has created in the last SIGNUP_WINDOW_S.
+    Mirrors _recent_failure_count for login."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=SIGNUP_WINDOW_S)).isoformat()
+    resp = (
+        supabase.table("signup_attempts")
+        .select("id", count="exact")
+        .eq("ip", ip)
+        .gte("created_at", cutoff)
+        .execute()
+    )
+    return resp.count or 0
+
+
+def _record_signup_attempt(ip: str) -> None:
+    supabase.table("signup_attempts").insert({"ip": ip}).execute()
+
+
 # =============================================================================
 # Request / Response models
 # =============================================================================
@@ -362,7 +404,13 @@ class EmailSettingsRequest(BaseModel):
 # =============================================================================
 
 @app.post("/auth/signup", response_model=LoginResponse)
-def signup(req: SignupRequest):
+def signup(req: SignupRequest, request: Request):
+    ip = _client_ip(request)
+    if _recent_signup_count(ip) >= SIGNUP_MAX_PER_IP:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many sign-ups from your network. Please try again later.",
+        )
     existing = supabase.table("users").select("id").eq("username", req.username).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Username already exists.")
@@ -377,6 +425,10 @@ def signup(req: SignupRequest):
         raise HTTPException(status_code=500, detail="Signup failed. Please try again.")
     row = created.data[0]
     uid = str(row["id"])
+    # Count this account against the IP's window only once it actually exists —
+    # failed attempts (dup username, etc.) create no account and no credits, so
+    # they don't consume the budget. This is what the limit above reads back.
+    _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
     # Sign them straight in, same response shape as /auth/login — there's no
     # reason to make someone re-type the credentials they just chose. The
