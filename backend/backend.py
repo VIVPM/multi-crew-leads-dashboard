@@ -843,7 +843,7 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
 async def get_job(job_id: str, user_id: str = Depends(current_user)):
     resp = await (
         supabase_async.table("jobs")
-        .select("id,user_id,status,results,error,created_at")
+        .select("id,user_id,status,results,error,created_at,progress")
         .eq("id", job_id)
         .execute()
     )

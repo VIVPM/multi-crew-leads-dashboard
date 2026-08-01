@@ -143,20 +143,24 @@ export default function App() {
     }
   }, [userId])
 
-  // Poll the processing job until it finishes; returns the job row
-  async function waitForJob(jobId) {
+  // Poll the processing job until it finishes; returns the job row. onProgress,
+  // if given, is called each poll with the job's {stage: state} progress map so
+  // the caller can render a live step tracker.
+  async function waitForJob(jobId, onProgress) {
     const deadline = Date.now() + JOB_DEADLINE_MS
     while (Date.now() < deadline) {
       await sleep(JOB_POLL_MS)
       const job = await api('GET', `/jobs/${jobId}`)
+      onProgress?.(job.progress)
       if (job.status === 'done') return job
       if (job.status === 'failed') throw new Error(job.error || 'Processing failed.')
     }
     throw new Error('Processing is taking longer than expected — refresh the page later to see results.')
   }
 
-  // Save lead then enqueue processing — called by LeadForm
-  async function handleSaveAndProcess(fields, setStatus, forceRefresh = false) {
+  // Save lead then enqueue processing — called by LeadForm. setSteps (if given)
+  // receives the live {stage: state} progress map for the step tracker.
+  async function handleSaveAndProcess(fields, setStatus, forceRefresh = false, setSteps) {
     if (!companyContext?.trim()) {
       setShowIcpDialog(true)
       return
@@ -176,13 +180,14 @@ export default function App() {
     }
 
     setStatus('processing')
+    setSteps?.(null)
     let job
     try {
       const { job_id } = await api('POST', '/leads/process', {
         leads: [savedLead],
         force_refresh: forceRefresh,
       })
-      job = await waitForJob(job_id)
+      job = await waitForJob(job_id, setSteps)
     } catch (e) {
       // Processing failed — lead was saved, still refresh so it appears in the table
       await fetchLeads()

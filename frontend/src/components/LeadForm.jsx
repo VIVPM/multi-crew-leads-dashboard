@@ -13,6 +13,61 @@ const USE_CASE_HINT =
   'The crew uses it to judge how well your product fits this lead, and to explain ' +
   'in the drafted email why your product suits that goal.'
 
+// The pipeline's stages, in the order they run (company research feeds scoring,
+// so it goes first). The worker reports each as its agent's task finishes; keys
+// match the stage names in pipeline.py's on_stage calls.
+const PROCESS_STEPS = [
+  ['company', 'Company research & cultural fit'],
+  ['personal_research', 'Personal research'],
+  ['scoring', 'Lead scoring'],
+  ['email', 'Email draft'],
+]
+
+// Renders the live step tracker from the job's {stage: state} progress map.
+// A step is done/cached once the worker reports it; the first not-yet-reported
+// step is the one currently running. Reuses the bulk-import progress styling.
+function StepTracker({ steps }) {
+  const p = steps || {}
+  const currentIdx = PROCESS_STEPS.findIndex(([key]) => !p[key])
+  const doneCount = PROCESS_STEPS.filter(([key]) => p[key] === 'done' || p[key] === 'cached').length
+  const pct = Math.round((doneCount / PROCESS_STEPS.length) * 100)
+  return (
+    <div className="alert alert-info bulk-progress">
+      <div className="bulk-progress-head">
+        Processing this lead — keep this tab open. {doneCount} of {PROCESS_STEPS.length} stages done.
+      </div>
+      <div className="bulk-progress-track">
+        <div className="bulk-progress-bar" style={{ width: `${pct}%` }} />
+      </div>
+      <ul className="bulk-progress-list">
+        {PROCESS_STEPS.map(([key, label], i) => {
+          const state = p[key]
+          const status =
+            state === 'done' || state === 'cached' ? 'done'
+            : i === currentIdx ? 'processing'
+            : 'pending'
+          return (
+            <li key={key} className={`bulk-progress-item is-${status}`}>
+              <span className="bulk-progress-icon">
+                {status === 'processing'
+                  ? <span className="spinner spinner-sm" aria-hidden="true" />
+                  : status === 'done' ? '✓' : '○'}
+              </span>
+              <span className="bulk-progress-name">{label}</span>
+              <span className="bulk-progress-state">
+                {state === 'cached' ? 'cached'
+                  : status === 'done' ? 'done'
+                  : status === 'processing' ? 'working…'
+                  : 'queued'}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 const INDUSTRIES = [
   'Technology & Software',
   'Finance & Banking',
@@ -64,6 +119,7 @@ export default function LeadForm({ lead, onSave, onCancel }) {
   }))
   const [errors, setErrors] = useState([])
   const [status, setStatus] = useState(null) // 'saving' | 'processing' | null
+  const [steps, setSteps] = useState(null)   // live {stage: state} progress map
   const [forceRefresh, setForceRefresh] = useState(false)
 
   function set(key, val) {
@@ -78,7 +134,7 @@ export default function LeadForm({ lead, onSave, onCancel }) {
     if (errs.length) { setErrors([errs[0]]); return }
     setErrors([])
     try {
-      await onSave(fields, setStatus, forceRefresh)
+      await onSave(fields, setStatus, forceRefresh, setSteps)
     } catch (err) {
       setErrors([err.message || String(err)])
       setStatus(null)
@@ -92,13 +148,6 @@ export default function LeadForm({ lead, onSave, onCancel }) {
       {errors.map((e, i) => (
         <div key={i} className="alert alert-error">{e}</div>
       ))}
-
-      {status === 'processing' && (
-        <div className="alert alert-info processing-row">
-          <span className="spinner" aria-hidden="true" />
-          <span>The AI crew is researching this lead, scoring it, and drafting an email — this can take a few minutes.</span>
-        </div>
-      )}
 
       <form onSubmit={handleSubmit}>
         <div className="form-grid">
@@ -172,6 +221,8 @@ export default function LeadForm({ lead, onSave, onCancel }) {
           </button>
         </div>
       </form>
+
+      {status === 'processing' && <StepTracker steps={steps} />}
     </div>
   )
 }

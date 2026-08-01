@@ -296,6 +296,7 @@ def _score_one_lead(
     cache_get: Optional[Callable[[str], Optional[dict]]],
     cache_set: Optional[Callable[[str, str, dict], None]],
     force_refresh: bool,
+    on_stage: Optional[Callable[[str, str], None]] = None,
 ):
     """Returns (_CombinedScoreOutput, cache_hit: bool) for one lead."""
     company_key = normalize_company_key(lead.get("company", ""), our_company_context)
@@ -303,6 +304,11 @@ def _score_one_lead(
 
     company_output = None
     if cached:
+        # No company crew runs, so its task_callback never fires — report the
+        # cache hit ourselves so the progress tracker shows it instead of a
+        # step stuck on "queued".
+        if on_stage:
+            on_stage("company", "cached")
         company_summary = format_company_summary(cached)
         cache_hit = True
     else:
@@ -330,6 +336,7 @@ def _process_batch(
     cache_get: Optional[Callable[[str], Optional[dict]]],
     cache_set: Optional[Callable[[str, str, dict], None]],
     force_refresh: bool,
+    on_stage: Optional[Callable[[str, str], None]] = None,
 ):
     """Runs entirely synchronously — called via asyncio.to_thread so it
     doesn't block the event loop. Returns (scores, emails, cache_hits)."""
@@ -339,6 +346,7 @@ def _process_batch(
         with lead_context(lead.get("id", i)):
             score_output, cache_hit = _score_one_lead(
                 lead, crews, our_company_context, cache_get, cache_set, force_refresh,
+                on_stage,
             )
         scores.append(score_output)
         cache_hits.append(cache_hit)
@@ -365,6 +373,7 @@ async def process_leads(
     cache_set: Optional[Callable[[str, str, dict], None]] = None,
     force_refresh: bool = False,
     max_retries: int = 3,
+    on_stage: Optional[Callable[[str, str], None]] = None,
 ):
     """
     Score and email-draft all leads in `leads`.
@@ -393,12 +402,34 @@ async def process_leads(
     task_timing: List[Dict] = []
     start_ref: List[float] = [0.0]
 
+    # Which pipeline stage each agent belongs to, taken from the crews' own
+    # agent objects (not hardcoded role strings) so it can't drift from the
+    # YAML. output.agent in the callback is that same agent's role.
+    # Keys are stripped: the YAML uses folded scalars (`role: >`), so every role
+    # carries a trailing newline, and a mismatch here would silently freeze the
+    # progress tracker rather than fail loudly.
+    stage_by_role = {
+        crews["company"].agents[0].role.strip(): "company",
+        crews["personal_scoring"].agents[0].role.strip(): "personal_research",
+        crews["personal_scoring"].agents[1].role.strip(): "scoring",
+        crews["email"].agents[0].role.strip(): "email",
+    }
+
     def _timing_cb(output):
         agent_name = (
             output.agent if isinstance(output.agent, str)
             else getattr(output.agent, "role", str(output.agent))
         )
         task_timing.append({"agent": agent_name, "ts": time.time()})
+        # A task finishing means its stage is done — report it for the live
+        # progress tracker. Company-on-cache-hit is reported from _score_one_lead
+        # instead (that crew never runs), and a skipped email simply never fires.
+        if on_stage:
+            stage = stage_by_role.get(agent_name.strip())
+            if stage:
+                on_stage(stage, "done")
+            else:
+                logger.warning("No progress stage mapped for agent %r", agent_name)
 
     for crew in crews.values():
         crew.task_callback = _timing_cb
@@ -406,7 +437,7 @@ async def process_leads(
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
 
     def _run_sync():
-        return _process_batch(leads, crews, context_text, cache_get, cache_set, force_refresh)
+        return _process_batch(leads, crews, context_text, cache_get, cache_set, force_refresh, on_stage)
 
     for attempt in range(1, max_retries + 1):
         try:

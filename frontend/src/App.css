@@ -622,6 +622,16 @@ body {
   color: var(--on-primary);
 }
 
+/* .alert is display:flex (row) for icon+text alerts; the progress panel reuses
+   .alert for styling but needs its header, bar, and step list stacked and
+   full-width, so override the row layout here. */
+.bulk-progress {
+  flex-direction: column;
+  align-items: stretch;
+  /* sits directly under the form's action buttons — keep it off them */
+  margin-top: 1.1rem;
+}
+
 .bulk-progress-track {
   margin-top: 0.6rem;
   height: 6px;

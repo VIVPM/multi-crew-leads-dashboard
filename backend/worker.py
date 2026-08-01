@@ -305,12 +305,27 @@ async def run_job(job: dict) -> list:
     # pipeline.py does its own {"lead_data": lead} wrapping per kickoff call
     # (it needs the raw dict itself for cache keys / correlation IDs)
     start = time.time()
+
+    # Live progress for the UI: pipeline.py calls this as each agent's task
+    # finishes; we stamp the running stage map onto the job row so the frontend
+    # poll can render a step tracker. One lead per job in practice, so stages
+    # don't interleave; last state per stage wins (a retry re-emits the same
+    # keys harmlessly). Runs in the pipeline's worker thread — the sync client
+    # write is fine there, it doesn't touch the event loop.
+    # ponytail: one small UPDATE per task (~3-4/job), trivial beside the LLM calls.
+    progress: dict = {}
+
+    def _on_stage(stage: str, state: str) -> None:
+        progress[stage] = state
+        supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
+
     scores, emails, agent_times, cache_hits = await process_leads(
         leads, job["gemini_api_key"], job["tavily_api_key"],
         our_company_context=job.get("our_company_context") or "",
         cache_get=cache_get_company,
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
+        on_stage=_on_stage,
     )
     elapsed = round(time.time() - start, 1)
     return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
