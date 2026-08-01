@@ -168,6 +168,17 @@ class _CombinedScoreOutput:
         self._scoring_output = scoring_output
         self._company_output = company_output
 
+    # The two crews are separate kickoff() calls, each with its own real
+    # token_usage. Exposed individually so the analysis breakdown can attribute
+    # tokens per crew instead of splitting one merged total across both.
+    @property
+    def scoring_output(self):
+        return self._scoring_output
+
+    @property
+    def company_output(self):
+        return self._company_output
+
     @property
     def pydantic(self):
         return self._scoring_output.pydantic

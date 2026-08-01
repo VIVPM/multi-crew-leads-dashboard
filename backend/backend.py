@@ -900,8 +900,9 @@ def _persist_one_lead(
         update_payload["email_draft"] = email_draft.raw
     supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
 
-    # Token usage is reported per crew, not per agent; the per-agent rows
-    # below split the crew total evenly — estimates, not measurements.
+    # CrewAI reports token usage per crew, not per task, so per-agent rows are
+    # exact only where a crew has a single agent (company, email); the scoring
+    # crew's two agents split its own measured total. See crew_buckets below.
     score_usage = score_obj.token_usage
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
@@ -920,13 +921,32 @@ def _persist_one_lead(
     )
     cost_per_token = (total_cost / total_tokens) if total_tokens else 0.0
 
-    score_tasks = score_obj.tasks_output or []
     email_tasks = (email_draft.tasks_output if email_draft else None) or []
-    per_score = score_tokens // len(score_tasks) if score_tasks else 0
-    per_email = email_tokens // len(email_tasks) if email_tasks else 0
+
+    # Attribute tokens per crew, not across all crews at once. Each crew is its
+    # own kickoff() with its own measured token_usage, so a crew's number is
+    # real; only agents *within* one crew share an even split. That makes the
+    # company and email crews (one agent each) exact, and leaves the estimate
+    # confined to the two agents of the scoring crew. Lumping them together used
+    # to give every agent an identical number regardless of actual usage.
+    crew_buckets = []
+    if score_obj.company_output is not None:
+        company_out = score_obj.company_output
+        crew_buckets.append((
+            company_out.tasks_output or [],
+            getattr(company_out.token_usage, "total_tokens", 0) or 0,
+        ))
+    scoring_out = score_obj.scoring_output
+    crew_buckets.append((
+        scoring_out.tasks_output or [],
+        getattr(scoring_out.token_usage, "total_tokens", 0) or 0,
+    ))
+    if email_tasks:
+        crew_buckets.append((email_tasks, email_tokens))
 
     agents_data = []
-    for tasks, per_tokens in ((score_tasks, per_score), (email_tasks, per_email)):
+    for tasks, crew_tokens in crew_buckets:
+        per_tokens = crew_tokens // len(tasks) if tasks else 0
         for t in tasks:
             name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
             agents_data.append({

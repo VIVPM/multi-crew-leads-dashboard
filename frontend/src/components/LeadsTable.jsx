@@ -92,7 +92,9 @@ function AnalysisModal({ leadId, onClose }) {
 
               <h4 className="analysis-section-title">Agent Performance Breakdown</h4>
               <p className="muted" style={{ fontSize: '0.8rem' }}>
-                Token usage is reported per crew; per-agent tokens and cost are even-split estimates.
+                Token usage is measured per crew. Company research and Email each run as a
+                single-agent crew, so those rows are exact; Personal research and Lead scoring
+                share their crew's total, so those two are even-split estimates.
               </p>
               <table className="analysis-table">
                 <thead>
@@ -361,11 +363,12 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
           )}
 
           <div className="lead-card-actions">
-            {lead.score == null ? (
-              <button className="btn btn-sm btn-outline" onClick={() => onEdit(lead)}>Edit</button>
-            ) : (
-              <span className="badge badge-green">Processed</span>
-            )}
+            {/* Edit stays available after processing: re-scoring a borderline
+                lead can cross the cutoff on the next run (see the borderline
+                note above, which tells the user to do exactly this). The
+                "Processed" badge sits first, with Edit beside it. */}
+            {lead.score != null && <span className="badge badge-green">Processed</span>}
+            <button className="btn btn-sm btn-outline" onClick={() => onEdit(lead)}>Edit</button>
             <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>
               {deleting ? 'Deleting…' : 'Delete'}
             </button>
