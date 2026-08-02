@@ -11,7 +11,7 @@ ignore = [
     #   pipeline.py    sets CREWAI_DISABLE_TELEMETRY before crewai is imported
     #   worker.py      installs the OTel instrumentors before crewai/litellm,
     #                  since the litellm instrumentor patches at import time
-    #   backend.py, load_test*.py, test_crews.py, scoring_*.py
+    #   backend.py, load_test*.py, scoring_*.py
     #                  call load_dotenv() before importing anything that reads
     #                  os.environ at module scope
     # Moving these imports up would silently break tracing and config loading,

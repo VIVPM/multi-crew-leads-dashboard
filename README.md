@@ -246,7 +246,6 @@ Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit a
 | Unit tests (no network) | `python tests/test_security.py` | ✅ |
 | CSV parser (18 checks) | `cd frontend && npm test` | ✅ |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
-| Crew smoke test | `python backend/test_crews.py` | — (real LLM calls) |
 | Red teaming | `python backend/adversarial_testing.py` | — (real LLM calls) |
 
 Red teaming covers fake companies, prompt injection, contradictory data and biased framing. Latest: **6/6 passed** (`adversarial_results/`).
