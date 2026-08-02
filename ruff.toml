@@ -22,6 +22,5 @@ ignore = [
 [lint.per-file-ignores]
 # Test and eval harnesses print long measured-vs-expected lines; wrapping them
 # hurts readability more than the width does.
-"backend/scoring_eval.py" = ["E501"]
 "backend/load_test.py" = ["E501"]
 "backend/load_test_api.py" = ["E501"]

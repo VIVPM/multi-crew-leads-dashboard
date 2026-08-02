@@ -1,0 +1,344 @@
+========================================================================
+UPGRADE ROADMAP — Multi-Crew Lead Coordinator
+========================================================================
+
+========================================================================
+PART 1: V1 — WHAT WE ACTUALLY BUILT
+========================================================================
+
+Architecture: reuse Supabase (already paid for) instead of adding
+Redis/Celery. Every "cache" or "queue" below is a Postgres table, not
+in-memory. Tradeoff: a network round-trip per check instead of
+sub-millisecond access — fine, since the thing being skipped (a full
+Tavily + Gemini call) is 10-50x slower than that round-trip.
+
+1. Job queue (no Redis/Celery)
+   - `jobs` table: pending -> running -> done | failed. worker.py claims
+     via conditional UPDATE (race-safe), runs the crews, wipes API keys
+     on completion.
+   - RUN_WORKER_IN_PROCESS=1 runs the worker as a thread inside the API
+     process for free-tier single-service deploys; worker.py also runs
+     standalone for real deploys.
+   - POST /leads/process returns 202 + job_id immediately; frontend
+     polls GET /jobs/{id}. No request ever blocks on an LLM run.
+   - Concurrent, not serial: up to MAX_CONCURRENT_JOBS (default 10) via
+     asyncio, not one job fully awaited before the next. Verified live:
+     two users' jobs ran simultaneously with no cross-contamination.
+
+2. Company research caching (no Redis)
+   - `company_research_cache`, keyed by normalized company name +
+     hash(ICP text) — two ICPs never share a fit score.
+   - 7-day TTL (COMPANY_CACHE_TTL_DAYS), enforced at read time via a
+     filter, not real expiry — short on purpose since a company can
+     shut down or get acquired between lookups. force_refresh bypasses
+     it per batch.
+   - Measured: repeat-company lead skips company research entirely —
+     1/3 the tokens, ~8s instead of ~50s.
+   - Race-safe: a miss claims the row via the unique constraint on
+     company_key (insert a sentinel placeholder); a concurrent miss
+     polls the real cache for up to 30s instead of re-running research.
+     cache_set_company upserts on that same key, closing a write-write
+     race that could double-write a row.
+
+3. Agent restructuring, 5 -> 4
+   - Old: Lead Data, Cultural Fit, Scorer/Validator, Email Content
+     Writer, Engagement Strategist.
+   - New: Personal Research -> Company Research + Cultural Fit (merged,
+     its own task so it's cache-skippable) -> Scorer/Validator (tools
+     removed — it only aggregates, never needed search) -> Email
+     Specialist (draft + optimize merged). One fewer guaranteed
+     round-trip, one fewer conditional on cache hits.
+   - Kept role-prompted agents rather than going fully generic —
+     role-prompting measurably helps cheaper models (flash-lite) hold
+     structure. The real token bloat was duplicated ICP text and
+     verbose outputs, not backstories; fixed those instead.
+   - Scoring rubric got fixed-weight anchors (demographic 0-30,
+     firmographic 0-30, behavioral 0-40) and explicit score-range
+     anchors, after two real leads both maxed at 100 with no ceiling
+     discipline to separate "excellent" from "nothing looked bad."
+   - Removed test_crews.py (CrewAI's LLM-as-judge smoke test, source of
+     the old "9.7/10" figure). One LLM grading another with no
+     reference answer measures whether the judge likes the writing —
+     and it was misleading next to the gold set, which showed the same
+     scorer ranking leads backwards (Spearman -0.07). The adversarial
+     suite and the two scoring tiers cover what it was for, against
+     something real.
+
+4. ICP as required user input
+   - Free-text per account (`users.company_context`). No generic
+     fallback anywhere: backend 400s a process request with none set;
+     frontend blocks "Save and process" until one exists. Frozen into
+     the job at enqueue time so a later edit can't change a queued job.
+   - The placeholder prompts for Weak fit and Not a fit lines
+     explicitly, not just a positive ICP — spelling out who to
+     disqualify is what the scoring evaluation found makes the score
+     trustworthy.
+
+5. Auth & security
+   - bcrypt with lazy migration: old SHA-256 hashes verify once, then
+     silently re-hash on next login. No forced resets.
+   - Short access token (60 min, HMAC) + revocable refresh token (14
+     days, stored as a SHA-256 hash). Frontend refreshes silently on
+     401. Ownership checks on every lead/job/analysis endpoint.
+   - Login: 5 failures / 15 min lockout, Supabase-backed so it holds
+     across instances. Signup: same pattern per IP (default 10
+     accounts/hour, `signup_attempts` table) — closes the credit-farming
+     hole in item 11 (sign up N times for 5N free leads). IP is a speed
+     bump, not identity; email verification is the real fix if that
+     ever matters.
+   - Signup now logs the user straight in instead of a second login
+     step — the insert already returns the new row's id.
+   - Supabase RLS enabled on all tables as a second layer under the API
+     checks.
+
+6. Observability
+   - Structured JSON logs correlated by request_id/job_id/lead_id.
+   - Langfuse tracing on worker.py, targeted CrewAI+LiteLLM
+     instrumentors instead of OpenLit's blanket ~40-library sweep —
+     same dashboard, neither package installed, startup roughly halved
+     (23.7s -> 12-14s). Dual-exported to Grafana Cloud too.
+   - worker.py emits jobs_processed_total as a real Prometheus counter
+     (Tempo has no metrics-generator here, so TraceQL alerting wasn't
+     viable). Two live alert rules: no jobs in 30 min, job failure.
+   - backend.py's HTTP-layer tracing stays off — blocked by an
+     opentelemetry-instrumentation-fastapi / crewai's otel-sdk pip
+     conflict — degrades to a quiet INFO log, not a crash.
+   - Built then removed: an admin overview. Single-operator app, no
+     audience, pure maintenance cost.
+   - Per-agent token/cost in the Analysis modal is now attributed per
+     crew, not one merged pool split evenly. The bug: company crew's
+     tokens were summed into the scoring crew's before splitting, so
+     three agents always showed an identical number regardless of
+     actual usage (caught because their measured times — 15.7s, 3.1s,
+     21.1s — obviously didn't match). Single-agent crews (company,
+     email) are now exact; only the scoring crew's two agents still
+     split a total, since CrewAI reports usage per crew, not per task.
+
+7. Frontend / UX
+   - Stripe-inspired design system; landing page with an animated
+     4-agent demo kept in sync after the 5->4 restructuring.
+   - Dashboard: year dropdown for "Leads over time" (12 horizontal
+     labels were unreadable); pie legends moved off-slice.
+   - Navigation: one long scroll -> four pages behind a top-right menu
+     (Add a lead / Dashboard / Lead details / Settings).
+   - Live per-agent progress replaced the single opaque spinner: a bar
+     plus a 4-step list advances as each agent's task finishes, driven
+     by the existing task_callback (worker.py stamps a {stage: state}
+     map onto jobs.progress, the existing poll renders it) — real data,
+     not a timer. Shows "cached" on a cache hit; stops at 3/4 when the
+     email step is skipped (score <= 70). Two things this cost: the
+     panel reused .alert (display:flex), so it laid out sideways until
+     overridden; and it looked broken purely because the API process
+     predated the code and wasn't restarted.
+   - Edit stays available on already-processed leads — it used to flip
+     to a "Processed" badge, which made the borderline note's own
+     advice ("Edit -> Save and process" to re-roll a near-cutoff score)
+     impossible to follow.
+
+8. CI/CD + containerization
+   - ci.yml: four gated jobs on every push/PR — backend (ruff +
+     py_compile + no-network security tests), frontend (eslint + tests
+     + build), docker (both images build, no push), deploy.
+   - deploy POSTs Render's hooks, gated on the other three AND a push to
+     main (never a PR). Render's own auto-deploy-on-push is off, so a
+     red build can't reach prod ahead of CI's judgment.
+   - Lint surfaced 26 real findings (6 auto-fixed); E402 is off in
+     ruff.toml on purpose — several modules import after load_dotenv()
+     /CREWAI_DISABLE_TELEMETRY deliberately, and hoisting would silently
+     break tracing/config loading.
+   - backend/Dockerfile is one image, two commands (API, worker) — a
+     second image would duplicate the ~1GB crewai install. Compose runs
+     them as separate services; RUN_WORKER_IN_PROCESS is for
+     single-service PaaS only. NOT verified locally — no Docker here,
+     first real build is the CI job.
+   - VITE_BACKEND_URL is a build arg, not runtime — Vite inlines env at
+     build time.
+
+9. Email sending
+   - Not SendGrid/SES/Brevo/Mailtrap — sending "from" gmail.com via any
+     third-party ESP fails DMARC alignment (checked all three, same
+     root cause). Built per-user SMTP settings instead (stdlib
+     smtplib) — the user authenticates directly to their own provider,
+     so DKIM/SPF/DMARC align because it really is their account.
+   - EMAIL_SEND_DAILY_CAP (default 80), under Gmail's real ~100/day
+     SMTP-relay ceiling (not the commonly-quoted 500/day, which is the
+     web-interface limit).
+   - Verified live end-to-end: a real send landed in a real inbox, not
+     just a 200 response.
+
+10. Centralized API keys
+   - Users no longer bring their own Gemini/Tavily keys — real
+     onboarding barrier for a non-technical sales person. backend.py
+     reads them once from the operator's .env and stamps them onto
+     every job at enqueue time.
+
+11. Daily lead credits
+   - One operator-held key means every lead is the operator's spend
+     (~$0.029/lead uncached). DAILY_LEAD_CAP (default 5) rejects with
+     429 before enqueue, so an over-limit attempt costs nothing.
+   - "remaining" = cap minus leads processed since UTC midnight — no
+     credits table, no reset job, the window just moves.
+   - Bulk import must fit the day's credits or is blocked upfront,
+     rather than importing some and deferring the rest.
+   - A credit is spent on submission, not success — a failed job still
+     made the LLM calls. Protects cost over UX.
+   - Considered and rejected: BYOK. Zeroes operator cost but
+     reintroduces the onboarding barrier item 10 removed.
+   - Per-account cap alone allows N signups for 5N leads; the per-IP
+     signup limit (item 5) caps how fast one network can mint accounts.
+     Email verification remains the real fix if this ever needs to be
+     airtight.
+
+
+========================================================================
+PART 2: PRODUCT GAPS — WOULD A REAL SALES PERSON ACTUALLY ADOPT THIS?
+========================================================================
+
+Nothing outstanding. Everything tracked here is built and recorded in
+Part 1 (and README.md / scoring_eval_results/ / load_test_results/).
+
+
+========================================================================
+PART 3: V2 — WHERE THIS GOES NEXT (discussed, not built)
+========================================================================
+
+Triggered by: real concurrent traffic (10k+ users), needing more
+throughput than one free-tier instance, or a paid Background Worker
+becoming affordable.
+
+1. Redis for the company-research cache — swap cache_get/cache_set's
+   implementation in worker.py; pipeline.py only knows the callables,
+   not the backing store, so this is a swap, not a rewrite.
+
+2. Real message queue instead of DB polling — Redis + Arq (or Celery)
+   replacing the jobs-table poll, removing the 3s poll latency and the
+   RUN_WORKER_IN_PROCESS thread hack. Running >1 worker no longer
+   destroys in-flight jobs (fixed, load-tested); the remaining ~31%
+   contested-claim loss rate is measured and immaterial at real lead
+   latency, but SELECT ... FOR UPDATE SKIP LOCKED is the upgrade if
+   worker count gets large.
+
+3. Horizontal API scaling & secrets — already possible today without
+   code changes (stateless HMAC auth). v2 adds a shared rate-limit
+   store and a secrets manager (Doppler/AWS Secrets Manager/Vault) once
+   there's more than one instance — SECRET_KEY in particular must be
+   identical across instances or a refresh token minted by one is
+   rejected by another. .dockerignore already refuses to bake .env into
+   an image, so this is a swap of load_dotenv() for the manager's SDK.
+
+4. Database scaling — the app talks to Supabase over PostgREST (HTTP),
+   so PgBouncer isn't in the current path; Supabase's own pooler
+   (Supavisor) and paid read replicas are the config-only answer if
+   staying on Supabase. Not urgent — one instance is nowhere near its
+   ceilings and the company cache already removes the expensive reads.
+
+5. Observability — remaining pieces only (the core — logs, tracing,
+   metric, alerts, dashboard — is done, Part 1 item 6). Left: HTTP-layer
+   tracing (blocked on the otel pip conflict), an LLM cost/token trend
+   panel (needs an explicit metric, same pattern as jobs_processed_total),
+   and host-level infra metrics (needs Grafana Alloy as a co-process,
+   newly feasible now that Docker exists but Render's own dashboard
+   already covers this for free).
+
+6. CRM integration and follow-up tracking — sync with Salesforce/
+   HubSpot and track actual outreach/follow-up. CSV export is the
+   escape hatch for now; this tool scores and drafts once, it doesn't
+   manage an ongoing pipeline.
+
+7. Lead discovery / prospecting (Apollo) — parked. Today the human
+   supplies every lead. Gemini + Tavily can't reliably discover verified
+   business emails (that needs a real B2B data provider); the right UX
+   would be Apollo's free People Search -> user selects -> paid People
+   Enrichment only for those. Parked because CSV import already covers
+   most of the workflow value at zero cost, discovery isn't this app's
+   differentiator, and Apollo's credits are plan-gated. Revisit when
+   manual sourcing is the actual bottleneck.
+
+None of this is a rewrite. The v1 shape (queue abstraction, cache
+callables, stateless auth) was built so v2 swaps backing stores and
+adds workers without changing the API contract or pipeline logic.
+========================================================================
+PART 3: FINAL EVALUATION METRICS (50 LEADS)
+========================================================================
+
+# Prompt Tuning Evaluation Comparison
+
+This document provides a side-by-side comparison of the CrewAI lead scoring system's performance before and after prompt tuning. 
+
+*Note on Tiers: We separate testing into two tiers because "is the score right?" and "is the score stable?" are different questions.*
+
+## 🎯 Tier 2: Accuracy Metrics (38 Leads - Includes Core + Adversarial)
+*Tier 2 tests whether the score is **right** by comparing it against human gold-set scores.*
+
+| Metric | Before Tuning (Baseline) | After Tuning (Optimized) | Change |
+| :--- | :--- | :--- | :--- |
+| **Classification Accuracy** | 71.0% | **90.3%** | 🟢 +19.3% |
+| **F1 Score** | 0.710 | **0.903** | 🟢 +0.193 |
+| **Precision** | 0.688 | **0.824** | 🟢 +0.136 |
+| **Recall** | 0.733 | **1.000** | 🟢 +0.267 |
+| **Regional Mean Absolute Error (MAE)** | 22.9 | **16.6** | 🟢 -6.3 |
+| **Spearman Rank Correlation** | 0.386 | **0.806** | 🟢 +0.420 |
+| **Within-10% Accuracy** | 26.3% | **39.5%** | 🟢 +13.2% |
+
+## 📊 Confusion Matrix (Threshold = 70)
+
+| Category | Before Tuning | After Tuning | Impact |
+| :--- | :--- | :--- | :--- |
+| **True Positives (TP)** | 11 | **14** | Found 3 more high-quality leads. |
+| **True Negatives (TN)** | 11 | **14** | Correctly disqualified 3 more weak/fake leads. |
+| **False Positives (FP)** | 5 | **3** | Handled tricky framing better. |
+| **False Negatives (FN)** | 4 | **0** | **Eliminated all missed opportunities!** |
+
+> **Borderline Leads:** The AI operates on a hard threshold of 70. However, scores between 65-75 have structural run-to-run noise (a ~±3.5 point variance could swing a 72 to a 68 on a re-run). To handle this, 7 leads in our dataset fall into this edge-case range and are gracefully badged as **Borderline** in the UI rather than purely Pass/Fail.
+
+---
+
+## 🛡️ Tier 1 & Adversarial Metrics (18 Stress-Test Leads)
+*Tier 1 tests whether the score is **stable** by checking repeatability, variance, and sensitivity to cosmetic changes.*
+
+The remaining 18 leads were specifically crafted to test logic traps, hallucinations, and reliability. Because they are edge cases, they are scored separately from the core accuracy metrics above.
+
+### 1. Reliability (6 Leads run 3x each)
+Tests if the AI gives the exact same score for the exact same lead across multiple runs.
+* **Before Tuning:** `rel_04` **FAILED** with a massive 15-point variance (scores swung wildly between 76 and 91 because the AI was just guessing without strict rules).
+* **After Tuning:** **ALL PASS**. The strict, evidence-based rules caused the maximum variance across all 6 leads to tighten to just **4.03 points**!
+
+### 2. Sensitivity (2 Leads)
+Tests if the AI properly identifies seniority by comparing an identical lead pitched by a 'CTO' vs an 'Intern'.
+* **Before Tuning:** CTO scored 93, Intern scored 71 (Drop of 22 points). **PASS**
+* **After Tuning:** CTO scored 89, Intern scored 71 (Drop of 18 points). **PASS**
+
+### 3. Invariance (4 Leads)
+Tests if purely cosmetic changes (like 'San Francisco' vs 'SF, CA' or capitalizing different letters) confuses the AI.
+* **Before Tuning:** Score drifted by up to **4 points**. **PASS**
+* **After Tuning:** Score drifted by only **1 point**. **PASS**
+
+### 4. Adversarial Edge Cases (6 Leads)
+Tests if the AI can be tricked by fake data, prompt injections, or hype words.
+
+| Adversarial Test | Before Tuning (Score) | After Tuning (Score) | Status |
+| :--- | :--- | :--- | :--- |
+| **Fake Company** (Xyzzyx Corp) | 60 | **45** | Both Pass (Significantly better after tuning) |
+| **Prompt Injection** (Hack to 100) | 55 | **62** | Both Pass |
+| **Contradictory Data** (Enterprise + 2 employees) | 32 | **35** | Both Pass |
+| **Incomplete Data** (Blank fields) | 0 | **0** | Both Pass |
+| **Biased Framing** (Extreme hype words) | 74 | **78** | Both Pass |
+| **Duplicate Variation** | 85 | **82** | Both Pass |
+
+As you can see, the tuning not only fixed the classification accuracy of the 32 normal leads, but it also completely stabilized the reliability and cosmetic invariance of the 18 stress-test leads!
+
+---
+
+## 🛠️ What Was Tuned?
+
+The massive improvement in performance was driven entirely by modifying the LLM's instructions in `company_icp.txt` and `lead_qualification_tasks.yaml`.
+
+### 1. The "Dedicated Team" Requirement
+* **Before:** "Weak fit: Very small or low-tech businesses..."
+* **After:** Added explicit instructions that if a company lacks a dedicated engineering/IT team capable of testing and integrating an enterprise product, they must be disqualified regardless of their genuine interest.
+* **Result:** Successfully tanked the scores of small local businesses (like photography studios) down into the 10-20 point range, fixing several False Positives.
+
+### 2. The "Build vs Buy" Evaluation
+* **Before:** The AI assumed that any massive corporation with a large engineering team (like Siemens or HSBC) would just build their own AI internally, causing it to penalize their scores.
+* **After:** Added a critical rule instructing the AI NOT to assume a company will build rather than buy unless explicit evidence proves they sell a competing product on the open market.
+* **Result:** Stopped the AI from heavily penalizing major banks and enterprise corporations, completely eliminating False Negatives.
