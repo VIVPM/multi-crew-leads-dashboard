@@ -15,23 +15,23 @@ const SESSION_KEY = 'sp_session'
 const JOB_POLL_MS = 5000
 const JOB_DEADLINE_MS = 20 * 60 * 1000 // give a batch up to 20 minutes
 
-// Session length is server-side (14-day refresh token), not a frontend timer
+// Session length is server-side (14-day refresh token cookie), not a
+// frontend timer. What's stored here is just a UI hint — {userId, username}
+// — never a token; the cookies (httpOnly, set by backend.py) are the actual
+// auth. A stale hint with dead cookies just means the next api() call 401s
+// and sp-auth-expired clears it, same as if this were empty.
 function loadSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
-    const { userId, username, token, refreshToken } = JSON.parse(raw)
-    if (!token || !refreshToken) { localStorage.removeItem(SESSION_KEY); return null }
-    return { userId, username, token, refreshToken }
+    const { userId, username } = JSON.parse(raw)
+    if (!userId) { localStorage.removeItem(SESSION_KEY); return null }
+    return { userId, username }
   } catch { return null }
 }
 
-function saveSession(userId, username, token, refreshToken) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
-}
-
-function readRefreshToken() {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
+function saveSession(userId, username) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username }))
 }
 
 function clearSession() {
@@ -70,8 +70,8 @@ export default function App() {
   const [showIcpDialog, setShowIcpDialog] = useState(false)
 
   // --- Auth ---
-  function handleLogin(uid, uname, token, refreshToken) {
-    saveSession(uid, uname, token, refreshToken)
+  function handleLogin(uid, uname) {
+    saveSession(uid, uname)
     setUserId(uid)
     setUsername(uname)
     setLoggedIn(true)
@@ -94,9 +94,9 @@ export default function App() {
   }
 
   function handleLogout() {
-    // Revoke the refresh token server-side (fire-and-forget) so it can't be reused.
-    const refreshToken = readRefreshToken()
-    if (refreshToken) api('POST', '/auth/logout', { refresh_token: refreshToken }).catch(() => {})
+    // Revoke the refresh token server-side (fire-and-forget, cookie carries
+    // it) and clear the auth cookies so it can't be reused.
+    api('POST', '/auth/logout').catch(() => {})
     resetToLoggedOut()
   }
 

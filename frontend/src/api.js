@@ -7,6 +7,9 @@ const BACKEND =
 const FETCH_TIMEOUT_MS = 60_000;
 const SESSION_KEY = "sp_session";
 
+// Access/refresh tokens live in httpOnly cookies now (backend.py sets them on
+// login/signup/refresh) — this key only stores {userId, username} as a UI
+// hint, never a credential, so there's nothing here for an XSS bug to steal.
 function readSession() {
   try {
     return JSON.parse(localStorage.getItem(SESSION_KEY));
@@ -15,50 +18,47 @@ function readSession() {
   }
 }
 
-function writeSession(s) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+// The CSRF cookie is deliberately not httpOnly — the frontend has to read it
+// to echo it back as a header (double-submit pattern; see backend.py).
+function getCsrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
 }
 
-async function doFetch(method, path, body, token) {
+async function doFetch(method, path, body) {
   const headers = { "Content-Type": "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const opts = { method, headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+  const csrf = getCsrfToken();
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const opts = {
+    method, headers, credentials: "include", // send/receive the auth cookies
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  };
   if (body) opts.body = JSON.stringify(body);
   return fetch(`${BACKEND}${path}`, opts);
 }
 
-// Exchange the refresh token for a new access token and update the stored
-// session. Returns null if the refresh token is expired or revoked.
-async function refreshAccessToken() {
-  const s = readSession();
-  if (!s?.refreshToken) return null;
-  let res;
+// Refreshes the access_token cookie in place via the refresh_token cookie —
+// no request body, no token value ever touches JS. Returns whether it worked.
+async function refreshSession() {
   try {
-    res = await doFetch("POST", "/auth/refresh", { refresh_token: s.refreshToken });
+    const res = await doFetch("POST", "/auth/refresh");
+    return res.ok;
   } catch {
-    return null;
+    return false;
   }
-  if (!res.ok) return null;
-  const { token } = await res.json();
-  const cur = readSession();
-  if (cur) {
-    cur.token = token;
-    writeSession(cur);
-  }
-  return token;
 }
 
 export async function api(method, path, body) {
-  let res = await doFetch(method, path, body, readSession()?.token);
+  let res = await doFetch(method, path, body);
 
   // Access token expired mid-session — refresh once and retry, so the user
   // isn't kicked to login every hour.
-  if (res.status === 401 && path !== "/auth/refresh" && readSession()?.refreshToken) {
-    const newToken = await refreshAccessToken();
-    if (newToken) {
-      res = await doFetch(method, path, body, newToken);
+  if (res.status === 401 && path !== "/auth/refresh" && readSession()) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      res = await doFetch(method, path, body);
     } else {
-      // Refresh token itself is dead — clear the session and let the app show login.
+      // Refresh token itself is dead — clear the session hint and show login.
       localStorage.removeItem(SESSION_KEY);
       window.dispatchEvent(new Event("sp-auth-expired"));
     }
@@ -88,5 +88,7 @@ export function friendlyError(err) {
     return "Too many requests. Please wait a moment and try again.";
   if (msg.includes("500") || msg.includes("internal server"))
     return "The server encountered an error. Please try again later.";
+  if (msg.includes("csrf"))
+    return "Your session needs a refresh — please reload the page.";
   return err?.message || String(err);
 }

@@ -27,12 +27,12 @@ export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
     }
     setLoading(true)
     try {
-      // Signup and login return the same token shape, and signup now signs the
-      // new user straight in — so both paths go to the main window, no second
-      // "please log in" step.
+      // Signup and login return the same body shape (tokens live in cookies
+      // now, not here), and signup signs the new user straight in — so both
+      // paths go to the main window, no second "please log in" step.
       const path = mode === 'signup' ? '/auth/signup' : '/auth/login'
       const data = await api('POST', path, { username, password })
-      onLogin(data.user_id, data.username, data.token, data.refresh_token)
+      onLogin(data.user_id, data.username)
     } catch (err) {
       setMessage({ type: 'error', text: friendlyError(err) })
     } finally {
