@@ -366,3 +366,9 @@ The massive improvement in performance was driven entirely by modifying the LLM'
 * **Before:** The AI assumed that any massive corporation with a large engineering team (like Siemens or HSBC) would just build their own AI internally, causing it to penalize their scores.
 * **After:** Added a critical rule instructing the AI NOT to assume a company will build rather than buy unless explicit evidence proves they sell a competing product on the open market.
 * **Result:** Stopped the AI from heavily penalizing major banks and enterprise corporations, completely eliminating False Negatives.
+
+---
+
+## 📜 License
+
+MIT License — see [LICENSE](LICENSE).
