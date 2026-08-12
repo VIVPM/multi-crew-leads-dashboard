@@ -22,9 +22,8 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -38,7 +37,7 @@ load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 from logging_setup import configure_logging, request_context, lead_context
 from security import (
     hash_password, verify_password, is_legacy_hash, make_token, verify_token,
-    make_refresh_token, hash_refresh_token, REFRESH_TTL_S, TOKEN_TTL_S,
+    make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
 )
 
 # ---------------------------------------------------------------------------
@@ -168,114 +167,6 @@ ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Sales Pipeline Backend")
 
-# ALLOWED_ORIGINS above is also read by _enforce_csrf's own short-circuit
-# responses (see the comment there for why it needs its own copy of this check).
-
-# ---------------------------------------------------------------------------
-# Auth cookies
-# ---------------------------------------------------------------------------
-# Tokens live in httpOnly cookies, not the response body — a page-level XSS
-# bug can't read them via document.cookie or localStorage. SameSite="none" is
-# required because the frontend and backend are different domains; that in
-# turn reopens CSRF (a cookie-carrying cross-site request would otherwise be
-# accepted), so a third, JS-readable csrf_token cookie is echoed back by the
-# frontend as a header on every mutating request and checked below — the
-# standard double-submit pattern. A cross-site attacker's page can trigger
-# the cookie-carrying request but can't read the cookie value to put in the
-# header, since cookies aren't readable across origins regardless of the
-# httpOnly flag.
-ACCESS_COOKIE = "access_token"
-REFRESH_COOKIE = "refresh_token"
-CSRF_COOKIE = "csrf_token"
-CSRF_HEADER = "x-csrf-token"
-
-
-def _is_https(request: Request) -> bool:
-    """True behind a real TLS-terminating proxy (Render, any standard one).
-    Read the raw header rather than trust request.url.scheme, which only
-    reflects X-Forwarded-Proto if uvicorn was started with --proxy-headers —
-    this works either way. Plain local dev (http://localhost) is the only
-    case this is False for."""
-    return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
-
-
-def _set_auth_cookies(request: Request, response: Response, access_token: str, refresh_token: str) -> str:
-    """Sets the three auth cookies, returns the csrf token value so the
-    caller can also put it in the JSON body — see the CSRF_COOKIE comment
-    below for why the cookie alone isn't enough."""
-    # SameSite=None (needed since frontend/backend are different domains in
-    # production) requires Secure or modern browsers silently drop the
-    # cookie — but Secure cookies are never sent back over plain http://, so
-    # local dev (same-site localhost:5173 <-> localhost:8000, no TLS) needs
-    # Lax + non-Secure instead, or login would appear to work but every
-    # following request would 401.
-    https = _is_https(request)
-    samesite = "none" if https else "lax"
-    response.set_cookie(
-        ACCESS_COOKIE, access_token, max_age=TOKEN_TTL_S,
-        httponly=True, secure=https, samesite=samesite, path="/",
-    )
-    response.set_cookie(
-        REFRESH_COOKIE, refresh_token, max_age=REFRESH_TTL_S,
-        httponly=True, secure=https, samesite=samesite, path="/",
-    )
-    csrf_value = secrets.token_urlsafe(32)
-    # Not httponly, in principle so the frontend could read it directly — but
-    # frontend and backend are different origins in production, and
-    # document.cookie can only ever see cookies whose Domain matches the
-    # PAGE's own origin, never a cookie a different origin set, regardless of
-    # SameSite/Secure. So the frontend can't actually read this cookie; it's
-    # here only so the browser echoes it back automatically on requests to
-    # us (the other half of the double-submit check). The frontend instead
-    # gets the value from the JSON body below and stores it itself. Missed
-    # this locally because localhost:5173/localhost:8000 share the same
-    # cookie jar (cookies aren't port-scoped), so document.cookie worked by
-    # accident there — caught once tested against the real deploy, where
-    # every mutating request 403'd with a CSRF message that also happened
-    # to satisfy the frontend's "session expired" text match, so it looked
-    # like an auth problem, not a CSRF one.
-    response.set_cookie(
-        CSRF_COOKIE, csrf_value, max_age=REFRESH_TTL_S,
-        httponly=False, secure=https, samesite=samesite, path="/",
-    )
-    return csrf_value
-
-
-def _clear_auth_cookies(request: Request, response: Response) -> None:
-    https = _is_https(request)
-    samesite = "none" if https else "lax"
-    for name in (ACCESS_COOKIE, REFRESH_COOKIE, CSRF_COOKIE):
-        response.delete_cookie(name, path="/", secure=https, samesite=samesite)
-
-
-# Endpoints reachable without an existing session: nothing to forge yet, or
-# (refresh) forging it only continues the victim's own session — no benefit
-# to an attacker, so no reason to make silent background refresh carry a
-# CSRF header too.
-_CSRF_EXEMPT_PATHS = {"/auth/signup", "/auth/login", "/auth/refresh"}
-
-
-@app.middleware("http")
-async def _enforce_csrf(request: Request, call_next):
-    if (
-        request.method in ("POST", "PUT", "PATCH", "DELETE")
-        and request.url.path not in _CSRF_EXEMPT_PATHS
-    ):
-        cookie_val = request.cookies.get(CSRF_COOKIE)
-        header_val = request.headers.get(CSRF_HEADER)
-        if not cookie_val or not header_val or cookie_val != header_val:
-            resp = JSONResponse(status_code=403, content={"detail": "Missing or invalid CSRF token."})
-            # CORSMiddleware never sees this response — it's returned straight
-            # from here, not from call_next() — so without this a real browser
-            # blocks it from ever reaching the frontend's error handling and
-            # shows a generic "can't reach the server" instead of the real 403.
-            origin = request.headers.get("origin")
-            if origin in ALLOWED_ORIGINS:
-                resp.headers["Access-Control-Allow-Origin"] = origin
-                resp.headers["Access-Control-Allow-Credentials"] = "true"
-            return resp
-    return await call_next(request)
-
 
 @app.on_event("startup")
 async def _init_async_supabase():
@@ -328,22 +219,11 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
-# allow_credentials=True is required for the browser to send/accept the
-# httpOnly auth cookies cross-origin (frontend and backend are different
-# Render subdomains) — and it forbids allow_origins=["*"], which is fine,
-# ALLOWED_ORIGINS was already explicit.
-#
-# This does NOT cover responses _enforce_csrf short-circuits with its own
-# JSONResponse (the CSRF-failure 403 in particular): that bypasses this
-# middleware entirely regardless of registration order — verified directly,
-# not assumed — so it arrives at the browser with no Access-Control-Allow-*
-# headers, which the browser then blocks from JS, surfacing as a generic
-# "failed to fetch" with no sign the server actually said 403. _enforce_csrf
-# sets the same headers itself on that response instead of relying on this.
+# Origins come from ALLOWED_ORIGINS (required env var) rather than being
+# hardcoded, so the deployed URLs stay out of source.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -358,13 +238,12 @@ def health():
 # Auth plumbing
 # =============================================================================
 
-def current_user(request: Request) -> str:
-    """FastAPI dependency: validate the access_token cookie, return the user_id."""
-    token = request.cookies.get(ACCESS_COOKIE)
-    if not token:
+def current_user(authorization: Optional[str] = Header(None)) -> str:
+    """FastAPI dependency: validate the Bearer token, return the user_id."""
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authentication token.")
     try:
-        return verify_token(token, SECRET_KEY)
+        return verify_token(authorization[len("Bearer "):], SECRET_KEY)
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid or expired token. Please log in again.")
 
@@ -445,15 +324,13 @@ class LoginRequest(BaseModel):
     password: str
 
 class LoginResponse(BaseModel):
-    # Access/refresh tokens travel in httpOnly cookies, not here — a body
-    # value the frontend could read defeats the point. csrf_token is the
-    # exception: the frontend genuinely needs that value to echo back on
-    # mutating requests, and it can't get it from the cookie itself (see
-    # _set_auth_cookies) since that cookie belongs to a different origin
-    # in production. This is the one legitimate channel for it.
     user_id: str
     username: str
-    csrf_token: str
+    token: str
+    refresh_token: str
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 class LeadCreate(BaseModel):
     name: str
@@ -500,7 +377,7 @@ class EmailSettingsRequest(BaseModel):
 # =============================================================================
 
 @app.post("/auth/signup", response_model=LoginResponse)
-def signup(req: SignupRequest, request: Request, response: Response):
+def signup(req: SignupRequest, request: Request):
     ip = _client_ip(request)
     if _recent_signup_count(ip) >= SIGNUP_MAX_PER_IP:
         raise HTTPException(
@@ -525,12 +402,15 @@ def signup(req: SignupRequest, request: Request, response: Response):
     _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
     # Sign them straight in rather than sending them to the login screen
-    csrf_value = _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
-    return LoginResponse(user_id=uid, username=req.username, csrf_token=csrf_value)
+    return LoginResponse(
+        user_id=uid, username=req.username,
+        token=make_token(uid, SECRET_KEY),
+        refresh_token=_issue_refresh_token(row["id"]),
+    )
 
 
 @app.post("/auth/login", response_model=LoginResponse)
-def login(req: LoginRequest, request: Request, response: Response):
+def login(req: LoginRequest):
     recent_failures = _recent_failure_count(req.username)
     if recent_failures >= LOGIN_MAX_FAILURES:
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in a few minutes.")
@@ -551,8 +431,11 @@ def login(req: LoginRequest, request: Request, response: Response):
         _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    csrf_value = _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
-    return LoginResponse(user_id=uid, username=req.username, csrf_token=csrf_value)
+    return LoginResponse(
+        user_id=uid, username=req.username,
+        token=make_token(uid, SECRET_KEY),
+        refresh_token=_issue_refresh_token(row["id"]),
+    )
 
 
 def _issue_refresh_token(user_id) -> str:
@@ -567,46 +450,29 @@ def _issue_refresh_token(user_id) -> str:
 
 
 @app.post("/auth/refresh")
-def refresh_access_token(request: Request, response: Response):
+def refresh_access_token(req: RefreshRequest):
     """Exchange a valid (unexpired, unrevoked) refresh token for a new access
     token. The refresh token itself is unchanged and keeps its own expiry."""
-    raw_refresh = request.cookies.get(REFRESH_COOKIE)
-    if not raw_refresh:
-        raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
     now = datetime.now(timezone.utc).isoformat()
     resp = (
         supabase.table("refresh_tokens")
         .select("user_id")
-        .eq("token_hash", hash_refresh_token(raw_refresh))
+        .eq("token_hash", hash_refresh_token(req.refresh_token))
         .gt("expires_at", now)  # Postgres does the timestamptz comparison
         .execute()
     )
     if not resp.data:
         raise HTTPException(status_code=401, detail="Session expired. Please log in again.")
     uid = str(resp.data[0]["user_id"])
-    https = _is_https(request)
-    response.set_cookie(
-        ACCESS_COOKIE, make_token(uid, SECRET_KEY), max_age=TOKEN_TTL_S,
-        httponly=True, secure=https, samesite="none" if https else "lax", path="/",
-    )
-    # Doesn't rotate the CSRF cookie, so the existing one is still valid —
-    # but echo it back in the body anyway. Covers a page reload: the
-    # frontend's stored copy is gone (it was only ever in memory/localStorage,
-    # never re-derivable from the cookie itself — see _set_auth_cookies), but
-    # the cookie the browser still holds is fine, so this resyncs the two
-    # without forcing a fresh login.
-    return {"ok": True, "csrf_token": request.cookies.get(CSRF_COOKIE)}
+    return {"token": make_token(uid, SECRET_KEY)}
 
 
 @app.post("/auth/logout")
-def logout(request: Request, response: Response):
-    """Revoke the refresh token (delete it) so it can't mint more access tokens."""
-    raw_refresh = request.cookies.get(REFRESH_COOKIE)
-    if raw_refresh:
-        supabase.table("refresh_tokens").delete().eq(
-            "token_hash", hash_refresh_token(raw_refresh)
-        ).execute()
-    _clear_auth_cookies(request, response)
+def logout(req: RefreshRequest):
+    """Revoke a refresh token (delete it) so it can't mint more access tokens."""
+    supabase.table("refresh_tokens").delete().eq(
+        "token_hash", hash_refresh_token(req.refresh_token)
+    ).execute()
     return {"message": "Logged out."}
 
 
