@@ -149,25 +149,18 @@ EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))  # under Gma
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 
+ALLOWED_ORIGINS = [
+    "https://multi-crew-leads-dashboard-frontend.onrender.com",
+    "http://localhost:5173",
+]
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Sales Pipeline Backend")
 
-# allow_credentials=True is required for the browser to send/accept the
-# httpOnly auth cookies cross-origin (frontend and backend are different
-# Render subdomains) — and it forbids allow_origins=["*"], which is fine,
-# the list below was already explicit.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://multi-crew-leads-dashboard-frontend.onrender.com",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ALLOWED_ORIGINS above is also read by _enforce_csrf's own short-circuit
+# responses (see the comment there for why it needs its own copy of this check).
 
 # ---------------------------------------------------------------------------
 # Auth cookies
@@ -244,7 +237,16 @@ async def _enforce_csrf(request: Request, call_next):
         cookie_val = request.cookies.get(CSRF_COOKIE)
         header_val = request.headers.get(CSRF_HEADER)
         if not cookie_val or not header_val or cookie_val != header_val:
-            return JSONResponse(status_code=403, content={"detail": "Missing or invalid CSRF token."})
+            resp = JSONResponse(status_code=403, content={"detail": "Missing or invalid CSRF token."})
+            # CORSMiddleware never sees this response — it's returned straight
+            # from here, not from call_next() — so without this a real browser
+            # blocks it from ever reaching the frontend's error handling and
+            # shows a generic "can't reach the server" instead of the real 403.
+            origin = request.headers.get("origin")
+            if origin in ALLOWED_ORIGINS:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Credentials"] = "true"
+            return resp
     return await call_next(request)
 
 
@@ -297,6 +299,27 @@ async def add_request_id(request: Request, call_next):
         response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+# allow_credentials=True is required for the browser to send/accept the
+# httpOnly auth cookies cross-origin (frontend and backend are different
+# Render subdomains) — and it forbids allow_origins=["*"], which is fine,
+# ALLOWED_ORIGINS was already explicit.
+#
+# This does NOT cover responses _enforce_csrf short-circuits with its own
+# JSONResponse (the CSRF-failure 403 in particular): that bypasses this
+# middleware entirely regardless of registration order — verified directly,
+# not assumed — so it arrives at the browser with no Access-Control-Allow-*
+# headers, which the browser then blocks from JS, surfacing as a generic
+# "failed to fetch" with no sign the server actually said 403. _enforce_csrf
+# sets the same headers itself on that response instead of relying on this.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")
