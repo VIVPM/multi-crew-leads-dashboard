@@ -149,10 +149,19 @@ EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))  # under Gma
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 
-ALLOWED_ORIGINS = [
-    "https://multi-crew-leads-dashboard-frontend.onrender.com",
-    "http://localhost:5173",
-]
+# Comma-separated list of frontend origins allowed to call this API. Required
+# with no default, same reasoning as DAILY_LEAD_CAP: the actual deployed URLs
+# aren't committed to source, so a deploy that forgets to set this fails
+# loudly at startup instead of silently shipping either a broken CORS config
+# or (worse) a wildcard someone added "temporarily" to unblock themselves.
+_allowed_origins_raw = os.getenv("ALLOWED_ORIGINS")
+if not _allowed_origins_raw:
+    raise RuntimeError(
+        "ALLOWED_ORIGINS must be set — comma-separated frontend origins allowed "
+        "to call this API, e.g. https://your-frontend.example.com,http://localhost:5173. "
+        "Set it in backend/.env locally and in the environment of whatever hosts this in production."
+    )
+ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
 
 # ---------------------------------------------------------------------------
 # App

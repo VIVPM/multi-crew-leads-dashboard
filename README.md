@@ -153,6 +153,7 @@ SECRET_KEY=any_long_random_string   # signs access tokens; required in productio
 GEMINI_API_KEY=your_gemini_key      # operator-held, powers all agents (required)
 TAVILY_API_KEY=your_tavily_key      # operator-held, web-search enrichment (required)
 DAILY_LEAD_CAP=5                    # leads each account may process per day (required)
+ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173   # CORS allowlist (required, comma-separated)
 
 # Optional — run the job worker inside the API process (single-service deploys)
 RUN_WORKER_IN_PROCESS=1
@@ -189,7 +190,13 @@ npm install
 npm run dev        # http://localhost:5173 (expects the API on localhost:8000)
 ```
 
-Set `VITE_BACKEND_URL` to point at a deployed backend in production builds. Vite inlines env vars at **build** time, so this must be set when the bundle is built, not when it's served.
+Create `frontend/.env` for local dev:
+
+```
+VITE_BACKEND_URL=http://localhost:8000
+```
+
+`VITE_BACKEND_URL` is **required** for a production build — no hardcoded fallback, so a build that forgets to set it throws at load instead of silently pointing nowhere. Vite inlines env vars at **build** time, so this must be set in the build environment (e.g. Render's static site settings), not just wherever the bundle is served from.
 
 ### 4. Docker (optional)
 
@@ -281,6 +288,7 @@ Without those secrets the `deploy` job skips cleanly with a message rather than 
 - **429 on login** — five failed attempts triggers a 15-minute lockout for that username.
 - **429 on signup** — one IP hit the signup cap (default 10 accounts/hour); tune with `SIGNUP_MAX_PER_IP`/`SIGNUP_WINDOW_S`, or wait out the window.
 - **`column users.company_context does not exist` (or similar `42703` errors)** — the schema migration hasn't been applied yet; run the latest `migrations.sql` in the Supabase SQL editor.
+- **"Cannot reach the backend server" on a real deploy, backend logs show `403`, not silence** — that combination means CORS, not downtime: the request reached the server and got a real response, but the browser withheld it from the frontend because the response had no `Access-Control-Allow-Origin` header. Check that the frontend's actual origin is in the backend's `ALLOWED_ORIGINS`, and that `VITE_BACKEND_URL` was set at **build** time for that frontend build (not just set in the hosting dashboard after the fact — Vite already baked the old value in).
 
 
 ## Final Evaluation Metrics (50 Leads)

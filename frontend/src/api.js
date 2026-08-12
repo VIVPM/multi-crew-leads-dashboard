@@ -1,8 +1,16 @@
-const BACKEND =
-  import.meta.env.VITE_BACKEND_URL ||
-  (import.meta.env.DEV
-    ? "http://localhost:8000"
-    : "https://multi-crew-leads-dashboard.onrender.com");
+// Required in production builds (no hardcoded fallback — same reasoning as
+// the backend's ALLOWED_ORIGINS: the real deployed URL doesn't belong in
+// source). Vite inlines env vars at build time, so this has to be set when
+// the bundle is built, not when it's served — see the README setup section.
+// Dev keeps a plain localhost fallback since that value isn't sensitive and
+// every contributor needs it to just work.
+if (!import.meta.env.DEV && !import.meta.env.VITE_BACKEND_URL) {
+  throw new Error(
+    "VITE_BACKEND_URL is not set. It must be set at build time (Vite inlines " +
+    "env vars into the bundle) — check the build environment's config."
+  );
+}
+const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
 const FETCH_TIMEOUT_MS = 60_000;
 const SESSION_KEY = "sp_session";
