@@ -246,7 +246,7 @@ Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit a
 
 ## Testing & Evaluation
 
-> Run these with the backend virtualenv (ackend\.venv\Scripts\python.exe ...), not system Python — they import pipeline.py. Each script detects the wrong interpreter and prints the right command.
+> Run these with the backend virtualenv (`backend\.venv\Scripts\python.exe ...`), not system Python — they import pipeline.py. Each script detects the wrong interpreter and prints the right command.
 
 | What | Command | Runs in CI |
 |---|---|---|
@@ -258,7 +258,7 @@ pm run lint | ✅ |
 | Red teaming | python backend/adversarial_testing.py | — (real LLM calls) |
 | Scoring Evaluation | python backend/run_full_eval.py | — (evaluates all 50 leads) |
 
-Red teaming covers fake companies, prompt injection, contradictory data and biased framing. Latest: **6/6 passed** (dversarial_results/).
+Red teaming covers fake companies, prompt injection, contradictory data and biased framing. Latest: **6/6 passed** (`adversarial_results/`).
 
 ## CI/CD
 

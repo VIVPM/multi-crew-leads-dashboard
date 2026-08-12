@@ -51,6 +51,14 @@ jobs:
       - run: npm run lint
       - run: npm test          # node:test — CSV import parsing (18 checks)
       - run: npm run build
+        env:
+          # This build's output is never deployed — Render does its own build
+          # from the same source when the deploy hook fires, with the real
+          # VITE_BACKEND_URL set there. This is only a "does it compile"
+          # check, so any well-formed value satisfies the required-env-var
+          # check in vite.config.js. Matches the docker job's frontend image
+          # build below, which already uses the same placeholder.
+          VITE_BACKEND_URL: http://localhost:8000
 
   docker:
     # Builds both images without pushing. This is where the Dockerfiles are
