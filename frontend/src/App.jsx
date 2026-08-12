@@ -30,8 +30,11 @@ function loadSession() {
   } catch { return null }
 }
 
-function saveSession(userId, username) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username }))
+// csrfToken comes from the login/signup/refresh response body, not a cookie
+// — see api.js's doFetch comment for why the cookie itself isn't readable
+// here in production (frontend and backend are different origins).
+function saveSession(userId, username, csrfToken) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, csrfToken }))
 }
 
 function clearSession() {
@@ -70,8 +73,8 @@ export default function App() {
   const [showIcpDialog, setShowIcpDialog] = useState(false)
 
   // --- Auth ---
-  function handleLogin(uid, uname) {
-    saveSession(uid, uname)
+  function handleLogin(uid, uname, csrfToken) {
+    saveSession(uid, uname, csrfToken)
     setUserId(uid)
     setUsername(uname)
     setLoggedIn(true)

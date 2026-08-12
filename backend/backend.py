@@ -199,7 +199,10 @@ def _is_https(request: Request) -> bool:
     return request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
 
 
-def _set_auth_cookies(request: Request, response: Response, access_token: str, refresh_token: str) -> None:
+def _set_auth_cookies(request: Request, response: Response, access_token: str, refresh_token: str) -> str:
+    """Sets the three auth cookies, returns the csrf token value so the
+    caller can also put it in the JSON body — see the CSRF_COOKIE comment
+    below for why the cookie alone isn't enough."""
     # SameSite=None (needed since frontend/backend are different domains in
     # production) requires Secure or modern browsers silently drop the
     # cookie — but Secure cookies are never sent back over plain http://, so
@@ -216,11 +219,26 @@ def _set_auth_cookies(request: Request, response: Response, access_token: str, r
         REFRESH_COOKIE, refresh_token, max_age=REFRESH_TTL_S,
         httponly=True, secure=https, samesite=samesite, path="/",
     )
-    # Not httponly — the frontend has to read this one to echo it back
+    csrf_value = secrets.token_urlsafe(32)
+    # Not httponly, in principle so the frontend could read it directly — but
+    # frontend and backend are different origins in production, and
+    # document.cookie can only ever see cookies whose Domain matches the
+    # PAGE's own origin, never a cookie a different origin set, regardless of
+    # SameSite/Secure. So the frontend can't actually read this cookie; it's
+    # here only so the browser echoes it back automatically on requests to
+    # us (the other half of the double-submit check). The frontend instead
+    # gets the value from the JSON body below and stores it itself. Missed
+    # this locally because localhost:5173/localhost:8000 share the same
+    # cookie jar (cookies aren't port-scoped), so document.cookie worked by
+    # accident there — caught once tested against the real deploy, where
+    # every mutating request 403'd with a CSRF message that also happened
+    # to satisfy the frontend's "session expired" text match, so it looked
+    # like an auth problem, not a CSRF one.
     response.set_cookie(
-        CSRF_COOKIE, secrets.token_urlsafe(32), max_age=REFRESH_TTL_S,
+        CSRF_COOKIE, csrf_value, max_age=REFRESH_TTL_S,
         httponly=False, secure=https, samesite=samesite, path="/",
     )
+    return csrf_value
 
 
 def _clear_auth_cookies(request: Request, response: Response) -> None:
@@ -427,11 +445,15 @@ class LoginRequest(BaseModel):
     password: str
 
 class LoginResponse(BaseModel):
-    # Tokens travel in httpOnly cookies now, not the body — see
-    # _set_auth_cookies. A body value the frontend could read is exactly
-    # the thing being avoided, so this only carries display data.
+    # Access/refresh tokens travel in httpOnly cookies, not here — a body
+    # value the frontend could read defeats the point. csrf_token is the
+    # exception: the frontend genuinely needs that value to echo back on
+    # mutating requests, and it can't get it from the cookie itself (see
+    # _set_auth_cookies) since that cookie belongs to a different origin
+    # in production. This is the one legitimate channel for it.
     user_id: str
     username: str
+    csrf_token: str
 
 class LeadCreate(BaseModel):
     name: str
@@ -503,8 +525,8 @@ def signup(req: SignupRequest, request: Request, response: Response):
     _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
     # Sign them straight in rather than sending them to the login screen
-    _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
-    return LoginResponse(user_id=uid, username=req.username)
+    csrf_value = _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
+    return LoginResponse(user_id=uid, username=req.username, csrf_token=csrf_value)
 
 
 @app.post("/auth/login", response_model=LoginResponse)
@@ -529,8 +551,8 @@ def login(req: LoginRequest, request: Request, response: Response):
         _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
-    return LoginResponse(user_id=uid, username=req.username)
+    csrf_value = _set_auth_cookies(request, response, make_token(uid, SECRET_KEY), _issue_refresh_token(row["id"]))
+    return LoginResponse(user_id=uid, username=req.username, csrf_token=csrf_value)
 
 
 def _issue_refresh_token(user_id) -> str:
@@ -567,7 +589,13 @@ def refresh_access_token(request: Request, response: Response):
         ACCESS_COOKIE, make_token(uid, SECRET_KEY), max_age=TOKEN_TTL_S,
         httponly=True, secure=https, samesite="none" if https else "lax", path="/",
     )
-    return {"ok": True}
+    # Doesn't rotate the CSRF cookie, so the existing one is still valid —
+    # but echo it back in the body anyway. Covers a page reload: the
+    # frontend's stored copy is gone (it was only ever in memory/localStorage,
+    # never re-derivable from the cookie itself — see _set_auth_cookies), but
+    # the cookie the browser still holds is fine, so this resyncs the two
+    # without forcing a fresh login.
+    return {"ok": True, "csrf_token": request.cookies.get(CSRF_COOKIE)}
 
 
 @app.post("/auth/logout")

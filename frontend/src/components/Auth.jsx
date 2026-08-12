@@ -27,12 +27,14 @@ export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
     }
     setLoading(true)
     try {
-      // Signup and login return the same body shape (tokens live in cookies
-      // now, not here), and signup signs the new user straight in — so both
-      // paths go to the main window, no second "please log in" step.
+      // Signup and login return the same body shape — access/refresh tokens
+      // live in cookies, but csrf_token comes back here since the frontend
+      // can't read that cookie itself (different origin in production) —
+      // and signup signs the new user straight in, so both paths go to the
+      // main window, no second "please log in" step.
       const path = mode === 'signup' ? '/auth/signup' : '/auth/login'
       const data = await api('POST', path, { username, password })
-      onLogin(data.user_id, data.username)
+      onLogin(data.user_id, data.username, data.csrf_token)
     } catch (err) {
       setMessage({ type: 'error', text: friendlyError(err) })
     } finally {
