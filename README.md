@@ -288,7 +288,7 @@ Without those secrets the `deploy` job skips cleanly with a message rather than 
 - **429 on login** — five failed attempts triggers a 15-minute lockout for that username.
 - **429 on signup** — one IP hit the signup cap (default 10 accounts/hour); tune with `SIGNUP_MAX_PER_IP`/`SIGNUP_WINDOW_S`, or wait out the window.
 - **`column users.company_context does not exist` (or similar `42703` errors)** — the schema migration hasn't been applied yet; run the latest `migrations.sql` in the Supabase SQL editor.
-- **"Cannot reach the backend server" on a real deploy, backend logs show `403`, not silence** — that combination means CORS, not downtime: the request reached the server and got a real response, but the browser withheld it from the frontend because the response had no `Access-Control-Allow-Origin` header. Check that the frontend's actual origin is in the backend's `ALLOWED_ORIGINS`, and that `VITE_BACKEND_URL` was set at **build** time for that frontend build (not just set in the hosting dashboard after the fact — Vite already baked the old value in).
+- **"Cannot reach the backend server" on a real deploy, but the backend logged the request** — that combination is CORS, not downtime: the request arrived and got a real response, the browser just withheld it from the frontend because the origin isn't allowed. Check that the frontend's actual origin is in the backend's `ALLOWED_ORIGINS`, and that `VITE_BACKEND_URL` was set at **build** time for that frontend build (not just set in the hosting dashboard afterwards — Vite already baked the old value in).
 
 
 ## Final Evaluation Metrics (50 Leads)
