@@ -23,6 +23,19 @@ _lead_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("
 _request_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("request_id", default=None)
 
 
+def current_correlation_ids() -> dict:
+    """The IDs bound to this context, for callers that need them outside logging.
+
+    Used by worker.py to copy the same job/lead IDs onto every OTEL span, so a
+    span and a log line for one job carry matching identifiers.
+    """
+    return {
+        "job_id": _job_id_var.get(),
+        "lead_id": _lead_id_var.get(),
+        "request_id": _request_id_var.get(),
+    }
+
+
 class _CorrelationFilter(logging.Filter):
     """Attaches whichever correlation IDs are active on the current context."""
 

@@ -30,7 +30,7 @@ sys.path.insert(0, BASE_DIR)
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
-from logging_setup import configure_logging, job_context  # noqa: E402
+from logging_setup import configure_logging, job_context, current_correlation_ids  # noqa: E402
 
 configure_logging()  # idempotent — no-op if backend.py already configured it in-process
 logger = logging.getLogger("worker")
@@ -44,7 +44,7 @@ _have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_O
 if _have_langfuse or _have_grafana:
     try:
         import base64
-        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -56,6 +56,26 @@ if _have_langfuse or _have_grafana:
             "service.namespace": "lead-coordinator",
             "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
         }))
+        # Langfuse v4 queries observations directly, so an attribute that sits
+        # only on the root span can't filter or aggregate its children. Copy the
+        # job/lead IDs onto every span. Reads the same contextvars the JSON logs
+        # use, so a span and a log line for one job carry matching IDs.
+        #
+        # Both prefixes on purpose, confirmed against a real canary trace:
+        # `langfuse.trace.metadata.*` is folded into the trace's metadata and
+        # does NOT appear on the individual observations, so on its own it
+        # gives trace-level filtering only. `langfuse.observation.metadata.*`
+        # is what lands on each observation and makes it filterable by itself,
+        # which is the v4 requirement. Plain unprefixed attributes fall into
+        # the metadata.attributes catch-all, which isn't queryable at all.
+        class _CorrelationSpanProcessor(SpanProcessor):
+            def on_start(self, span, parent_context=None):
+                for key, value in current_correlation_ids().items():
+                    if value is not None:
+                        span.set_attribute(f"langfuse.trace.metadata.{key}", value)
+                        span.set_attribute(f"langfuse.observation.metadata.{key}", value)
+
+        _tracer_provider.add_span_processor(_CorrelationSpanProcessor())
         _enabled = []
 
         if _have_langfuse:
