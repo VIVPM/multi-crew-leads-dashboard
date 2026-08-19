@@ -64,7 +64,12 @@ if _have_langfuse or _have_grafana:
             _auth = base64.b64encode(_creds.encode()).decode()
             _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
                 endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-                headers={"Authorization": f"Basic {_auth}"},
+                # v4 ingestion: without this header directly-ingested OTEL data
+                # can lag the v4 data model and the v2 APIs by up to 10 minutes.
+                headers={
+                    "Authorization": f"Basic {_auth}",
+                    "x-langfuse-ingestion-version": "4",
+                },
             )))
             _enabled.append(f"Langfuse ({_lf_host})")
 
