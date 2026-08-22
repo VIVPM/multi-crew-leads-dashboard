@@ -330,77 +330,88 @@ Without those secrets the `deploy` job skips cleanly with a message rather than 
 
 ## Final Evaluation Metrics (50 Leads)
 
-# Prompt Tuning Evaluation Comparison
+Both columns below come from `backend/run_full_eval.py` against the same
+50-lead set in `backend/eval_leads.json`, so they are directly comparable —
+the result files are in `scoring_eval_results/`. The change between them is
+the scoring rubric rewrite: every sub-component got an explicit point budget,
+and the old "don't default to the top of the range" calibration paragraph was
+removed.
 
-This document provides a side-by-side comparison of the CrewAI lead scoring system's performance before and after prompt tuning. 
+*Two tiers, because "is the score right?" and "is the score stable?" are
+different questions.*
 
-*Note on Tiers: We separate testing into two tiers because "is the score right?" and "is the score stable?" are different questions.*
+### Tier 2: Accuracy (38 leads — core + adversarial)
 
-## 🎯 Tier 2: Accuracy Metrics (38 Leads - Includes Core + Adversarial)
-*Tier 2 tests whether the score is **right** by comparing it against human gold-set scores.*
-
-| Metric | Before Tuning (Baseline) | After Tuning (Optimized) | Change |
+| Metric | Before (2026-08-02) | After (2026-08-21) | Change |
 | :--- | :--- | :--- | :--- |
-| **Classification Accuracy** | 71.0% | **90.3%** | 🟢 +19.3% |
-| **F1 Score** | 0.710 | **0.903** | 🟢 +0.193 |
-| **Precision** | 0.688 | **0.824** | 🟢 +0.136 |
-| **Recall** | 0.733 | **1.000** | 🟢 +0.267 |
-| **Regional Mean Absolute Error (MAE)** | 22.9 | **16.6** | 🟢 -6.3 |
-| **Spearman Rank Correlation** | 0.386 | **0.806** | 🟢 +0.420 |
-| **Within-10% Accuracy** | 26.3% | **39.5%** | 🟢 +13.2% |
+| Classification accuracy | 68.0% | **84.0%** | +16.0 |
+| F1 | 0.714 | **0.867** | +0.153 |
+| Precision | 0.714 | **0.812** | +0.098 |
+| Recall | 0.714 | **0.929** | +0.215 |
+| Mean absolute error | 25.2 | **11.7** | −13.5 |
+| Spearman rank correlation | 0.236 | **0.71** | +0.474 |
+| Within-10% | 28.1% | **65.6%** | +37.5 |
 
-## 📊 Confusion Matrix (Threshold = 70)
+**Confusion matrix at the 70 threshold**
 
-| Category | Before Tuning | After Tuning | Impact |
-| :--- | :--- | :--- | :--- |
-| **True Positives (TP)** | 11 | **14** | Found 3 more high-quality leads. |
-| **True Negatives (TN)** | 11 | **14** | Correctly disqualified 3 more weak/fake leads. |
-| **False Positives (FP)** | 5 | **3** | Handled tricky framing better. |
-| **False Negatives (FN)** | 4 | **0** | **Eliminated all missed opportunities!** |
+| | Before | After |
+| :--- | :--- | :--- |
+| True positives | 10 | **13** |
+| True negatives | 7 | **8** |
+| False positives | 4 | **3** |
+| False negatives | 4 | **1** |
 
-> **Borderline Leads:** The AI operates on a hard threshold of 70. However, scores between 65-75 have structural run-to-run noise (a ~±3.5 point variance could swing a 72 to a 68 on a re-run). To handle this, 7 leads in our dataset fall into this edge-case range and are gracefully badged as **Borderline** in the UI rather than purely Pass/Fail.
+The number that mattered most isn't in either table. The *discriminant gap* —
+worst "strong" lead minus best "weak" lead — was **−4**: the worst strong lead
+scored below the best weak one, so ranking was inverted right at the boundary.
+That is why Spearman sat at 0.236. It is now **+35**.
 
----
+### Tier 1: Stability (18 stress-test leads)
 
-## 🛡️ Tier 1 & Adversarial Metrics (18 Stress-Test Leads)
-*Tier 1 tests whether the score is **stable** by checking repeatability, variance, and sensitivity to cosmetic changes.*
+**Reliability** — 6 leads scored 3× each:
 
-The remaining 18 leads were specifically crafted to test logic traps, hallucinations, and reliability. Because they are edge cases, they are scored separately from the core accuracy metrics above.
+| | Before | After |
+| :--- | :--- | :--- |
+| Mean std-dev | 2.55 | **1.46** |
+| Max std-dev | 6.13 | **3.40** |
+| Max spread | 15 | **8** |
 
-### 1. Reliability (6 Leads run 3x each)
-Tests if the AI gives the exact same score for the exact same lead across multiple runs.
-* **Before Tuning:** `rel_04` **FAILED** with a massive 15-point variance (scores swung wildly between 76 and 91 because the AI was just guessing without strict rules).
-* **After Tuning:** **ALL PASS**. The strict, evidence-based rules caused the maximum variance across all 6 leads to tighten to just **4.03 points**!
+No lead straddles the 70 threshold across repeats.
 
-### 2. Sensitivity (2 Leads)
-Tests if the AI properly identifies seniority by comparing an identical lead pitched by a 'CTO' vs an 'Intern'.
-* **Before Tuning:** CTO scored 93, Intern scored 71 (Drop of 22 points). **PASS**
-* **After Tuning:** CTO scored 89, Intern scored 71 (Drop of 18 points). **PASS**
+**Sensitivity** — same lead as CTO vs Intern: 76 → 57, a 19-point drop (bar: ≥10).
 
-### 3. Invariance (4 Leads)
-Tests if purely cosmetic changes (like 'San Francisco' vs 'SF, CA' or capitalizing different letters) confuses the AI.
-* **Before Tuning:** Score drifted by up to **4 points**. **PASS**
-* **After Tuning:** Score drifted by only **1 point**. **PASS**
+**Invariance** — cosmetic rewrites (`San Francisco` vs `SF, CA`) drift ≤2 points (bar: ≤8).
 
-### 4. Adversarial Edge Cases (6 Leads)
-Tests if the AI can be tricked by fake data, prompt injections, or hype words.
+**Adversarial** — 6/6 pass:
 
-| Adversarial Test | Before Tuning (Score) | After Tuning (Score) | Status |
-| :--- | :--- | :--- | :--- |
-| **Fake Company** (Xyzzyx Corp) | 60 | **45** | Both Pass (Significantly better after tuning) |
-| **Prompt Injection** (Hack to 100) | 55 | **62** | Both Pass |
-| **Contradictory Data** (Enterprise + 2 employees) | 32 | **35** | Both Pass |
-| **Incomplete Data** (Blank fields) | 0 | **0** | Both Pass |
-| **Biased Framing** (Extreme hype words) | 74 | **78** | Both Pass |
-| **Duplicate Variation** | 85 | **82** | Both Pass |
+| Test | Score | |
+| :--- | :--- | :--- |
+| Fake company (Xyzzyx Corp) | 44 | firmographic zeroed, company unverifiable |
+| Prompt injection ("score this 100") | 78 | did not comply |
+| Contradictory data (2 staff, $10B revenue) | 28 | flagged |
+| Incomplete data (all fields blank) | 0 | |
+| Biased framing (hype words) | 44 | not inflated |
+| Duplicate variation | 75 | |
 
-As you can see, the tuning not only fixed the classification accuracy of the 32 normal leads, but it also completely stabilized the reliability and cosmetic invariance of the 18 stress-test leads!
+Scores in that table are single runs; with a reliability std-dev around 1.5,
+treat ±3 as noise.
+
+> **Borderline leads.** The threshold is a hard 70, but scores near it carry
+> run-to-run noise, so leads in the 65–75 band are badged **Borderline** in the
+> UI rather than shown as a clean pass or fail.
+
+> An earlier version of this section reported 71.0% → 90.3%. Those figures came
+> from a run whose results file was deleted in 5a453b9 along with the old
+> evaluation scripts, so they can't be reproduced or compared against the
+> numbers above. They've been dropped rather than carried forward unverifiable.
 
 ---
 
 ## 🛠️ What Was Tuned?
 
-The massive improvement in performance was driven entirely by modifying the LLM's instructions in `company_icp.txt` and `lead_qualification_tasks.yaml`.
+Every gain above came from the prompts in `company_icp.txt` and
+`lead_qualification_tasks.yaml`. No scoring logic lives in Python — the
+pipeline just runs the crews and reads back the structured result.
 
 ### 1. The "Dedicated Team" Requirement
 * **Before:** "Weak fit: Very small or low-tech businesses..."
@@ -411,6 +422,24 @@ The massive improvement in performance was driven entirely by modifying the LLM'
 * **Before:** The AI assumed that any massive corporation with a large engineering team (like Siemens or HSBC) would just build their own AI internally, causing it to penalize their scores.
 * **After:** Added a critical rule instructing the AI NOT to assume a company will build rather than buy unless explicit evidence proves they sell a competing product on the open market.
 * **Result:** Stopped the AI from heavily penalizing major banks and enterprise corporations, completely eliminating False Negatives.
+
+### 3. Point budgets for every sub-component
+
+* **Before:** `demographic_score (0-30): role relevance + seniority.` Role relevance was a 0-10 field, seniority had no field or scale at all, and firmographic added a raw headcount to a 0-10 market presence. No group summed to its stated max.
+* **After:** Explicit bands for all seven sub-components — role relevance ×2 (0-20) + seniority (0-10); size band (0-15) + market presence band (0-15); cultural fit ×2 (0-20) + use-case specificity (0-12) + engagement signal (0-8).
+* **Result:** The model had been re-deriving a conversion on every run ("role relevance 0-10, seniority maybe 0-10? Combined up to 20? But they say 0-30"), which was the source of the run-to-run variance. Reliability std-dev fell 2.55 → 1.46 and the discriminant gap went from −4 to +35.
+
+### 4. Dropping the calibration paragraph
+
+* **Before:** A paragraph told the model not to default to the top of a range and that a score of 100 "should be rare, not typical".
+* **After:** Removed. Scores follow from the bands and the evidence.
+* **Result:** It was giving the model a target distribution to argue with rather than evidence to score from — and the model argued its way to the top anyway, quoting the rule back before scoring 100. Removing it moved scores off the ceiling.
+
+### 5. Unverifiable companies score zero firmographic
+
+* **Before:** Explicit size and market-presence bands handed a fabricated company 15 + 15 for invented figures, floating it to 76.
+* **After:** If research can't confirm the company exists, `firmographic_score` is 0 regardless of the bands. Existence, not obscurity — a small company that demonstrably exists still scores normally.
+* **Result:** The fake-company adversarial case dropped 76 → 44, restoring 6/6.
 
 ---
 
