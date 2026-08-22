@@ -49,22 +49,45 @@ lead_scoring_and_validation:
     {company_research_summary}
 
     - Score Calculation: Score three components, then sum them for the
-      final score (0-100):
-      - demographic_score (0-30): role relevance + seniority.
-      - firmographic_score (0-30): company size + market presence.
-      - behavioral_score (0-40): cultural fit + use-case specificity +
-        engagement signal (source, stated intent).
-      Calibration — do not default to the top of a range. A component
-      only hits its max when the evidence for it is unambiguous and
-      complete; any missing, generic, or unverifiable detail pulls it
-      below max. A final score of 100 requires all three components
-      maxed with zero gaps anywhere in the underlying data — reserve it
-      for that case only. Rough guide: 40-60 = meets baseline criteria
-      with real gaps or unknowns, 61-80 = solid fit with minor gaps,
-      81-95 = strong fit with essentially no gaps but not literally
-      perfect data, 96-100 = flawless on every component. Most
-      qualified leads should land in the 60-90 range; a 100 should be
-      rare, not typical.
+      final score (0-100). Every sub-component below has a fixed point
+      budget and its own bands — award points from those bands, and do
+      not invent a scale or a weighting of your own.
+      - demographic_score (0-30) = role relevance + seniority:
+        - role relevance (0-20): the 0-10 role relevance from the
+          personal research, doubled.
+        - seniority (0-10): 10 = founder, owner or C-level; 7 = VP, SVP,
+          Head of or Director; 5 = manager or team lead; 3 = individual
+          contributor; 0 = job title missing or unreadable.
+      - firmographic_score (0-30) = company size + market presence:
+        - company size (0-15): 15 = 1000+ employees; 12 = 500-999;
+          9 = 200-499; 6 = 50-199; 3 = 10-49; 1 = under 10; 0 = employee
+          count unknown.
+        - market presence (0-15): from the 0-10 market presence in the
+          company research — 15 = 9-10; 12 = 7-8; 9 = 5-6; 6 = 3-4;
+          3 = 1-2; 0 = 0.
+        - Unverifiable company: if the research could not confirm the
+          company exists at all — no website, no external record, or
+          details that read as fabricated — then firmographic_score is 0,
+          whatever the bands above would give, and the validation notes
+          must say the company could not be found. Size and market
+          presence are claims about a real company; do not award points
+          for them to one you were unable to verify. This is about
+          existence, not obscurity: a small or low-profile company that
+          demonstrably exists still scores from the bands.
+      - behavioral_score (0-40) = cultural fit + use-case specificity +
+        engagement signal:
+        - cultural fit (0-20): the 0-10 cultural fit score from the
+          company research, doubled.
+        - use-case specificity (0-12): 12 = names a concrete problem the
+          company described above solves directly; 8 = a clear, relevant
+          need with some detail; 4 = generic interest with no specifics;
+          0 = no use case given.
+        - engagement signal (0-8): 8 = inbound with explicit intent such
+          as a demo, pricing or trial request; 6 = inbound with a stated
+          use case; 4 = inbound with neither; 2 = outbound or imported
+          from a list; 0 = source unknown.
+      Each component equals the sum of its own sub-components, and the
+      three components sum to the final score.
     - Scoring Criteria Documentation: List the criteria used to determine
       the score.
     - Validation: Review the collected data — including the raw lead
