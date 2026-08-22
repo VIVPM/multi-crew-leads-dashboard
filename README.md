@@ -150,7 +150,18 @@ Create `backend/.env`:
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_service_key
 SECRET_KEY=any_long_random_string   # signs access tokens; required in production
-GEMINI_API_KEY=your_gemini_key      # operator-held, powers all agents (required)
+GEMINI_API_KEY=your_gemini_key      # operator-held, powers all agents (required when LLM_MODEL=GEMINI)
+
+# Which provider powers the agents: GEMINI or CLOUDFLARE (required, no default).
+# CLOUDFLARE routes through Workers AI's OpenAI-compatible endpoint, which
+# LiteLLM reaches with an openai/ prefix plus an api_base — no new dependency.
+# Gemini splits work across flash (judgment) and flash-lite (retrieval);
+# Workers AI publishes one model for this, so both tiers use it there.
+LLM_MODEL=GEMINI                    # required, no default
+CLOUDFLARE_ACCOUNT_ID=              # required when LLM_MODEL=CLOUDFLARE
+CLOUDFLARE_API_TOKEN=               # required when LLM_MODEL=CLOUDFLARE
+CLOUDFLARE_MODEL=@cf/openai/gpt-oss-20b   # optional override
+CLOUDFLARE_MAX_TOKENS=4096          # optional; must stay generous, see below
 TAVILY_API_KEY=your_tavily_key      # operator-held, web-search enrichment (required)
 DAILY_LEAD_CAP=5                    # leads each account may process per day (required)
 ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173   # CORS allowlist (required, comma-separated)
@@ -169,6 +180,32 @@ GRAFANA_OTLP_AUTH=
 # Optional — daily per-user email send cap (default 80)
 EMAIL_SEND_DAILY_CAP=80
 ```
+
+### Running on Cloudflare Workers AI
+
+`LLM_MODEL=CLOUDFLARE` works and has been run end to end, but the path needs
+more glue than Gemini does, all of it in `_build_llms()`. Two causes: Workers
+AI's OpenAI shim is compatible on the happy path but stricter elsewhere, and
+`gpt-oss-20b` is a reasoning model, which CrewAI doesn't special-case.
+
+- **`CLOUDFLARE_MAX_TOKENS` is load-bearing.** The model spends completion
+  tokens reasoning before it writes anything, and Workers AI caps replies at 256
+  by default. Set it too low and replies come back with an empty `content` and
+  `finish_reason="length"`, which reaches CrewAI as a blank answer rather than an
+  error. 4096 is comfortable; a lead-scoring reply measured ~550 tokens.
+- LiteLLM has no entry for the model name, so it reports no function-calling
+  support and CrewAI silently falls back to ReAct text prompting, which this
+  model won't answer. `litellm.register_model()` fixes it.
+- Cloudflare rejects an assistant message with `content: null`, which OpenAI
+  allows next to `tool_calls`. `_CloudflareLLM` rewrites it to `""`.
+- CrewAI builds structured output through `instructor`, which makes its own
+  client — hence the `OPENAI_API_KEY`/`OPENAI_BASE_URL` assignment — and asks for
+  the result as a tool call. gpt-oss writes the JSON into `content` instead, so
+  instructor is forced into JSON mode.
+
+Scoring calibration is its own question: on the same lead Gemini scored 76 while
+this model returned 100 on two of three runs. Treat the gold-set numbers in
+`docs/` as Gemini-only until they're re-measured here.
 
 Run the API and the worker (two terminals, from the repo root):
 

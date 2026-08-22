@@ -145,7 +145,32 @@ LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
 EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))  # under Gmail's ~100/day SMTP limit
 
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+# Which provider powers the agents, and therefore which key is required.
+# pipeline.py owns the same setting and validates the value; this only needs to
+# know which credential to demand and hand to the worker.
+try:
+    LLM_MODEL = os.environ["LLM_MODEL"].strip().upper()
+except KeyError:
+    raise RuntimeError(
+        "LLM_MODEL is required. Set it to GEMINI or CLOUDFLARE in backend/.env."
+    ) from None
+if LLM_MODEL == "CLOUDFLARE":
+    _llm_key_var = "CLOUDFLARE_API_TOKEN"
+    if not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
+        raise RuntimeError(
+            "LLM_MODEL=CLOUDFLARE also needs CLOUDFLARE_ACCOUNT_ID. Failing at "
+            "startup rather than on the first lead, which would burn a credit."
+        )
+else:
+    _llm_key_var = "GEMINI_API_KEY"
+
+try:
+    LLM_API_KEY = os.environ[_llm_key_var]
+except KeyError:
+    raise RuntimeError(
+        f"LLM_MODEL={LLM_MODEL} requires {_llm_key_var} in the environment."
+    )
+
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 
 # Comma-separated list of frontend origins allowed to call this API. Required
@@ -784,8 +809,11 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         # frozen at enqueue time so a later profile edit can't change an already-queued job
         "our_company_context": company_context,
         "force_refresh": req.force_refresh,
-        # operator-held keys, not per-user — worker nulls them on completion anyway
-        "gemini_api_key": GEMINI_API_KEY,
+        # operator-held keys, not per-user — worker nulls them on completion
+        # anyway. The column is still named gemini_api_key: it now carries
+        # whichever provider LLM_MODEL selected, and renaming it would mean a
+        # migration for no behavioural gain.
+        "gemini_api_key": LLM_API_KEY,
         "tavily_api_key": TAVILY_API_KEY,
     }
     resp = supabase.table("jobs").insert(job).execute()

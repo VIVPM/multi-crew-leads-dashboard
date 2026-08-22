@@ -30,6 +30,8 @@ from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger("pipeline")
 
+import instructor
+import litellm
 from pydantic import BaseModel
 from crewai import Agent, Task, Crew, LLM
 from crewai_tools import ScrapeWebsiteTool
@@ -122,6 +124,27 @@ _CONFIGS = _load_configs()
 # Per-attempt pipeline timeout, scaled by lead count in process_leads()
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
 
+# Which provider powers the agents: "GEMINI" or "CLOUDFLARE" (Workers AI,
+# through its OpenAI-compatible endpoint). Required, with no default — this
+# picks which account gets billed, and a fallback would quietly send real
+# traffic to a provider nobody chose.
+try:
+    LLM_MODEL = os.environ["LLM_MODEL"].strip().upper()
+except KeyError:
+    raise RuntimeError(
+        "LLM_MODEL is required. Set it to GEMINI or CLOUDFLARE in backend/.env."
+    ) from None
+CLOUDFLARE_MODEL = os.getenv("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-20b")
+CLOUDFLARE_MAX_TOKENS = int(os.getenv("CLOUDFLARE_MAX_TOKENS", "4096"))
+
+_SUPPORTED_LLM_MODELS = ("GEMINI", "CLOUDFLARE")
+if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
+    raise RuntimeError(
+        f"LLM_MODEL={LLM_MODEL!r} is not one of {_SUPPORTED_LLM_MODELS}. "
+        "A typo here would otherwise fall through to the default provider and "
+        "quietly bill the wrong account."
+    )
+
 
 # =============================================================================
 # Company research cache key + summary formatting
@@ -213,7 +236,154 @@ class _CombinedScoreOutput:
 # Crew factory — accepts the Gemini and Tavily API keys from the UI
 # =============================================================================
 
-def build_crews(gemini_key: str, tavily_key: str) -> Dict[str, Crew]:
+def _force_instructor_json_mode() -> None:
+    """Have `instructor` read structured output from content, not from a tool call.
+
+    instructor defaults to TOOLS mode, which expects the pydantic object to come
+    back as a function call. gpt-oss ignores the forced call and writes the JSON
+    into content instead, so instructor sees zero tool calls and gives up with
+    "Instructor does not support multiple tool calls" — even though the JSON it
+    wanted is sitting right there and is valid. JSON mode parses content, which
+    is what this model actually produces.
+    """
+    if getattr(instructor.from_litellm, "_cf_json_mode_patched", False):
+        return
+
+    inner = instructor.from_litellm
+
+    def json_mode(*args, **kwargs):
+        kwargs.setdefault("mode", instructor.Mode.JSON)
+        return inner(*args, **kwargs)
+
+    json_mode._cf_json_mode_patched = True
+    instructor.from_litellm = json_mode
+
+
+def _force_cloudflare_max_tokens() -> None:
+    """Make every LiteLLM call carry a max_tokens, including the ones we don't own.
+
+    CrewAI builds structured output through `instructor`, and its to_pydantic()
+    calls litellm.completion() without a max_tokens at all — so the request falls
+    back to the Workers AI default and the reasoning burns the budget before any
+    JSON appears ("The output is incomplete due to a max_tokens length limit").
+    There's no argument to thread through: CrewAI constructs the instructor
+    client itself. Wrapping the function is the only seam, so keep it to filling
+    in a missing default and nothing else. The flag makes it idempotent —
+    build_crews() runs once per job.
+    """
+    if getattr(litellm.completion, "_cf_max_tokens_patched", False):
+        return
+
+    inner = litellm.completion
+
+    def with_default_max_tokens(*args, **kwargs):
+        if not kwargs.get("max_tokens"):
+            kwargs["max_tokens"] = CLOUDFLARE_MAX_TOKENS
+        return inner(*args, **kwargs)
+
+    with_default_max_tokens._cf_max_tokens_patched = True
+    litellm.completion = with_default_max_tokens
+
+
+class _CloudflareLLM(LLM):
+    """CrewAI's LLM with the message shape Cloudflare's OpenAI shim insists on.
+
+    Workers AI is OpenAI-compatible on the happy path but stricter about
+    messages. OpenAI lets an assistant message carry content=None when it has
+    tool_calls; Cloudflare rejects the whole request with a 400 ("required
+    properties at '/messages/2' are 'role,content'"). That only bites on the
+    second call of a tool round-trip, so it looks like a random mid-run failure
+    rather than a format problem. Coercing None to "" is enough — the tool_calls
+    field still carries the real payload.
+    """
+
+    def _prepare_completion_params(self, *args, **kwargs):
+        params = super()._prepare_completion_params(*args, **kwargs)
+        for message in params.get("messages") or []:
+            content = message.get("content")
+            if content is None:
+                message["content"] = ""
+            elif isinstance(content, list):
+                # Same reason: content blocks must arrive as a plain string.
+                message["content"] = "".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+        return params
+
+
+def _build_llms(llm_key: str):
+    """The two model tiers the agents use, for whichever provider LLM_MODEL selects.
+
+    Returns (judgment_llm, retrieval_llm). Gemini splits them — flash for the
+    calls where the answer's quality matters, flash-lite for the ones that are
+    mostly retrieval — because it costs less and measurably held up. Workers AI
+    publishes one model for this job, so both tiers point at it there; the split
+    is an optimisation, not something the pipeline depends on.
+    """
+    if LLM_MODEL == "CLOUDFLARE":
+        account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        if not account_id:
+            raise RuntimeError(
+                "LLM_MODEL=CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID (the account the "
+                "Workers AI endpoint belongs to). Set it in backend/.env."
+            )
+        # Workers AI speaks the OpenAI wire format, so LiteLLM routes it with the
+        # openai/ prefix plus an api_base rather than needing a native provider.
+        api_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+        # LiteLLM has no entry for this model name, so it reports the model as not
+        # supporting function calling and CrewAI silently falls back to ReAct-style
+        # text prompting ("Thought:/Action:"). gpt-oss won't answer that way: it
+        # emits its whole turn on the reasoning channel and returns content=None,
+        # which surfaces as "Invalid response from LLM call - None or empty" on the
+        # very first agent step. Registering the model restores native tool calling,
+        # where it answers normally. Cheap and local — register_model only writes to
+        # LiteLLM's in-memory model table.
+        litellm.register_model({
+            f"openai/{CLOUDFLARE_MODEL}": {
+                "max_tokens": CLOUDFLARE_MAX_TOKENS,
+                "max_input_tokens": 128000,
+                "max_output_tokens": CLOUDFLARE_MAX_TOKENS,
+                "litellm_provider": "openai",
+                "mode": "chat",
+                "supports_function_calling": True,
+            },
+        })
+        # max_tokens is not optional here. gpt-oss-20b is a reasoning model: it
+        # spends completion tokens on its own reasoning before it emits any
+        # content, and Workers AI defaults the cap to 256. Left alone, the
+        # reasoning eats the whole budget and the reply comes back with
+        # finish_reason="length" and an empty content field, which reaches CrewAI
+        # as a blank answer rather than an error. Measured: a lead-scoring reply
+        # needs ~550 tokens, so 4096 leaves room for the longer email task too.
+        # CrewAI converts task output to pydantic through `instructor`, which
+        # builds its own OpenAI client instead of reusing the LLM object's
+        # credentials — it reads OPENAI_API_KEY/OPENAI_BASE_URL and otherwise
+        # fails with "Missing credentials" partway through the scoring crew.
+        # Pointing those at Workers AI is safe here because nothing else in this
+        # process talks to OpenAI.
+        _force_cloudflare_max_tokens()
+        _force_instructor_json_mode()
+
+        os.environ["OPENAI_API_KEY"] = llm_key
+        os.environ["OPENAI_BASE_URL"] = api_base
+
+        llm = _CloudflareLLM(
+            model=f"openai/{CLOUDFLARE_MODEL}",
+            api_key=llm_key,
+            api_base=api_base,
+            max_tokens=CLOUDFLARE_MAX_TOKENS,
+        )
+        return llm, llm
+
+    return (
+        LLM(model="gemini/gemini-2.5-flash", api_key=llm_key),
+        LLM(model="gemini/gemini-2.5-flash-lite", api_key=llm_key),
+    )
+
+
+def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
     """
     Build and return a dict of crews:
       - "personal_scoring": personal research -> scoring/validation (always runs)
@@ -223,8 +393,7 @@ def build_crews(gemini_key: str, tavily_key: str) -> Dict[str, Crew]:
     Built fresh per call (cheap — object construction only), so there is no
     shared state between concurrent requests.
     """
-    llm_flash = LLM(model="gemini/gemini-2.5-flash", api_key=gemini_key)
-    llm_flash_lite = LLM(model="gemini/gemini-2.5-flash-lite", api_key=gemini_key)
+    llm_flash, llm_flash_lite = _build_llms(llm_key)
 
     search_tools = [make_tavily_tool(tavily_key), ScrapeWebsiteTool()]
 
@@ -373,7 +542,7 @@ def _process_batch(
 
 async def process_leads(
     leads: list,
-    gemini_key: str,
+    llm_key: str,
     tavily_key: str,
     our_company_context: str,
     cache_get: Optional[Callable[[str], Optional[dict]]] = None,
@@ -403,7 +572,7 @@ async def process_leads(
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
-    crews = build_crews(gemini_key, tavily_key)
+    crews = build_crews(llm_key, tavily_key)
     context_text = our_company_context
 
     task_timing: List[Dict] = []
