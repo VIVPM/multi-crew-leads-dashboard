@@ -1,6 +1,6 @@
 # Sales Pipeline — Lead Scoring & Email Generation
 
-A full-stack, multi-agent sales pipeline application: a **React** dashboard backed by a **FastAPI** server that orchestrates **CrewAI** agent crews (powered by **Google Gemini**) to score sales leads and draft personalized outreach emails, with all data stored in **Supabase**.
+A full-stack, multi-agent sales pipeline application: a **React** dashboard backed by a **FastAPI** server that orchestrates a **LangGraph** agent graph (powered by **Google Gemini**, or Cloudflare Workers AI) to score sales leads and draft personalized outreach emails, with all data stored in **Supabase**.
 
 ---
 
@@ -9,7 +9,7 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 - **Landing page** — Stripe-inspired marketing page with an animated product demo: the agent pipeline lights up in sequence, the score counts up, and the email draft types itself.
 - **React dashboard** — a menu (top-right) switches between pages: **Add a lead**, **Dashboard** (charts — industry, source, score distribution, leads over time), **Lead details** (search, edit, delete, export; per-lead analysis modal with token/cost/timing breakdowns), and **Settings** (company & ICP, email sending). The menu also shows the signed-in account and Log out.
 - **Required ICP** — your company profile & ideal customer profile live in a main-dashboard card and are required, not optional: processing a lead with none set pops a blocking dialog until you fill it in. No generic fallback exists. The placeholder guides you to write not just a strong-fit ICP but explicit **Weak fit** and **Not a fit** lines — spelling those out is what the scoring evaluation showed makes the score trustworthy.
-- **Four-agent, three-crew pipeline** — a `company` crew (Company Research & Cultural Fit, cacheable), a `personal_scoring` crew (Personal Research → Lead Scoring & Validation), and an `email` crew (Email Specialist, draft + optimize) for leads scoring above 70.
+- **Four-node LangGraph pipeline, one graph per lead** — `company` (Company Research & Cultural Fit, cacheable) → `personal_research` → `scoring` (Lead Scoring & Validation) → `email` (Email Specialist, draft + optimize) off a conditional edge for leads scoring above 70. The two research nodes are `langgraph.prebuilt.create_react_agent`; the other two have no tools and are single model calls.
 - **Company research caching** — company facts + cultural fit are cached per (company, ICP) pair for repeat leads from the same company, with a short TTL (company status can change) and a **Force refresh** checkbox on the lead form to bypass it.
 - **Web-search enrichment** — agents research leads live via **Tavily** search and website scraping.
 - **Asynchronous job queue** — processing runs in a background worker; the API responds instantly and the UI polls job status, so long LLM runs never block requests.
@@ -19,7 +19,7 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 - **Daily lead credits** — since the keys are operator-held, every processed lead is the operator's LLM spend on one shared quota, so each account gets a daily allowance set by `DAILY_LEAD_CAP` (1 credit = 1 lead). It's required with no default: a deploy that forgets it fails at startup rather than silently running on a guessed spend limit. The dashboard shows credits remaining, over-limit requests are rejected before any spend, and the count resets at UTC midnight — no credits table or reset job, since "remaining" is just `cap − leads-processed-today`.
 - **Editable & sendable email drafts** — click **Edit** on a lead's drafted email to revise it inline, or **Send** to deliver it through your own connected email account (per-user SMTP settings — a Gmail App Password or any SMTP provider; a daily cap guards the account).
 - **Structured JSON logging** — every log line is correlated by `request_id`/`job_id`/`lead_id`, so one request's or job's full story is a single grep away.
-- **Observability** — optional OpenTelemetry tracing of every crew/agent/LLM call via targeted openinference instrumentors, exported to Langfuse and/or Grafana Cloud (which also receives a `jobs_processed_total` metric powering no-activity/failure alerts), enabled automatically when the matching env vars are set. Langfuse export targets the **v4** observations-first model: spans go to the OTLP endpoint with `x-langfuse-ingestion-version: 4`, and each job's `job_id`/`lead_id` are copied onto every span so observations stay filterable on their own rather than only via the root.
+- **Observability** — optional OpenTelemetry tracing of every graph node and LLM call via a targeted openinference instrumentor, exported to Langfuse and/or Grafana Cloud (which also receives a `jobs_processed_total` metric powering no-activity/failure alerts), enabled automatically when the matching env vars are set. Langfuse export targets the **v4** observations-first model: spans go to the OTLP endpoint with `x-langfuse-ingestion-version: 4`, and each job's `job_id`/`lead_id` are copied onto every span so observations stay filterable on their own rather than only via the root.
 - **YAML-driven agents** — all agent roles, task prompts, and workflow logic configurable in `backend/config/` without code changes.
 - **Bulk CSV import** — add leads one at a time or upload a CSV; rows are validated per line and duplicates (by email) are skipped. An import must fit the day's remaining credits: uploading more leads than credits left is blocked upfront with a "upload at most N" message, rather than partially processing. During a run each lead is scored one at a time with a live per-lead list (queued / scoring… / scored / failed), so the team watches them complete one after another.
 - **Borderline scores are flagged, not hidden** — repeat scoring of the same lead varies by ~±3.5 points, so leads landing within 65–75 of the 70 email cutoff are badged **Borderline** with an explanation, rather than silently drafting (or not) on a coin flip.
@@ -50,7 +50,7 @@ graph TD
         Claim["claims pending jobs · race-safe · concurrent<br>owns the company-research cache"]
     end
 
-    subgraph AI ["4 · Reasoning layer — CrewAI · 4 agents"]
+    subgraph AI ["4 · Reasoning layer — LangGraph · 4 nodes"]
         A1["🔎 Personal Research"] --> A3["🏆 Score &amp; Validate"]
         A2["🏢 Company Research + Cultural Fit"] -.->|cache hit: skip| A3
         A3 -->|score &gt; 70| E1["✍️ Email Specialist"]
@@ -71,19 +71,32 @@ graph TD
     CLIENT -->|HTTP + JWT| APP
     APP -->|auth · CRUD · job status| DATA
     APP -->|enqueue job| CTRL
-    CTRL -->|run crews| AI
+    CTRL -->|invoke graph per lead| AI
     AI -->|research + reasoning| EXT
     CTRL -->|read cache · write results| DATA
     CTRL -.->|traces · metrics| OBS
 ```
 
-Three separate `Crew` objects (not one monolith), because `company` needs to be independently skippable on a cache hit:
+One `StateGraph`, compiled once per batch and invoked once per lead:
 
-| Crew | Agents | Runs when |
-|---|---|---|
-| `company` | Company Research & Cultural Fit Analyst (A2) | always, unless a fresh cache entry exists for `(company, ICP)` |
-| `personal_scoring` | Personal Research Specialist (A1) → Lead Scorer & Validator (A3) | always |
-| `email` | Email Specialist (E1) | only if the score from `personal_scoring` is > 70 |
+```
+START -> company -> personal_research -> scoring -> email -> END
+                                                 -> END      (score <= 70)
+```
+
+| Node | Agent | Runtime | Runs when |
+|---|---|---|---|
+| `company` | Company Research & Cultural Fit Analyst (A2) | `create_react_agent` + Tavily/scrape | always, unless a fresh cache entry exists for `(company, ICP)` — the check is inside the node, so a hit costs no model call |
+| `personal_research` | Personal Research Specialist (A1) | `create_react_agent` + Tavily/scrape | always |
+| `scoring` | Lead Scorer & Validator (A3) | one structured model call, no tools | always |
+| `email` | Email Specialist (E1) | one model call, no tools | conditional edge, only if the score is > 70 |
+
+Only the two research nodes are agents — `scoring` and `email` have no tools, so
+an agent loop there could never iterate. Agents come from `langgraph.prebuilt`;
+the `langchain` meta-package isn't installed, so no LangChain agent abstraction
+is involved. `langchain-core` supplies message types, the `@tool` decorator and
+`PydanticOutputParser`; `langchain-google-genai` / `langchain-openai` are the
+model clients.
 
 ## Project Structure
 
@@ -91,25 +104,24 @@ Three separate `Crew` objects (not one monolith), because `company` needs to be 
 .
 ├── backend/
 │   ├── backend.py            # FastAPI app: auth, lead CRUD, company profile, job enqueue/status
-│   ├── worker.py             # Background job processor (runs the crews, company-research cache)
-│   ├── pipeline.py           # CrewAI crews + process_leads entry point (no Supabase dependency)
+│   ├── worker.py             # Background job processor (runs the graph, company-research cache)
+│   ├── pipeline.py           # LangGraph graph + process_leads entry point (no Supabase dependency)
 │   ├── security.py           # bcrypt hashing + access/refresh session tokens
 │   ├── logging_setup.py      # structured JSON logs + request/job/lead correlation IDs
 │   ├── adversarial_testing.py # red-team test suite (needs backend/.venv — see below)
-│   ├── scoring_eval.py       # Tier 1: scoring reliability (repeatability, sensitivity)
-│   ├── scoring_gold_set.py   # Tier 2: agent vs human-scored gold set (accuracy)
+│   ├── run_full_eval.py      # scoring evaluation, all five phases (+ compute_metrics.py)
 │   ├── load_test.py          # worker drain + multi-worker safety (LLM stubbed); --calibrate for real cost
 │   ├── load_test_api.py      # API latency, idle vs saturated worker (LLM stubbed)
-│   ├── test_crews.py         # crew smoke test + CrewAI eval runs (needs backend/.venv — see below)
 │   ├── Dockerfile            # one image, two commands (API via uvicorn, worker via python)
 │   ├── requirements.txt      # pinned Python dependencies
-│   └── config/               # agent & task YAML definitions (all three crews)
+│   └── config/               # agent role & task prompt YAML (one entry per node)
 ├── frontend/                 # React + Vite dashboard + landing page (Stripe-inspired design system)
 │   ├── src/csv.js            # CSV import parser (bulk import)
 │   ├── src/csv.test.js       # 18 node:test checks for the parser (run in CI)
 │   ├── Dockerfile            # node build → nginx static serve
 │   └── nginx.conf            # SPA fallback + fingerprinted-asset caching
-├── tests/test_security.py    # no-network unit tests (run in CI)
+├── tests/test_security.py    # no-network auth/token unit tests (run in CI)
+├── tests/test_pipeline.py    # no-network graph wiring tests (routing, cache skip, token math)
 ├── .github/workflows/ci.yml  # lint + tests + docker build + gated deploy
 ├── docker-compose.yml        # local stack: api + worker + frontend
 └── ruff.toml                 # Python lint config
@@ -153,8 +165,8 @@ SECRET_KEY=any_long_random_string   # signs access tokens; required in productio
 GEMINI_API_KEY=your_gemini_key      # operator-held, powers all agents (required when LLM_MODEL=GEMINI)
 
 # Which provider powers the agents: GEMINI or CLOUDFLARE (required, no default).
-# CLOUDFLARE routes through Workers AI's OpenAI-compatible endpoint, which
-# LiteLLM reaches with an openai/ prefix plus an api_base — no new dependency.
+# CLOUDFLARE routes through Workers AI's OpenAI-compatible endpoint, reached by
+# langchain-openai's ChatOpenAI with nothing but a base_url swap.
 # Gemini splits work across flash (judgment) and flash-lite (retrieval);
 # Workers AI publishes one model for this, so both tiers use it there.
 LLM_MODEL=GEMINI                    # required, no default
@@ -169,7 +181,7 @@ ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173   # CORS
 # Optional — run the job worker inside the API process (single-service deploys)
 RUN_WORKER_IN_PROCESS=1
 
-# Optional — OpenTelemetry tracing of every crew/agent/LLM call, exported to
+# Optional — OpenTelemetry tracing of every graph node and LLM call, exported to
 # Langfuse and/or Grafana Cloud (Grafana also gets the jobs_processed_total metric)
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
@@ -183,29 +195,44 @@ EMAIL_SEND_DAILY_CAP=80
 
 ### Running on Cloudflare Workers AI
 
-`LLM_MODEL=CLOUDFLARE` works and has been run end to end, but the path needs
-more glue than Gemini does, all of it in `_build_llms()`. Two causes: Workers
-AI's OpenAI shim is compatible on the happy path but stricter elsewhere, and
-`gpt-oss-20b` is a reasoning model, which CrewAI doesn't special-case.
+`LLM_MODEL=CLOUDFLARE` works and has been run end to end, but still needs more
+glue than Gemini. Two causes, both unchanged by the move off CrewAI: Workers AI's
+OpenAI shim is compatible on the happy path and stricter elsewhere, and
+`gpt-oss-20b` is a reasoning model that neither framework special-cases.
 
 - **`CLOUDFLARE_MAX_TOKENS` is load-bearing.** The model spends completion
   tokens reasoning before it writes anything, and Workers AI caps replies at 256
   by default. Set it too low and replies come back with an empty `content` and
-  `finish_reason="length"`, which reaches CrewAI as a blank answer rather than an
-  error. 4096 is comfortable; a lead-scoring reply measured ~550 tokens.
-- LiteLLM has no entry for the model name, so it reports no function-calling
-  support and CrewAI silently falls back to ReAct text prompting, which this
-  model won't answer. `litellm.register_model()` fixes it.
-- Cloudflare rejects an assistant message with `content: null`, which OpenAI
-  allows next to `tool_calls`. `_CloudflareLLM` rewrites it to `""`.
-- CrewAI builds structured output through `instructor`, which makes its own
-  client — hence the `OPENAI_API_KEY`/`OPENAI_BASE_URL` assignment — and asks for
-  the result as a tool call. gpt-oss writes the JSON into `content` instead, so
-  instructor is forced into JSON mode.
+  `finish_reason="length"` — a blank answer rather than an error. 4096 is
+  comfortable; a lead-scoring reply measured ~550 tokens. It is now set once on
+  the `ChatOpenAI` constructor and applies to every call, so the monkeypatch
+  that used to force it onto `litellm.completion` is gone.
+- **Structured output has to be spelled out in the prompt.** All three of
+  LangChain's `with_structured_output` methods were measured against this model
+  and all three fail, each differently: `json_schema` returns a bare `-1.0`
+  where the object belongs, `function_calling` is ignored outright (the model
+  writes its answer into `content` instead of emitting the forced call), and
+  `json_mode` produces a markdown table because LangChain never tells the model
+  the schema. `STRUCTURED_VIA_PROMPT` switches to `PydanticOutputParser`
+  instructions plus `response_format: json_object`, which is exactly the job
+  `instructor` was doing under CrewAI. Gemini's native path is untouched.
+- **Cloudflare rejects an assistant message with `content: null`**, which OpenAI
+  allows next to `tool_calls`, and rejects list-shaped content. It only bites on
+  the *second* call of a tool round-trip, so it reads as a random mid-run
+  failure rather than a format problem. `_WorkersAIChatOpenAI` overrides
+  `_get_request_payload` to coerce both — the same fix the CrewAI version
+  applied one layer down on litellm's params.
+
+Two workarounds did die with CrewAI: `litellm.register_model()` (ChatOpenAI does
+native tool calling regardless) and the `OPENAI_API_KEY`/`OPENAI_BASE_URL`
+assignment that existed only to feed the client `instructor` built behind our
+back. Net, the Cloudflare glue went from ~150 lines to ~45, and none of it
+patches a third-party internal any more.
 
 Scoring calibration is its own question: on the same lead Gemini scored 76 while
-this model returned 100 on two of three runs. Treat the gold-set numbers in
-`docs/` as Gemini-only until they're re-measured here.
+this model returned 100 on two of three runs (an untuned post-migration spot
+check put them at 94 and 92). Treat the gold-set numbers in `docs/` as
+Gemini-only until they're re-measured here.
 
 Run the API and the worker (two terminals, from the repo root):
 
@@ -260,8 +287,8 @@ Gemini and Tavily keys are provided once by the operator in `backend/.env` (`GEM
 1. **Get started from the landing page** — sign up (which drops you straight into the app) or log in (username ≥ 3 chars, password ≥ 8 chars).
 2. **Describe your company & ICP** in the main dashboard's Company Profile card and save it — this is what cultural-fit assessment and email drafting are measured against, and it's **required**: try to process a lead with it empty and a dialog blocks you until you fill it in (no generic fallback exists).
 3. **(Optional) Connect your email** — in the **Email sending** card, add your from-address and an app password (a Gmail App Password, or any SMTP host/port) if you want to actually send drafts, not just view them.
-4. **Add a lead** (name, company, email required) and click **Save & Process** — the lead is queued, the crews score it and (if it scores above 70) draft an email. A progress bar and step list appear below the form and advance as each agent finishes, so you can see which one is working. Check **Force refresh** first to bypass the company-research cache for that batch.
-5. **Review results** — expand a lead card for the scoring breakdown and email draft; click **Edit** to revise the draft, or **Send** to email it (once your email account is connected). Open **📊 Analysis** for duration, token, and cost details (tokens are measured per crew: the single-agent company and email crews are exact, while the scoring crew's two agents split its total, so those two rows are estimates; a row marked **Cached** means company research was served from cache, **Skipped** means the email crew never ran because the score was ≤ 70 — both always listed at 0, so the breakdown always shows all 4 agents).
+4. **Add a lead** (name, company, email required) and click **Save & Process** — the lead is queued, the graph scores it and (if it scores above 70) drafts an email. A progress bar and step list appear below the form and advance as each agent finishes, so you can see which one is working. Check **Force refresh** first to bypass the company-research cache for that batch.
+5. **Review results** — expand a lead card for the scoring breakdown and email draft; click **Edit** to revise the draft, or **Send** to email it (once your email account is connected). Open **📊 Analysis** for duration, token, and cost details (tokens are measured per pipeline stage: the single-agent company and email stages are exact, while the scoring stage's two agents split its total, so those two rows are estimates; a row marked **Cached** means company research was served from cache, **Skipped** means the email node never ran because the score was ≤ 70 — both always listed at 0, so the breakdown always shows all 4 agents).
 6. **Search / export** — filter the table and export the filtered set to CSV.
 
 Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit allowance); job status is `pending → running → done | failed`.
@@ -411,7 +438,7 @@ treat ±3 as noise.
 
 Every gain above came from the prompts in `company_icp.txt` and
 `lead_qualification_tasks.yaml`. No scoring logic lives in Python — the
-pipeline just runs the crews and reads back the structured result.
+pipeline just runs the graph and reads back the structured result.
 
 ### 1. The "Dedicated Team" Requirement
 * **Before:** "Weak fit: Very small or low-tech businesses..."
