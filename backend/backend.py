@@ -1,5 +1,5 @@
 """
-backend.py — FastAPI server wrapping CrewAI pipeline + Supabase operations.
+backend.py — FastAPI server wrapping the LangGraph pipeline + Supabase operations.
 
 Run the API:     uvicorn backend.backend:app --host 0.0.0.0 --port 8000
 Run the worker:  python backend/worker.py   (processes queued lead-scoring jobs)
@@ -11,7 +11,6 @@ Supabase and returns 202 immediately; worker.py picks it up and writes results.
 import os
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 
 import logging
 import secrets
@@ -201,9 +200,11 @@ async def _init_async_supabase():
         options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
     )
 
-# Optional HTTP-layer tracing to Grafana Cloud. The FastAPI instrumentor isn't
-# in requirements.txt — its semantic-conventions pin conflicts with the
-# opentelemetry-sdk crewai needs — so the ImportError below is expected.
+# Optional HTTP-layer tracing to Grafana Cloud. The FastAPI instrumentor still
+# isn't in requirements.txt, so the ImportError below is expected. The reason it
+# was left out — a semantic-conventions clash with the opentelemetry-sdk crewai
+# pinned — died with crewai, so adding opentelemetry-instrumentation-fastapi is
+# now just a question of wanting HTTP spans, not a dependency fight.
 if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     try:
         from opentelemetry.sdk.trace import TracerProvider
@@ -226,8 +227,8 @@ if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     except ImportError:
         logger.info(
             "HTTP-layer tracing skipped: opentelemetry-instrumentation-fastapi "
-            "not installed (expected — it conflicts with crewai's otel pins). "
-            "CrewAI/LLM tracing in worker.py is unaffected."
+            "not installed (expected — it is not in requirements.txt). "
+            "Agent/LLM tracing in worker.py is unaffected."
         )
     except Exception:
         logger.exception("Failed to initialize HTTP tracing (non-fatal)")
@@ -885,8 +886,9 @@ def _persist_one_lead(
         update_payload["email_draft"] = email_draft.raw
     supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
 
-    # CrewAI reports tokens per crew, not per task, so per-agent rows are exact
-    # only for single-agent crews (company, email).
+    # Tokens are measured per pipeline stage, not per agent, so per-agent rows
+    # are exact only for the single-agent stages (company, email). The scoring
+    # stage covers two agents and splits its total between them.
     score_usage = score_obj.token_usage
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0

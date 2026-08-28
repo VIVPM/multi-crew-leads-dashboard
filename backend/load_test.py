@@ -88,7 +88,7 @@ def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
             outcome = "lost" if still_pending else "empty"
         # Wall clock (not monotonic) so the coordinator can compare across
         # processes — the first attempt also dates worker boot, which otherwise
-        # gets misread as queue contention (importing crewai is slow).
+        # gets misread as queue contention (importing langgraph is slow).
         print(f"LT_CLAIM {outcome} {time.time():.3f} {_dur:.3f}", flush=True)
         return job
 
@@ -245,7 +245,7 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
 
     if boots:
         print(f"\n  Worker boot        {min(boots):.1f}-{max(boots):.1f}s to first claim "
-              f"(importing crewai; subtract from queue wait)")
+              f"(importing langgraph; subtract from queue wait)")
     if m["wait"]:
         # min, not max: a job can be claimed as soon as the FIRST worker is up,
         # so a late-joining worker's boot time is not queueing time.

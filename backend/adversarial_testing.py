@@ -1,5 +1,5 @@
 """
-Red Teaming Test Cases for Multi-Crew Lead Coordinator.
+Red Teaming Test Cases for Multi-Agent Lead Coordinator.
 
 Tests adversarial inputs to verify agents handle edge cases gracefully:
   1. Fake company — does the agent hallucinate or admit it can't find info?
@@ -17,7 +17,7 @@ import warnings
 import asyncio
 from datetime import datetime
 
-# Windows' console defaults to cp1252, which can't print the emoji CrewAI's
+# Windows' console defaults to cp1252, which can't print the emoji the agent
 # internal event-bus logging emits — reconfigure before anything else touches
 # stdout/stderr (setting PYTHONIOENCODING via os.environ here would be too
 # late to affect the already-open stream).

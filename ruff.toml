@@ -8,9 +8,9 @@ line-length = 120
 ignore = [
     # Import-not-at-top is load-bearing here, not an oversight. Six modules
     # deliberately run setup before importing:
-    #   pipeline.py    sets CREWAI_DISABLE_TELEMETRY before crewai is imported
-    #   worker.py      installs the OTel instrumentors before crewai/litellm,
-    #                  since the litellm instrumentor patches at import time
+    #   pipeline.py    binds its module logger before the heavy agent imports
+    #   worker.py      installs the OTel instrumentor before langchain loads,
+    #                  since it patches LangChain's callbacks at import time
     #   backend.py, load_test*.py, scoring_*.py
     #                  call load_dotenv() before importing anything that reads
     #                  os.environ at module scope

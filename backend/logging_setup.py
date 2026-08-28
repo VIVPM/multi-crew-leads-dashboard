@@ -7,8 +7,8 @@ appears on every log line emitted from any module while inside the block,
 without threading extra parameters through function signatures.
 
 Scope: this instruments our own logger.info/warning/exception calls in
-backend.py/pipeline.py/worker.py. CrewAI's own verbose=True console output
-(agent "thinking" traces) goes through CrewAI's internal printer, not this
+backend.py/pipeline.py/worker.py. An agent's own step-by-step reasoning goes
+to the OTel traces in worker.py rather than through this
 logging pipeline, and is out of scope here.
 """
 
