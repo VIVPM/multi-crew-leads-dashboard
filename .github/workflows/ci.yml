@@ -19,9 +19,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Not `pip install -r requirements.txt`: crewai and friends are a multi-
-      # minute install, and nothing below actually runs the pipeline. The checks
-      # here are the ones that stay honest without a network or an API key.
       - name: Lint
         run: |
           pip install ruff==0.14.4
@@ -30,10 +27,23 @@ jobs:
       - name: Syntax check
         run: python -m py_compile backend/*.py tests/*.py
 
+      # The real requirements file, not a hand-picked subset. It used to be
+      # skipped because crewai was a multi-minute install; without it this is
+      # ~45s cold, which is worth paying because test_pipeline.py imports the
+      # graph for real, a pinned subset here would drift from requirements.txt,
+      # and a file that no longer resolves now fails here rather than in the
+      # docker job.
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      # Both suites run without a network or an API key. test_pipeline.py stubs
+      # the two functions that reach a model, so it exercises the graph wiring
+      # (routing, cache skip, token accounting, tool-name validity) and nothing
+      # that costs money.
       - name: Unit tests (no network)
         run: |
-          pip install bcrypt==5.0.0
           python tests/test_security.py
+          python tests/test_pipeline.py
 
   frontend:
     runs-on: ubuntu-latest
