@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# cp1252 consoles can't print the emoji CrewAI's event bus logs
+# cp1252 consoles can't print the emoji that show up in agent output
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -36,8 +36,8 @@ configure_logging()  # idempotent — no-op if backend.py already configured it 
 logger = logging.getLogger("worker")
 
 # Optional OTLP tracing of agent/task/LLM calls, exported to Langfuse and/or
-# Grafana Cloud. Must run before crewai/litellm are imported — the litellm
-# instrumentor patches litellm at import time.
+# Grafana Cloud. Must run before pipeline.py pulls in langchain — the
+# instrumentor patches LangChain's callback manager at import time.
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 _have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
@@ -48,8 +48,7 @@ if _have_langfuse or _have_grafana:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from openinference.instrumentation.crewai import CrewAIInstrumentor
-        from openinference.instrumentation.litellm import LiteLLMInstrumentor
+        from openinference.instrumentation.langchain import LangChainInstrumentor
 
         _tracer_provider = TracerProvider(resource=Resource.create({
             "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
@@ -100,8 +99,10 @@ if _have_langfuse or _have_grafana:
             )))
             _enabled.append("Grafana Cloud")
 
-        CrewAIInstrumentor().instrument(tracer_provider=_tracer_provider)
-        LiteLLMInstrumentor().instrument(tracer_provider=_tracer_provider)
+        # One instrumentor covers both levels now: LangGraph runs on LangChain's
+        # callback manager, so the graph nodes and the model calls underneath
+        # them come out of the same hook. Under CrewAI this took two.
+        LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
         logger.info("LLM tracing enabled via OTLP: %s", ", ".join(_enabled))
     except Exception:
         logger.exception("Failed to initialize LLM tracing (non-fatal)")

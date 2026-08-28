@@ -1,54 +1,95 @@
 """
-pipeline.py — Pure CrewAI logic for the Sales Pipeline Lead Coordinator.
-No Streamlit/FastAPI imports here. All agents, tasks, crews, and the single
+pipeline.py — Pure LangGraph logic for the Sales Pipeline Lead Coordinator.
+No Streamlit/FastAPI imports here. All agents, nodes, the graph, and the single
 async entry-point `process_leads` live here.
 
-Per-lead flow for each item in `leads`:
-  1. Personal research + scoring/validation always run fresh (2-task crew,
-     `personal_scoring`) — nothing here is safe to cache, since it's specific
-     to one person and their submitted data.
-  2. Company research (+ cultural fit) is a separate, independently
-     kickoff-able single-task crew (`company`) so it can be skipped on a
-     cache hit — company facts and cultural fit are shared across every
-     lead from the same company under the same ICP. The caller (worker.py)
-     supplies `cache_get`/`cache_set` callables; pipeline.py stays storage-
-     agnostic (no Supabase import here).
-  3. Email drafting (+ optimization, merged into one task) runs per
-     qualified lead (score > 70) via the `email` crew.
-"""
+One graph runs per lead:
 
-import os
-os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler errors in threads
+    START -> company -> personal_research -> scoring -> email -> END
+                                                    -> END      (score <= 70)
+
+  1. Company research (+ cultural fit) runs first, because scoring consumes
+     its summary. The cache check lives inside the node, so a hit skips the
+     model call entirely — company facts and cultural fit are shared across
+     every lead from the same company under the same ICP. The caller
+     (worker.py) supplies `cache_get`/`cache_set`; pipeline.py stays
+     storage-agnostic (no Supabase import here).
+  2. Personal research + scoring/validation always run fresh — nothing there
+     is safe to cache, since it's specific to one person and their submitted
+     data.
+  3. Email drafting (+ optimization, merged into one prompt) runs only for
+     qualified leads, off a conditional edge.
+
+The prompts still come from the same four YAML files the CrewAI version used,
+rendered here into system/human messages. That is deliberate: the prompts are
+what moves eval scores, so they did not change along with the framework.
+
+Outputs are wrapped in `_StageOutput` / `_CombinedScoreOutput`, which present
+the same attribute surface CrewAI's CrewOutput did (`.pydantic`, `.raw`,
+`.token_usage`, `.tasks_output`, `.to_dict()`, `[key]`). backend.py's
+persist_results reads that surface, so it needed no changes.
+"""
 
 import asyncio
 import hashlib
 import logging
+import os
 import time
 import types
 import yaml
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, TypedDict
 
 logger = logging.getLogger("pipeline")
 
-import instructor
-import litellm
+import requests
+from bs4 import BeautifulSoup
 from pydantic import BaseModel
-from crewai import Agent, Task, Crew, LLM
-from crewai_tools import ScrapeWebsiteTool
-from crewai.tools import tool
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.tools import tool
+from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import create_react_agent
 from tavily import TavilyClient
 
 from logging_setup import lead_context
 
+# Leads scoring above this get an email drafted; at or below, the email node
+# never runs.
+EMAIL_SCORE_THRESHOLD = 70
+
+# Super-steps one tool-using agent may take. A react loop spends two per tool
+# round-trip (model, then tools), so this is ~12 searches before the run gives
+# up with GraphRecursionError. CrewAI's equivalent was Agent(max_iter=25).
+TOOL_LOOP_LIMIT = 25
+
+# Longest a scraped page we hand back to an agent may be. Whole pages blow the
+# context window for no benefit — the agents want a few facts, not the site.
+SCRAPE_CHAR_LIMIT = 8000
+
+_UA = "Mozilla/5.0 (compatible; lead-coordinator/1.0)"
+
+
 def make_tavily_tool(tavily_key: str):
     """Build a Tavily search tool bound to this caller's key (no global state)."""
-    @tool("Tavily Web Search")
+    # Name must be a bare identifier: Gemini rejects a function declaration
+    # whose name has spaces in it with a 400. CrewAI accepted "Tavily Web
+    # Search"; the schema underneath never did.
+    @tool("tavily_web_search")
     def tavily_search_tool(query: str) -> str:
         """Search the web for information using Tavily."""
         client = TavilyClient(api_key=tavily_key)
         result = client.search(query, max_results=5)
         return str(result)
     return tavily_search_tool
+
+
+@tool("read_website_content")
+def scrape_website_tool(url: str) -> str:
+    """Fetch a web page and return its visible text."""
+    resp = requests.get(url, timeout=20, headers={"User-Agent": _UA})
+    resp.raise_for_status()
+    text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
+    return text[:SCRAPE_CHAR_LIMIT]
 
 
 # =============================================================================
@@ -77,7 +118,7 @@ class CompanyInfo(BaseModel):
 
 
 class CompanyResearchResult(BaseModel):
-    """Output of the standalone company-research task — the cacheable unit."""
+    """Output of the standalone company-research node — the cacheable unit."""
     company_info: CompanyInfo
     cultural_fit_score: int
     cultural_fit_notes: Optional[str] = None
@@ -118,8 +159,18 @@ def _load_configs() -> Dict[str, dict]:
     return configs
 
 
-# Load once at module level (no Streamlit dependency)
 _CONFIGS = _load_configs()
+
+# Role strings, read off the YAML so they can't drift from it. These are the
+# names persist_results writes into analysis_runs.agents_data and keys
+# agent_times by, and backend.py hardcodes two of them for its Cached/Skipped
+# rows — so they have to stay exactly what the YAML says. The .strip() is
+# because the YAML uses folded scalars (`role: >`), which leave a trailing
+# newline.
+ROLE_COMPANY = _CONFIGS["lead_agents"]["company_research_agent"]["role"].strip()
+ROLE_PERSONAL = _CONFIGS["lead_agents"]["personal_research_agent"]["role"].strip()
+ROLE_SCORING = _CONFIGS["lead_agents"]["scoring_validation_agent"]["role"].strip()
+ROLE_EMAIL = _CONFIGS["email_agents"]["email_specialist_agent"]["role"].strip()
 
 # Per-attempt pipeline timeout, scaled by lead count in process_leads()
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
@@ -144,6 +195,20 @@ if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
         "A typo here would otherwise fall through to the default provider and "
         "quietly bill the wrong account."
     )
+
+# How structured output gets produced. Gemini handles it natively, so
+# with_structured_output's default path is used there.
+#
+# Workers AI cannot, and it is not close: measured against gpt-oss-20b, all
+# three of LangChain's methods fail, each differently. `json_schema` returns a
+# bare -1.0 where the object should be. `function_calling` is ignored outright —
+# the model writes its answer into content instead of emitting the forced call,
+# the same behaviour that made CrewAI's instructor integration fall over.
+# `json_mode` on its own produces a markdown table, because LangChain never
+# tells the model what shape to return. Spelling the schema out in the prompt
+# and asking for a JSON object works on both schemas — which is exactly what
+# instructor was doing for CrewAI, just without the monkeypatching.
+STRUCTURED_VIA_PROMPT = LLM_MODEL == "CLOUDFLARE"
 
 
 # =============================================================================
@@ -179,19 +244,59 @@ def format_company_summary(company_dump: dict) -> str:
     return "\n".join(lines)
 
 
+# =============================================================================
+# CrewOutput-shaped result wrappers
+#
+# backend.py's persist_results was written against CrewAI's CrewOutput. Rather
+# than rewrite it, a stage's result presents the same surface: `.raw`,
+# `.pydantic`, `.token_usage`, `.tasks_output`, `.to_dict()`, `obj[key]`.
+# =============================================================================
+
+class _AgentRef:
+    """Stands in for a CrewAI TaskOutput — persist_results reads only `.agent`."""
+
+    def __init__(self, role: str):
+        self.agent = role
+
+
+class _StageOutput:
+    """One pipeline stage's result, shaped like a CrewOutput.
+
+    `roles` lists the agents that ran in this stage, in order, because
+    persist_results turns each into one analysis row.
+    """
+
+    def __init__(self, roles: List[str], raw: str, pydantic=None,
+                 prompt_tokens: int = 0, completion_tokens: int = 0):
+        self.raw = raw
+        self.pydantic = pydantic
+        self.tasks_output = [_AgentRef(r) for r in roles]
+        self.token_usage = types.SimpleNamespace(
+            total_tokens=prompt_tokens + completion_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+
+    def to_dict(self) -> dict:
+        return self.pydantic.model_dump() if self.pydantic is not None else {}
+
+    def __getitem__(self, key):
+        return getattr(self.pydantic, key)
+
+
 class _CombinedScoreOutput:
     """
-    Wraps the scoring crew's CrewOutput plus (optionally) the company
-    research crew's CrewOutput behind the same attribute/item access that
-    callers (backend.py) already use, so persist_results() sees one combined
-    token/task view whether or not company research actually ran this time.
+    Wraps the scoring stage's output plus (optionally) the company research
+    stage's, behind the same attribute/item access that callers (backend.py)
+    already use, so persist_results() sees one combined token/task view
+    whether or not company research actually ran this time.
     """
 
     def __init__(self, scoring_output, company_output=None):
         self._scoring_output = scoring_output
         self._company_output = company_output
 
-    # Exposed separately so the analysis breakdown can attribute tokens per crew
+    # Exposed separately so the analysis breakdown can attribute tokens per stage
     @property
     def scoring_output(self):
         return self._scoring_output
@@ -233,84 +338,96 @@ class _CombinedScoreOutput:
 
 
 # =============================================================================
-# Crew factory — accepts the Gemini and Tavily API keys from the UI
+# Prompt rendering — the same YAML the CrewAI version used, turned into messages
 # =============================================================================
 
-def _force_instructor_json_mode() -> None:
-    """Have `instructor` read structured output from content, not from a tool call.
+def _system_prompt(agent_cfg: dict) -> str:
+    return (
+        f"You are {agent_cfg['role'].strip()}. {agent_cfg['backstory'].strip()}\n"
+        f"Your personal goal is: {agent_cfg['goal'].strip()}"
+    )
 
-    instructor defaults to TOOLS mode, which expects the pydantic object to come
-    back as a function call. gpt-oss ignores the forced call and writes the JSON
-    into content instead, so instructor sees zero tool calls and gives up with
-    "Instructor does not support multiple tool calls" — even though the JSON it
-    wanted is sitting right there and is valid. JSON mode parses content, which
-    is what this model actually produces.
+
+def _human_prompt(task_cfg: dict, inputs: dict, context: str = "") -> str:
+    parts = [
+        task_cfg["description"].format(**inputs).strip(),
+        "\nThis is the expected criteria for your final answer:\n"
+        + task_cfg["expected_output"].strip(),
+    ]
+    if context:
+        parts.append("\nThis is the context you're working with:\n" + context)
+    return "\n".join(parts)
+
+
+# =============================================================================
+# Model calls
+# =============================================================================
+
+def _text(content) -> str:
+    """Flatten an AIMessage's content to a string.
+
+    It is a plain str for an ordinary reply, but a list of blocks when the
+    model returns parts (Gemini does this whenever thinking is in play). The
+    raw text ends up in prompts and in leads.email_draft, so a stringified
+    list would be visible to the user.
     """
-    if getattr(instructor.from_litellm, "_cf_json_mode_patched", False):
-        return
-
-    inner = instructor.from_litellm
-
-    def json_mode(*args, **kwargs):
-        kwargs.setdefault("mode", instructor.Mode.JSON)
-        return inner(*args, **kwargs)
-
-    json_mode._cf_json_mode_patched = True
-    instructor.from_litellm = json_mode
+    if isinstance(content, str):
+        return content
+    return "".join(
+        part if isinstance(part, str) else part.get("text", "")
+        for part in content or []
+    )
 
 
-def _force_cloudflare_max_tokens() -> None:
-    """Make every LiteLLM call carry a max_tokens, including the ones we don't own.
+def _usage(messages) -> tuple:
+    """Sum (prompt, completion) tokens over the AIMessages in `messages`."""
+    prompt = completion = 0
+    for msg in messages:
+        meta = getattr(msg, "usage_metadata", None) or {}
+        prompt += meta.get("input_tokens") or 0
+        completion += meta.get("output_tokens") or 0
+    return prompt, completion
 
-    CrewAI builds structured output through `instructor`, and its to_pydantic()
-    calls litellm.completion() without a max_tokens at all — so the request falls
-    back to the Workers AI default and the reasoning burns the budget before any
-    JSON appears ("The output is incomplete due to a max_tokens length limit").
-    There's no argument to thread through: CrewAI constructs the instructor
-    client itself. Wrapping the function is the only seam, so keep it to filling
-    in a missing default and nothing else. The flag makes it idempotent —
-    build_crews() runs once per job.
+
+def _chat(llm, messages, schema=None):
+    """One model call. Returns (text, parsed_or_None, prompt_tokens, completion_tokens)."""
+    if schema is None:
+        reply = llm.invoke(messages)
+        prompt, completion = _usage([reply])
+        return _text(reply.content), None, prompt, completion
+
+    if STRUCTURED_VIA_PROMPT:
+        parser = PydanticOutputParser(pydantic_object=schema)
+        reply = llm.bind(response_format={"type": "json_object"}).invoke(
+            [*messages, HumanMessage(parser.get_format_instructions())],
+        )
+        text = _text(reply.content)
+        prompt, completion = _usage([reply])
+        return text, parser.parse(text), prompt, completion
+
+    # include_raw so the underlying AIMessage — and its token counts — stay
+    # visible; with_structured_output otherwise hands back only the model.
+    out = llm.with_structured_output(schema, include_raw=True).invoke(messages)
+    if out.get("parsing_error"):
+        raise RuntimeError(f"{schema.__name__} parse failed: {out['parsing_error']}")
+    prompt, completion = _usage([out["raw"]])
+    return _text(out["raw"].content), out["parsed"], prompt, completion
+
+
+def _research(llm, tools, system: str, human: str):
+    """Run a tool-using agent to a final answer.
+
+    Returns (messages, prompt_tokens, completion_tokens). The whole message list
+    comes back so a caller that also wants structured output can re-read the
+    same transcript instead of paying for the research twice.
     """
-    if getattr(litellm.completion, "_cf_max_tokens_patched", False):
-        return
-
-    inner = litellm.completion
-
-    def with_default_max_tokens(*args, **kwargs):
-        if not kwargs.get("max_tokens"):
-            kwargs["max_tokens"] = CLOUDFLARE_MAX_TOKENS
-        return inner(*args, **kwargs)
-
-    with_default_max_tokens._cf_max_tokens_patched = True
-    litellm.completion = with_default_max_tokens
-
-
-class _CloudflareLLM(LLM):
-    """CrewAI's LLM with the message shape Cloudflare's OpenAI shim insists on.
-
-    Workers AI is OpenAI-compatible on the happy path but stricter about
-    messages. OpenAI lets an assistant message carry content=None when it has
-    tool_calls; Cloudflare rejects the whole request with a 400 ("required
-    properties at '/messages/2' are 'role,content'"). That only bites on the
-    second call of a tool round-trip, so it looks like a random mid-run failure
-    rather than a format problem. Coercing None to "" is enough — the tool_calls
-    field still carries the real payload.
-    """
-
-    def _prepare_completion_params(self, *args, **kwargs):
-        params = super()._prepare_completion_params(*args, **kwargs)
-        for message in params.get("messages") or []:
-            content = message.get("content")
-            if content is None:
-                message["content"] = ""
-            elif isinstance(content, list):
-                # Same reason: content blocks must arrive as a plain string.
-                message["content"] = "".join(
-                    part.get("text", "")
-                    for part in content
-                    if isinstance(part, dict)
-                )
-        return params
+    agent = create_react_agent(llm, tools, prompt=system)
+    messages = agent.invoke(
+        {"messages": [HumanMessage(human)]},
+        {"recursion_limit": TOOL_LOOP_LIMIT},
+    )["messages"]
+    prompt, completion = _usage(messages)
+    return messages, prompt, completion
 
 
 def _build_llms(llm_key: str):
@@ -323,216 +440,240 @@ def _build_llms(llm_key: str):
     is an optimisation, not something the pipeline depends on.
     """
     if LLM_MODEL == "CLOUDFLARE":
+        from langchain_openai import ChatOpenAI
+
+        class _WorkersAIChatOpenAI(ChatOpenAI):
+            """ChatOpenAI with the message shape Cloudflare's OpenAI shim insists on.
+
+            Workers AI is OpenAI-compatible on the happy path but stricter about
+            messages. OpenAI lets an assistant message carry content=None when it
+            has tool_calls, and accepts content as a list of blocks; Cloudflare
+            rejects the whole request with a 400 ("Type mismatch of
+            '/messages/2/content', 'string' not in 'null'"). It only bites on the
+            second call of a tool round-trip, so it looks like a random mid-run
+            failure rather than a format problem. Coercing None to "" and
+            flattening block lists is enough — the tool_calls field still carries
+            the real payload.
+
+            The CrewAI version needed this identical fix one layer down, on
+            litellm's params. Defined here rather than at module scope to keep
+            langchain_openai a Cloudflare-only import.
+            """
+
+            def _get_request_payload(self, *args, **kwargs) -> dict:
+                payload = super()._get_request_payload(*args, **kwargs)
+                for message in payload.get("messages") or []:
+                    content = message.get("content")
+                    if content is None:
+                        message["content"] = ""
+                    elif isinstance(content, list):
+                        message["content"] = "".join(
+                            part.get("text", "")
+                            for part in content
+                            if isinstance(part, dict)
+                        )
+                return payload
+
         account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
         if not account_id:
             raise RuntimeError(
                 "LLM_MODEL=CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID (the account the "
                 "Workers AI endpoint belongs to). Set it in backend/.env."
             )
-        # Workers AI speaks the OpenAI wire format, so LiteLLM routes it with the
-        # openai/ prefix plus an api_base rather than needing a native provider.
-        api_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
-        # LiteLLM has no entry for this model name, so it reports the model as not
-        # supporting function calling and CrewAI silently falls back to ReAct-style
-        # text prompting ("Thought:/Action:"). gpt-oss won't answer that way: it
-        # emits its whole turn on the reasoning channel and returns content=None,
-        # which surfaces as "Invalid response from LLM call - None or empty" on the
-        # very first agent step. Registering the model restores native tool calling,
-        # where it answers normally. Cheap and local — register_model only writes to
-        # LiteLLM's in-memory model table.
-        litellm.register_model({
-            f"openai/{CLOUDFLARE_MODEL}": {
-                "max_tokens": CLOUDFLARE_MAX_TOKENS,
-                "max_input_tokens": 128000,
-                "max_output_tokens": CLOUDFLARE_MAX_TOKENS,
-                "litellm_provider": "openai",
-                "mode": "chat",
-                "supports_function_calling": True,
-            },
-        })
+        # Workers AI speaks the OpenAI wire format, so ChatOpenAI reaches it with
+        # nothing but a base_url swap.
+        #
         # max_tokens is not optional here. gpt-oss-20b is a reasoning model: it
         # spends completion tokens on its own reasoning before it emits any
         # content, and Workers AI defaults the cap to 256. Left alone, the
         # reasoning eats the whole budget and the reply comes back with
-        # finish_reason="length" and an empty content field, which reaches CrewAI
-        # as a blank answer rather than an error. Measured: a lead-scoring reply
-        # needs ~550 tokens, so 4096 leaves room for the longer email task too.
-        # CrewAI converts task output to pydantic through `instructor`, which
-        # builds its own OpenAI client instead of reusing the LLM object's
-        # credentials — it reads OPENAI_API_KEY/OPENAI_BASE_URL and otherwise
-        # fails with "Missing credentials" partway through the scoring crew.
-        # Pointing those at Workers AI is safe here because nothing else in this
-        # process talks to OpenAI.
-        _force_cloudflare_max_tokens()
-        _force_instructor_json_mode()
-
-        os.environ["OPENAI_API_KEY"] = llm_key
-        os.environ["OPENAI_BASE_URL"] = api_base
-
-        llm = _CloudflareLLM(
-            model=f"openai/{CLOUDFLARE_MODEL}",
+        # finish_reason="length" and an empty content field. Measured: a
+        # lead-scoring reply needs ~550 tokens, so 4096 leaves room for the
+        # longer email task too. Unlike the CrewAI version this only has to be
+        # set once — nothing builds a second client behind our back, so the
+        # litellm.completion and instructor monkeypatches are gone with it.
+        llm = _WorkersAIChatOpenAI(
+            model=CLOUDFLARE_MODEL,
             api_key=llm_key,
-            api_base=api_base,
+            base_url=f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
             max_tokens=CLOUDFLARE_MAX_TOKENS,
         )
         return llm, llm
 
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
     return (
-        LLM(model="gemini/gemini-2.5-flash", api_key=llm_key),
-        LLM(model="gemini/gemini-2.5-flash-lite", api_key=llm_key),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key),
     )
 
 
-def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
-    """
-    Build and return a dict of crews:
-      - "personal_scoring": personal research -> scoring/validation (always runs)
-      - "company": company research + cultural fit (skippable per lead on a cache hit)
-      - "email": drafting + optimization, merged into one task
+# =============================================================================
+# Graph
+# =============================================================================
 
-    Built fresh per call (cheap — object construction only), so there is no
-    shared state between concurrent requests.
+class LeadState(TypedDict, total=False):
+    lead: dict
+    icp: str
+    company_summary: str
+    company_out: Optional[_StageOutput]
+    cache_hit: bool
+    personal_raw: str
+    personal_tokens: tuple
+    scoring: _StageOutput
+    email: Optional[_StageOutput]
+
+
+def build_graph(
+    llm_key: str,
+    tavily_key: str,
+    cache_get: Optional[Callable[[str], Optional[dict]]] = None,
+    cache_set: Optional[Callable[[str, str, dict], None]] = None,
+    force_refresh: bool = False,
+    on_stage: Optional[Callable[[str, str], None]] = None,
+    agent_times: Optional[Dict[str, float]] = None,
+):
+    """Compile the per-lead graph.
+
+    Everything except the lead itself is constant across a batch, so it is
+    captured here and the compiled graph is invoked once per lead. Built fresh
+    per call (cheap — object construction only), so there is no shared state
+    between concurrent requests.
     """
     llm_flash, llm_flash_lite = _build_llms(llm_key)
+    search_tools = [make_tavily_tool(tavily_key), scrape_website_tool]
+    times = agent_times if agent_times is not None else {}
 
-    search_tools = [make_tavily_tool(tavily_key), ScrapeWebsiteTool()]
+    def _done(stage: str, role: str, started: float, state: str = "done") -> None:
+        times[role] = round(time.time() - started, 1)
+        if on_stage:
+            on_stage(stage, state)
 
-    # --- Personal research + scoring/validation ---
-    personal_research_agent = Agent(
-        config=_CONFIGS["lead_agents"]["personal_research_agent"],
-        tools=search_tools,
-        llm=llm_flash_lite,
-    )
-    scoring_validation_agent = Agent(
-        config=_CONFIGS["lead_agents"]["scoring_validation_agent"],
-        llm=llm_flash,  # no tools: aggregates/validates context already gathered
-    )
+    # --- Company research + cultural fit (skipped on a cache hit) ---
+    def company_node(state: LeadState) -> dict:
+        started = time.time()
+        lead = state["lead"]
+        key = normalize_company_key(lead.get("company", ""), state["icp"])
+        cached = None if force_refresh else (cache_get(key) if cache_get else None)
+        if cached:
+            _done("company", ROLE_COMPANY, started, state="cached")
+            return {
+                "company_summary": format_company_summary(cached),
+                "company_out": None,
+                "cache_hit": True,
+            }
 
-    personal_research_task = Task(
-        config=_CONFIGS["lead_tasks"]["personal_research"],
-        agent=personal_research_agent,
-    )
-    scoring_validation_task = Task(
-        config=_CONFIGS["lead_tasks"]["lead_scoring_and_validation"],
-        agent=scoring_validation_agent,
-        context=[personal_research_task],
-        output_pydantic=LeadScoringResult,
-    )
-    personal_scoring_crew = Crew(
-        agents=[personal_research_agent, scoring_validation_agent],
-        tasks=[personal_research_task, scoring_validation_task],
-        verbose=True,
-    )
+        agent_cfg = _CONFIGS["lead_agents"]["company_research_agent"]
+        task_cfg = _CONFIGS["lead_tasks"]["company_research"]
+        inputs = {"lead_data": lead, "our_company_context": state["icp"]}
+        messages, p, c = _research(
+            llm_flash, search_tools,
+            _system_prompt(agent_cfg), _human_prompt(task_cfg, inputs),
+        )
+        # Re-read the finished research as CompanyResearchResult. This is the
+        # same second call create_react_agent(response_format=...) would make
+        # internally — done here instead so its tokens get counted, which they
+        # are not when the prebuilt agent makes it.
+        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult)
 
-    # --- Company research (independently kickoff-able for cache skipping) ---
-    company_research_agent = Agent(
-        config=_CONFIGS["lead_agents"]["company_research_agent"],
-        tools=search_tools,
-        llm=llm_flash,
-    )
-    company_research_task = Task(
-        config=_CONFIGS["lead_tasks"]["company_research"],
-        agent=company_research_agent,
-        output_pydantic=CompanyResearchResult,
-    )
-    company_research_crew = Crew(
-        agents=[company_research_agent],
-        tasks=[company_research_task],
-        verbose=True,
-    )
+        dump = parsed.model_dump()
+        if cache_set:
+            cache_set(key, lead.get("company", ""), dump)
+        _done("company", ROLE_COMPANY, started)
+        return {
+            "company_summary": format_company_summary(dump),
+            "company_out": _StageOutput([ROLE_COMPANY], raw, parsed, p + p2, c + c2),
+            "cache_hit": False,
+        }
+
+    # --- Personal research ---
+    def personal_node(state: LeadState) -> dict:
+        started = time.time()
+        agent_cfg = _CONFIGS["lead_agents"]["personal_research_agent"]
+        task_cfg = _CONFIGS["lead_tasks"]["personal_research"]
+        messages, p, c = _research(
+            llm_flash_lite, search_tools,
+            _system_prompt(agent_cfg),
+            _human_prompt(task_cfg, {"lead_data": state["lead"]}),
+        )
+        _done("personal_research", ROLE_PERSONAL, started)
+        return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c)}
+
+    # --- Scoring + validation (no tools: aggregates context already gathered) ---
+    def scoring_node(state: LeadState) -> dict:
+        started = time.time()
+        agent_cfg = _CONFIGS["lead_agents"]["scoring_validation_agent"]
+        task_cfg = _CONFIGS["lead_tasks"]["lead_scoring_and_validation"]
+        inputs = {
+            "lead_data": state["lead"],
+            "company_research_summary": state["company_summary"],
+        }
+        raw, parsed, p, c = _chat(
+            llm_flash,
+            [
+                SystemMessage(_system_prompt(agent_cfg)),
+                HumanMessage(_human_prompt(task_cfg, inputs, context=state["personal_raw"])),
+            ],
+            LeadScoringResult,
+        )
+        _done("scoring", ROLE_SCORING, started)
+        pp, pc = state["personal_tokens"]
+        # Personal research and scoring share one stage, matching how the
+        # CrewAI version reported them as a single crew.
+        return {"scoring": _StageOutput(
+            [ROLE_PERSONAL, ROLE_SCORING], raw, parsed, pp + p, pc + c,
+        )}
 
     # --- Email (merged draft + optimize) ---
-    email_specialist_agent = Agent(
-        config=_CONFIGS["email_agents"]["email_specialist_agent"],
-        llm=llm_flash,
-    )
-    email_task = Task(
-        config=_CONFIGS["email_tasks"]["email_drafting_and_optimization"],
-        agent=email_specialist_agent,
-    )
-    email_crew = Crew(
-        agents=[email_specialist_agent],
-        tasks=[email_task],
-        verbose=True,
-    )
+    def email_node(state: LeadState) -> dict:
+        started = time.time()
+        agent_cfg = _CONFIGS["email_agents"]["email_specialist_agent"]
+        task_cfg = _CONFIGS["email_tasks"]["email_drafting_and_optimization"]
+        dump = state["scoring"].pydantic.model_dump()
+        inputs = {
+            "our_company_context": state["icp"],
+            "personal_info": dump["personal_info"],
+            "company_info": dump["company_info"],
+            "lead_score": dump["lead_score"],
+        }
+        raw, _, p, c = _chat(llm_flash, [
+            SystemMessage(_system_prompt(agent_cfg)),
+            HumanMessage(_human_prompt(task_cfg, inputs)),
+        ])
+        _done("email", ROLE_EMAIL, started)
+        return {"email": _StageOutput([ROLE_EMAIL], raw, None, p, c)}
 
-    return {
-        "personal_scoring": personal_scoring_crew,
-        "company": company_research_crew,
-        "email": email_crew,
-    }
+    def route_email(state: LeadState) -> str:
+        return "email" if state["scoring"].pydantic.lead_score.score > EMAIL_SCORE_THRESHOLD else END
+
+    graph = StateGraph(LeadState)
+    graph.add_node("company", company_node)
+    graph.add_node("personal_research", personal_node)
+    graph.add_node("scoring", scoring_node)
+    graph.add_node("email", email_node)
+
+    graph.add_edge(START, "company")
+    graph.add_edge("company", "personal_research")
+    graph.add_edge("personal_research", "scoring")
+    graph.add_conditional_edges("scoring", route_email, ["email", END])
+    graph.add_edge("email", END)
+    return graph.compile()
 
 
 # =============================================================================
-# Per-lead orchestration (sync — run inside a worker thread, see process_leads)
+# Batch orchestration (sync — run inside a worker thread, see process_leads)
 # =============================================================================
 
-def _score_one_lead(
-    lead: dict,
-    crews: Dict[str, Crew],
-    our_company_context: str,
-    cache_get: Optional[Callable[[str], Optional[dict]]],
-    cache_set: Optional[Callable[[str, str, dict], None]],
-    force_refresh: bool,
-    on_stage: Optional[Callable[[str, str], None]] = None,
-):
-    """Returns (_CombinedScoreOutput, cache_hit: bool) for one lead."""
-    company_key = normalize_company_key(lead.get("company", ""), our_company_context)
-    cached = None if force_refresh else (cache_get(company_key) if cache_get else None)
-
-    company_output = None
-    if cached:
-        # The company crew never runs on a hit, so report its stage here
-        if on_stage:
-            on_stage("company", "cached")
-        company_summary = format_company_summary(cached)
-        cache_hit = True
-    else:
-        company_output = crews["company"].kickoff(inputs={
-            "lead_data": lead,
-            "our_company_context": our_company_context,
-        })
-        company_dump = company_output.pydantic.dict()
-        if cache_set:
-            cache_set(company_key, lead.get("company", ""), company_dump)
-        company_summary = format_company_summary(company_dump)
-        cache_hit = False
-
-    scoring_output = crews["personal_scoring"].kickoff(inputs={
-        "lead_data": lead,
-        "company_research_summary": company_summary,
-    })
-    return _CombinedScoreOutput(scoring_output, company_output), cache_hit
-
-
-def _process_batch(
-    leads: list,
-    crews: Dict[str, Crew],
-    our_company_context: str,
-    cache_get: Optional[Callable[[str], Optional[dict]]],
-    cache_set: Optional[Callable[[str, str, dict], None]],
-    force_refresh: bool,
-    on_stage: Optional[Callable[[str, str], None]] = None,
-):
+def _process_batch(graph, leads: list, our_company_context: str):
     """Runs entirely synchronously — called via asyncio.to_thread so it
     doesn't block the event loop. Returns (scores, emails, cache_hits)."""
-    scores = []
-    cache_hits = []
+    scores, emails, cache_hits = [], [], []
     for i, lead in enumerate(leads):
         with lead_context(lead.get("id", i)):
-            score_output, cache_hit = _score_one_lead(
-                lead, crews, our_company_context, cache_get, cache_set, force_refresh,
-                on_stage,
-            )
-        scores.append(score_output)
-        cache_hits.append(cache_hit)
-
-    qualified = [(i, s) for i, s in enumerate(scores) if s["lead_score"].score > 70]
-    email_inputs = [{**s.to_dict(), "our_company_context": our_company_context} for _, s in qualified]
-    emails_out = crews["email"].kickoff_for_each(email_inputs) if email_inputs else []
-    emails_by_index = {i: email for (i, _), email in zip(qualified, emails_out)}
-    emails = [emails_by_index.get(i) for i in range(len(leads))]
-
+            final = graph.invoke({"lead": lead, "icp": our_company_context})
+        scores.append(_CombinedScoreOutput(final["scoring"], final.get("company_out")))
+        emails.append(final.get("email"))
+        cache_hits.append(final["cache_hit"])
     return scores, emails, cache_hits
 
 
@@ -572,60 +713,22 @@ async def process_leads(
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
-    crews = build_crews(llm_key, tavily_key)
-    context_text = our_company_context
 
-    task_timing: List[Dict] = []
-    start_ref: List[float] = [0.0]
-
-    # Maps each agent to its pipeline stage, read off the crews themselves so it
-    # can't drift from the YAML. Roles are stripped — folded scalars (`role: >`)
-    # leave a trailing newline.
-    stage_by_role = {
-        crews["company"].agents[0].role.strip(): "company",
-        crews["personal_scoring"].agents[0].role.strip(): "personal_research",
-        crews["personal_scoring"].agents[1].role.strip(): "scoring",
-        crews["email"].agents[0].role.strip(): "email",
-    }
-
-    def _timing_cb(output):
-        agent_name = (
-            output.agent if isinstance(output.agent, str)
-            else getattr(output.agent, "role", str(output.agent))
-        )
-        task_timing.append({"agent": agent_name, "ts": time.time()})
-        # A finished task means its stage is done
-        if on_stage:
-            stage = stage_by_role.get(agent_name.strip())
-            if stage:
-                on_stage(stage, "done")
-            else:
-                logger.warning("No progress stage mapped for agent %r", agent_name)
-
-    for crew in crews.values():
-        crew.task_callback = _timing_cb
-
+    agent_times: Dict[str, float] = {}
+    graph = build_graph(
+        llm_key, tavily_key, cache_get, cache_set, force_refresh, on_stage, agent_times,
+    )
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
-
-    def _run_sync():
-        return _process_batch(leads, crews, context_text, cache_get, cache_set, force_refresh, on_stage)
 
     for attempt in range(1, max_retries + 1):
         try:
-            task_timing.clear()
-            start_ref[0] = time.time()
+            agent_times.clear()
             logger.info("Pipeline attempt %d/%d for %d lead(s)", attempt, max_retries, len(leads))
             scores, emails, cache_hits = await asyncio.wait_for(
-                asyncio.to_thread(_run_sync), timeout=timeout_s,
+                asyncio.to_thread(_process_batch, graph, leads, our_company_context),
+                timeout=timeout_s,
             )
             logger.info("Pipeline completed successfully on attempt %d", attempt)
-
-            agent_times: Dict[str, float] = {}
-            prev = start_ref[0]
-            for entry in task_timing:
-                agent_times[entry["agent"]] = round(entry["ts"] - prev, 1)
-                prev = entry["ts"]
-
             return scores, emails, agent_times, cache_hits
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
