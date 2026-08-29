@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -409,6 +409,7 @@ def signup(req: SignupRequest, request: Request):
         raise HTTPException(
             status_code=429,
             detail="Too many sign-ups from your network. Please try again later.",
+            headers={"Retry-After": str(SIGNUP_WINDOW_S)},
         )
     existing = supabase.table("users").select("id").eq("username", req.username).execute()
     if existing.data:
@@ -439,7 +440,11 @@ def signup(req: SignupRequest, request: Request):
 def login(req: LoginRequest):
     recent_failures = _recent_failure_count(req.username)
     if recent_failures >= LOGIN_MAX_FAILURES:
-        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in a few minutes.")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Try again in a few minutes.",
+            headers={"Retry-After": str(LOGIN_WINDOW_S)},
+        )
     user = supabase.table("users").select("*").eq("username", req.username).execute()
     if not user.data or not verify_password(req.password, user.data[0]["password"]):
         _record_login_failure(req.username)
@@ -551,6 +556,13 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
             raise HTTPException(status_code=400, detail="App password is required for first-time setup.")
     supabase.table("users").update(payload).eq("id", user_id).execute()
     return {"message": "Email sending settings saved."}
+
+
+def _seconds_until_utc_midnight() -> int:
+    """For Retry-After on the daily caps, which reset at UTC midnight."""
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(1, int((tomorrow - now).total_seconds()))
 
 
 def _leads_used_today(user_id: str) -> int:
@@ -734,6 +746,7 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(
             status_code=429,
             detail=f"Daily email send limit ({EMAIL_SEND_DAILY_CAP}) reached. Try again tomorrow.",
+            headers={"Retry-After": str(_seconds_until_utc_midnight())},
         )
 
     subject, body = _split_subject(lead["email_draft"])
@@ -763,7 +776,30 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
 # =============================================================================
 
 @app.post("/leads/process", status_code=202)
-def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(current_user)):
+def process_leads_endpoint(
+    req: ProcessLeadsRequest,
+    response: Response,
+    user_id: str = Depends(current_user),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key", max_length=200),
+):
+    # A retried submit — the phone lost the response, the user double-clicked —
+    # must not enqueue a second job and bill a second time. Scoped per user so
+    # one tenant's key can never collide with (or reveal) another's.
+    if idempotency_key:
+        prior = (
+            supabase.table("jobs")
+            .select("id,status")
+            .eq("user_id", user_id)
+            .eq("idempotency_key", idempotency_key)
+            .limit(1)
+            .execute()
+        )
+        if prior.data:
+            job = prior.data[0]
+            logger.info("Idempotent replay of job %s for user %s", job["id"], user_id)
+            response.status_code = 200  # 200, not 202: nothing new was accepted
+            return {"job_id": job["id"], "status": job["status"], "idempotent_replay": True}
+
     if not req.leads:
         raise HTTPException(status_code=400, detail="No leads provided.")
     if len(req.leads) > MAX_LEADS_PER_REQUEST:
@@ -793,6 +829,7 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
                 + (f", so you can process {remaining} more." if remaining
                    else ". Try again tomorrow.")
             ),
+            headers={"Retry-After": str(_seconds_until_utc_midnight())},
         )
 
     profile = supabase.table("users").select("company_context").eq("id", user_id).execute()
@@ -817,7 +854,31 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         "gemini_api_key": LLM_API_KEY,
         "tavily_api_key": TAVILY_API_KEY,
     }
-    resp = supabase.table("jobs").insert(job).execute()
+    # Only sent when the caller actually supplied a key, so a deploy where the
+    # migration hasn't been applied yet loses idempotency instead of losing
+    # processing entirely — PostgREST rejects the whole insert with 42703 if
+    # you name a column that isn't there.
+    if idempotency_key:
+        job["idempotency_key"] = idempotency_key
+    try:
+        resp = supabase.table("jobs").insert(job).execute()
+    except Exception:
+        # Two concurrent submits with the same key: the unique index let exactly
+        # one through. Re-read rather than fail — the caller wanted one job and
+        # one job exists. Any other insert error re-raises below as a 500.
+        if not idempotency_key:
+            raise
+        prior = (
+            supabase.table("jobs").select("id,status")
+            .eq("user_id", user_id).eq("idempotency_key", idempotency_key)
+            .limit(1).execute()
+        )
+        if not prior.data:
+            raise
+        logger.info("Lost the idempotency race for key; returning job %s", prior.data[0]["id"])
+        response.status_code = 200
+        return {"job_id": prior.data[0]["id"], "status": prior.data[0]["status"],
+                "idempotent_replay": True}
     if not resp.data:
         raise HTTPException(status_code=500, detail="Failed to enqueue processing job.")
     job_id = resp.data[0]["id"]
