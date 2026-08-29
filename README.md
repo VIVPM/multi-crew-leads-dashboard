@@ -122,6 +122,7 @@ model clients.
 │   └── nginx.conf            # SPA fallback + fingerprinted-asset caching
 ├── tests/test_security.py    # no-network auth/token unit tests (run in CI)
 ├── tests/test_pipeline.py    # no-network graph wiring tests (routing, cache skip, token math)
+├── tests/test_persist_results.py  # persist_results vs a real Supabase (no LLM calls, not in CI)
 ├── .github/workflows/ci.yml  # lint + tests + docker build + gated deploy
 ├── docker-compose.yml        # local stack: api + worker + frontend
 └── ruff.toml                 # Python lint config
