@@ -341,19 +341,28 @@ class _CombinedScoreOutput:
 # Prompt rendering — the same YAML the CrewAI version used, turned into messages
 # =============================================================================
 
-def _system_prompt(agent_cfg: dict) -> str:
+def _system_prompt(agent_cfg: dict, task_cfg: dict) -> str:
+    """Everything about this node that never varies between leads.
+
+    expected_output lives here rather than after the task description, which is
+    where CrewAI put it. Prompt caching keys on a shared prefix and that prefix
+    ends at the first byte which differs, so a static block sitting *after* the
+    lead data bought nothing — it truncated the cacheable run at whatever came
+    before the first placeholder. Role, backstory, goal and the output criteria
+    are identical for every lead this node will ever score, so they all belong
+    in front of the varying part.
+    """
     return (
         f"You are {agent_cfg['role'].strip()}. {agent_cfg['backstory'].strip()}\n"
-        f"Your personal goal is: {agent_cfg['goal'].strip()}"
+        f"Your personal goal is: {agent_cfg['goal'].strip()}\n\n"
+        f"This is the expected criteria for your final answer:\n"
+        f"{task_cfg['expected_output'].strip()}"
     )
 
 
 def _human_prompt(task_cfg: dict, inputs: dict, context: str = "") -> str:
-    parts = [
-        task_cfg["description"].format(**inputs).strip(),
-        "\nThis is the expected criteria for your final answer:\n"
-        + task_cfg["expected_output"].strip(),
-    ]
+    """The per-lead half: the task description with this lead's values in it."""
+    parts = [task_cfg["description"].format(**inputs).strip()]
     if context:
         parts.append("\nThis is the context you're working with:\n" + context)
     return "\n".join(parts)
@@ -568,7 +577,7 @@ def build_graph(
         inputs = {"lead_data": lead, "our_company_context": state["icp"]}
         messages, p, c = _research(
             llm_flash, search_tools,
-            _system_prompt(agent_cfg), _human_prompt(task_cfg, inputs),
+            _system_prompt(agent_cfg, task_cfg), _human_prompt(task_cfg, inputs),
         )
         # Re-read the finished research as CompanyResearchResult. This is the
         # same second call create_react_agent(response_format=...) would make
@@ -593,7 +602,7 @@ def build_graph(
         task_cfg = _CONFIGS["lead_tasks"]["personal_research"]
         messages, p, c = _research(
             llm_flash_lite, search_tools,
-            _system_prompt(agent_cfg),
+            _system_prompt(agent_cfg, task_cfg),
             _human_prompt(task_cfg, {"lead_data": state["lead"]}),
         )
         _done("personal_research", ROLE_PERSONAL, started)
@@ -611,7 +620,7 @@ def build_graph(
         raw, parsed, p, c = _chat(
             llm_flash,
             [
-                SystemMessage(_system_prompt(agent_cfg)),
+                SystemMessage(_system_prompt(agent_cfg, task_cfg)),
                 HumanMessage(_human_prompt(task_cfg, inputs, context=state["personal_raw"])),
             ],
             LeadScoringResult,
@@ -637,7 +646,7 @@ def build_graph(
             "lead_score": dump["lead_score"],
         }
         raw, _, p, c = _chat(llm_flash, [
-            SystemMessage(_system_prompt(agent_cfg)),
+            SystemMessage(_system_prompt(agent_cfg, task_cfg)),
             HumanMessage(_human_prompt(task_cfg, inputs)),
         ])
         _done("email", ROLE_EMAIL, started)
