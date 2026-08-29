@@ -11,6 +11,7 @@ half was added after load testing measured a second worker destroying
 """
 
 import os
+import signal
 import sys
 import time
 import asyncio
@@ -151,6 +152,32 @@ MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 
 # Short TTL: a company can shut down or get acquired between lookups
 COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
+
+# How long a shutdown waits for in-flight jobs before giving up on them.
+#
+# The usual advice is "longer than p99 job duration", which here would be
+# minutes — a lead takes ~50s and a job can hold several. That's not
+# achievable on Render, which sends SIGTERM and then SIGKILLs about 30s
+# later, so the default sits inside that window rather than pretending to
+# outlast it. Raise it (and the platform's own termination grace period)
+# together if you ever want a whole job to survive a redeploy.
+#
+# Even at 25s this is strictly better than no drain at all: the worker stops
+# claiming immediately, so a redeploy no longer kills jobs it accepted
+# seconds earlier, and single-lead jobs already past their model calls get
+# to write their results.
+WORKER_SHUTDOWN_GRACE_S = int(os.getenv("WORKER_SHUTDOWN_GRACE_S", "25"))
+
+_stopping = False
+
+
+def _request_stop(signum, _frame) -> None:
+    """Stop claiming new jobs; let the ones already running finish."""
+    global _stopping
+    if _stopping:
+        return  # second signal — the drain is already under way
+    _stopping = True
+    logger.info("Signal %s received; draining, no new jobs will be claimed", signum)
 
 
 def _cache_row(key: str) -> Optional[dict]:
@@ -332,14 +359,24 @@ async def main():
         POLL_INTERVAL_S, MAX_CONCURRENT_JOBS,
     )
     try:
+        # Handlers can only be installed from the main thread. With
+        # RUN_WORKER_IN_PROCESS=1 this runs in a uvicorn worker thread, where
+        # signal.signal raises ValueError — uvicorn owns the signals there and
+        # this loop just never sees one.
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, _request_stop)
+    except ValueError:
+        logger.info("Not on the main thread; uvicorn owns signal handling here")
+
+    try:
         fail_stale_running_jobs()
     except Exception:
         logger.exception("Failed to clean up stale jobs on startup")
 
     in_flight: set = set()
-    while True:
+    while not _stopping:
         # Only claim what we can start now, so no job sits claimed but unworked
-        while len(in_flight) < MAX_CONCURRENT_JOBS:
+        while not _stopping and len(in_flight) < MAX_CONCURRENT_JOBS:
             try:
                 job = claim_next_job()
             except Exception:
@@ -356,6 +393,21 @@ async def main():
         else:
             # Wake when a slot frees up or the poll interval elapses
             await asyncio.wait(in_flight, timeout=POLL_INTERVAL_S, return_when=asyncio.FIRST_COMPLETED)
+
+    if in_flight:
+        logger.info(
+            "Draining %d in-flight job(s), up to %ds", len(in_flight), WORKER_SHUTDOWN_GRACE_S,
+        )
+        _, pending = await asyncio.wait(in_flight, timeout=WORKER_SHUTDOWN_GRACE_S)
+        if pending:
+            # Left running rather than cancelled: a cancel mid-model-call would
+            # abandon a job we've already paid for, with nothing written back.
+            # fail_stale_running_jobs on the next boot reaps them.
+            logger.warning(
+                "%d job(s) outlasted the grace period; the next worker will reap them",
+                len(pending),
+            )
+    logger.info("Worker stopped")
 
 
 if __name__ == "__main__":
