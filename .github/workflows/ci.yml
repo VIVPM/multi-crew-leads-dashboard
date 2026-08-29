@@ -1,8 +1,18 @@
 name: CI
 
 on:
+  # main plus the langgraph line of work. Gating on main alone meant a feature
+  # branch got no feedback until a PR was opened, which is backwards — catching
+  # a break before it reaches main is the whole point of these checks.
+  #
+  # A pattern rather than a list of branch names, so the next langgraph-* branch
+  # is covered the day it's created instead of the day someone remembers to edit
+  # this file. The deploy job below is still pinned to refs/heads/main, so this
+  # decides what gets checked, never what gets released.
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'langgraph**'
   pull_request:
 
 # A second push to main should cancel the first run's deploy rather than race it.
