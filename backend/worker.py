@@ -119,6 +119,12 @@ _jobs_processed_counter = None
 # invisible in a per-lead table until the bill arrives.
 _tokens_counter = None
 _cost_counter = None
+# Latency, as histograms rather than counters — the shape matters more than the
+# sum. TTFT only gets recorded for providers that stream (Gemini does; Workers
+# AI is deliberately excluded, see _build_llms), so an empty TTFT series for a
+# provider means "not measurable there", not "instant".
+_ttft_histogram = None
+_tokens_per_s_histogram = None
 if _have_grafana:
     try:
         from opentelemetry.sdk.metrics import MeterProvider
@@ -147,6 +153,14 @@ if _have_grafana:
         _cost_counter = _meter.create_counter(
             "llm_cost_usd_total", unit="USD",
             description="Estimated LLM spend, by provider",
+        )
+        _ttft_histogram = _meter.create_histogram(
+            "llm_ttft_seconds", unit="s",
+            description="Time to first token, by provider (streaming providers only)",
+        )
+        _tokens_per_s_histogram = _meter.create_histogram(
+            "llm_tokens_per_second", unit="token/s",
+            description="Generation throughput per model call, by provider",
         )
         logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
     except Exception:
@@ -373,6 +387,7 @@ async def run_job(job: dict) -> list:
         progress[stage] = state
         supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
 
+    llm_stats: list = []
     scores, emails, agent_times, cache_hits = await process_leads(
         leads, job["gemini_api_key"], job["tavily_api_key"],
         our_company_context=job.get("our_company_context") or "",
@@ -380,6 +395,7 @@ async def run_job(job: dict) -> list:
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
+        llm_stats=llm_stats,
     )
     elapsed = round(time.time() - start, 1)
     results = persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
@@ -398,6 +414,16 @@ async def run_job(job: dict) -> list:
         attrs = {"provider": LLM_MODEL}
         _tokens_counter.add(tokens, attrs)
         _cost_counter.add(cost, attrs)
+
+    # One observation per model call, tagged with the provider that served it —
+    # which is not always LLM_MODEL, since a job can fail over mid-run.
+    if _ttft_histogram is not None:
+        for call in llm_stats:
+            call_attrs = {"provider": call["provider"]}
+            if call["ttft_s"] is not None:
+                _ttft_histogram.record(call["ttft_s"], call_attrs)
+            if call["tokens_per_s"] is not None:
+                _tokens_per_s_histogram.record(call["tokens_per_s"], call_attrs)
     return results
 
 
