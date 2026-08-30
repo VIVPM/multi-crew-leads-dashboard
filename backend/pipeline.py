@@ -32,8 +32,10 @@ logger = logging.getLogger("pipeline")
 
 import instructor
 import litellm
-from pydantic import BaseModel
+from litellm import exceptions as litellm_exceptions
+from pydantic import BaseModel, ValidationError
 from crewai import Agent, Task, Crew, LLM
+from crewai.utilities.converter import ConverterError
 from crewai_tools import ScrapeWebsiteTool
 from crewai.tools import tool
 from tavily import TavilyClient
@@ -540,6 +542,50 @@ def _process_batch(
 # Public async entry-point (called by worker.py)
 # =============================================================================
 
+# Failures a retry cannot fix. Re-running these spends the same money to reach
+# the same error: a schema the model can't satisfy, a key that isn't valid, a
+# request the provider rejected outright. Everything else — timeouts, 429s,
+# 5xx, dropped connections, and anything unrecognised — is retried, because one
+# wasted attempt is cheaper than failing a job that would have worked.
+#
+# Looked up by name instead of imported: litellm keeps PermissionDeniedError in
+# litellm.exceptions but not on the package root, and instructor has moved
+# InstructorRetryException between releases. A name that disappears should cost
+# us one classification, not crash the worker at import time.
+_PERMANENT_ERROR_NAMES = (
+    "AuthenticationError",          # bad or revoked key
+    "PermissionDeniedError",        # key lacks access to the model
+    "BadRequestError",              # malformed request; identical next time
+    "NotFoundError",                # model or endpoint doesn't exist
+    "ContextWindowExceededError",   # prompt is too long, and won't shrink
+    "UnsupportedParamsError",       # provider rejects a parameter we send
+    "ContentPolicyViolationError",  # blocked content
+    "JSONSchemaValidationError",    # response can't satisfy the schema
+)
+
+
+def _build_permanent_errors() -> tuple:
+    found = [
+        exc for exc in (
+            getattr(litellm_exceptions, name, None) for name in _PERMANENT_ERROR_NAMES
+        )
+        if isinstance(exc, type) and issubclass(exc, BaseException)
+    ]
+    # Structured-output failures: the model produced something the pydantic
+    # model rejects. instructor has already retried internally by this point.
+    found += [ValidationError, ConverterError]
+    try:
+        from instructor.core.exceptions import InstructorRetryException
+    except ImportError:
+        pass
+    else:
+        found.append(InstructorRetryException)
+    return tuple(found)
+
+
+_PERMANENT_ERRORS = _build_permanent_errors()
+
+
 async def process_leads(
     leads: list,
     llm_key: str,
@@ -628,7 +674,17 @@ async def process_leads(
 
             return scores, emails, agent_times, cache_hits
         except Exception as e:
-            logger.warning("Pipeline attempt %d failed: %s", attempt, e)
+            permanent = isinstance(e, _PERMANENT_ERRORS)
+            logger.warning(
+                "Pipeline attempt %d failed (%s): %s",
+                attempt, "permanent" if permanent else "retryable", e,
+            )
+            if permanent:
+                logger.error(
+                    "Not retrying: %s can't succeed on a retry, and each attempt "
+                    "re-runs every LLM call", type(e).__name__,
+                )
+                raise
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
