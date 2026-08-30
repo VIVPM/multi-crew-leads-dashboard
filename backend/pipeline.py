@@ -23,6 +23,7 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler error
 import asyncio
 import hashlib
 import logging
+import random
 import time
 import types
 import yaml
@@ -688,6 +689,9 @@ async def process_leads(
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
-            wait = 2 ** attempt
-            logger.info("Retrying in %ds...", wait)
+            # Full jitter, not a flat 2**attempt. Every job that fails during one
+            # provider outage would otherwise wake at the same second and rebuild
+            # the spike that knocked it over.
+            wait = random.uniform(0, 2 ** attempt)
+            logger.info("Retrying in %.1fs...", wait)
             await asyncio.sleep(wait)
