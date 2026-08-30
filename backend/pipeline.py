@@ -32,11 +32,15 @@ persist_results reads that surface, so it needed no changes.
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
+import random
+import socket
 import time
 import types
 import yaml
+from urllib.parse import urljoin, urlparse
 from typing import Callable, Dict, List, Optional, TypedDict
 
 logger = logging.getLogger("pipeline")
@@ -66,6 +70,10 @@ TOOL_LOOP_LIMIT = 25
 # context window for no benefit — the agents want a few facts, not the site.
 SCRAPE_CHAR_LIMIT = 8000
 
+# Redirect hops the scrape tool will follow. Each one is re-checked against the
+# egress rules, so this bounds the work rather than the trust.
+SCRAPE_MAX_REDIRECTS = 5
+
 _UA = "Mozilla/5.0 (compatible; lead-coordinator/1.0)"
 
 
@@ -83,13 +91,68 @@ def make_tavily_tool(tavily_key: str):
     return tavily_search_tool
 
 
+class UnsafeURLError(ValueError):
+    """A URL the scrape tool refuses to fetch."""
+
+
+def _assert_public_url(url: str) -> None:
+    """Refuse anything that isn't a public http(s) address.
+
+    The model chooses this URL, and a lead's own `use_case` text reaches the
+    research prompt, so the target is attacker-influenceable. Without this the
+    tool is an SSRF primitive: it would happily fetch 169.254.169.254 for cloud
+    credentials, or anything else reachable from inside the network.
+
+    Checks the scheme, then resolves the host and rejects every address it
+    resolves to — a name can legitimately return several, and one private
+    answer is enough to refuse.
+
+    Ceiling worth knowing: this is check-then-connect, so a DNS entry that
+    changes between the check and the request (rebinding) would slip through.
+    Closing that needs pinning the connection to the resolved IP, which
+    requests can't express cleanly. Not worth it here — the payoff is reading
+    a public web page, not reaching an internal service.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise UnsafeURLError(f"Refusing scheme {parsed.scheme!r}; only http and https are allowed.")
+    if not parsed.hostname:
+        raise UnsafeURLError("Refusing a URL with no host.")
+
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or
+                                   (443 if parsed.scheme == "https" else 80),
+                                   proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise UnsafeURLError(f"Could not resolve {parsed.hostname!r}: {exc}") from exc
+
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        # is_global is false for loopback, link-local (169.254/16, incl. the
+        # cloud metadata endpoint), private ranges, multicast and reserved.
+        if not ip.is_global:
+            raise UnsafeURLError(
+                f"Refusing {parsed.hostname!r}: resolves to the non-public address {ip}."
+            )
+
+
 @tool("read_website_content")
 def scrape_website_tool(url: str) -> str:
     """Fetch a web page and return its visible text."""
-    resp = requests.get(url, timeout=20, headers={"User-Agent": _UA})
-    resp.raise_for_status()
-    text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
-    return text[:SCRAPE_CHAR_LIMIT]
+    # Redirects are followed by hand so every hop gets checked. requests would
+    # follow them internally, and a public URL redirecting to 127.0.0.1 is the
+    # standard way around a check that only looks at the first address.
+    for _ in range(SCRAPE_MAX_REDIRECTS + 1):
+        _assert_public_url(url)
+        resp = requests.get(url, timeout=20, headers={"User-Agent": _UA},
+                            allow_redirects=False)
+        if resp.is_redirect or resp.is_permanent_redirect:
+            url = urljoin(url, resp.headers["Location"])
+            continue
+        resp.raise_for_status()
+        text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
+        return text[:SCRAPE_CHAR_LIMIT]
+    raise UnsafeURLError(f"Gave up after {SCRAPE_MAX_REDIRECTS} redirects.")
 
 
 # =============================================================================
@@ -188,6 +251,14 @@ except KeyError:
 CLOUDFLARE_MODEL = os.getenv("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-20b")
 CLOUDFLARE_MAX_TOKENS = int(os.getenv("CLOUDFLARE_MAX_TOKENS", "4096"))
 
+# Provider to fall back to when the primary is failing, or "" for none.
+# OFF BY DEFAULT, and deliberately so: measured on the same lead, Gemini scored
+# 78 where Workers AI scored 94. Failing over is not a transparent swap — it
+# changes the answer — so it has to be something an operator turns on knowing
+# that, not something that happens quietly during an outage. Set
+# LLM_FALLBACK_MODEL=CLOUDFLARE (with its credentials) to accept that trade.
+LLM_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "").strip().upper()
+
 _SUPPORTED_LLM_MODELS = ("GEMINI", "CLOUDFLARE")
 if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
     raise RuntimeError(
@@ -195,6 +266,16 @@ if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
         "A typo here would otherwise fall through to the default provider and "
         "quietly bill the wrong account."
     )
+if LLM_FALLBACK_MODEL:
+    if LLM_FALLBACK_MODEL not in _SUPPORTED_LLM_MODELS:
+        raise RuntimeError(
+            f"LLM_FALLBACK_MODEL={LLM_FALLBACK_MODEL!r} is not one of {_SUPPORTED_LLM_MODELS}."
+        )
+    if LLM_FALLBACK_MODEL == LLM_MODEL:
+        raise RuntimeError(
+            "LLM_FALLBACK_MODEL is the same provider as LLM_MODEL, which would "
+            "retry an outage against the endpoint that is already failing."
+        )
 
 # How structured output gets produced. Gemini handles it natively, so
 # with_structured_output's default path is used there.
@@ -369,6 +450,49 @@ def _human_prompt(task_cfg: dict, inputs: dict, context: str = "") -> str:
 
 
 # =============================================================================
+# Failure classification
+# =============================================================================
+
+# Substrings that mark a failure as the provider's fault rather than ours.
+# Matched against the exception text because every provider wraps its errors
+# differently and langchain re-wraps them again — there is no one exception
+# type to catch across Gemini, Workers AI and the transports underneath.
+_TRANSPORT_MARKERS = (
+    "timeout", "timed out", "connection", "connectionerror", "temporarily unavailable",
+    "rate limit", "resource_exhausted", "429", "500", "502", "503", "504",
+    "internal error", "overloaded", "unavailable", "deadline",
+)
+
+# Failures no amount of retrying will fix — a schema the model cannot satisfy,
+# a request it will reject identically every time. Re-running these costs the
+# full pipeline again and produces the same error.
+_PERMANENT_MARKERS = (
+    "parse failed", "validationerror", "invalid_argument", "invalid function name",
+    "api key not valid", "permission denied", "unauthorized", "401", "403",
+    "unsafeurlerror",
+)
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """Whether re-running this failure could plausibly succeed.
+
+    The core rule for an agent backend is to retry the transport and never the
+    reasoning. Before this, process_leads retried the entire batch three times
+    for any exception at all, so a Pydantic parse error re-ran every model call
+    twice more and paid three times over for the same outcome.
+
+    Unknown failures are treated as retryable: the cost of one extra attempt is
+    smaller than the cost of failing a job that would have worked.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if any(m in text for m in _PERMANENT_MARKERS):
+        return False
+    if any(m in text for m in _TRANSPORT_MARKERS):
+        return True
+    return True
+
+
+# =============================================================================
 # Model calls
 # =============================================================================
 
@@ -398,14 +522,20 @@ def _usage(messages) -> tuple:
     return prompt, completion
 
 
-def _chat(llm, messages, schema=None):
-    """One model call. Returns (text, parsed_or_None, prompt_tokens, completion_tokens)."""
+def _chat(llm, messages, schema=None, via_prompt=None):
+    """One model call. Returns (text, parsed_or_None, prompt_tokens, completion_tokens).
+
+    `via_prompt` says whether structured output has to be coaxed through the
+    prompt rather than the provider's own mechanism. It defaults to the module
+    setting for the configured provider, and the graph overrides it when it has
+    failed over to the other one.
+    """
     if schema is None:
         reply = llm.invoke(messages)
         prompt, completion = _usage([reply])
         return _text(reply.content), None, prompt, completion
 
-    if STRUCTURED_VIA_PROMPT:
+    if STRUCTURED_VIA_PROMPT if via_prompt is None else via_prompt:
         parser = PydanticOutputParser(pydantic_object=schema)
         reply = llm.bind(response_format={"type": "json_object"}).invoke(
             [*messages, HumanMessage(parser.get_format_instructions())],
@@ -439,8 +569,19 @@ def _research(llm, tools, system: str, human: str):
     return messages, prompt, completion
 
 
-def _build_llms(llm_key: str):
-    """The two model tiers the agents use, for whichever provider LLM_MODEL selects.
+def _provider_key(provider: str) -> Optional[str]:
+    """The operator-held API key for a provider, or None if it isn't configured.
+
+    Only used by the fallback path — the primary provider's key arrives as an
+    argument, because it travels with the job.
+    """
+    return os.getenv("CLOUDFLARE_API_TOKEN" if provider == "CLOUDFLARE" else "GEMINI_API_KEY")
+
+
+def _build_llms(llm_key: str, provider: Optional[str] = None):
+    """The two model tiers the agents use, for whichever provider is selected.
+
+    `provider` defaults to LLM_MODEL; the fallback path passes the other one.
 
     Returns (judgment_llm, retrieval_llm). Gemini splits them — flash for the
     calls where the answer's quality matters, flash-lite for the ones that are
@@ -448,7 +589,7 @@ def _build_llms(llm_key: str):
     publishes one model for this job, so both tiers point at it there; the split
     is an optimisation, not something the pipeline depends on.
     """
-    if LLM_MODEL == "CLOUDFLARE":
+    if (provider or LLM_MODEL) == "CLOUDFLARE":
         from langchain_openai import ChatOpenAI
 
         class _WorkersAIChatOpenAI(ChatOpenAI):
@@ -541,6 +682,7 @@ def build_graph(
     force_refresh: bool = False,
     on_stage: Optional[Callable[[str, str], None]] = None,
     agent_times: Optional[Dict[str, float]] = None,
+    provider: Optional[str] = None,
 ):
     """Compile the per-lead graph.
 
@@ -549,7 +691,8 @@ def build_graph(
     per call (cheap — object construction only), so there is no shared state
     between concurrent requests.
     """
-    llm_flash, llm_flash_lite = _build_llms(llm_key)
+    llm_flash, llm_flash_lite = _build_llms(llm_key, provider)
+    via_prompt = (provider or LLM_MODEL) == "CLOUDFLARE"
     search_tools = [make_tavily_tool(tavily_key), scrape_website_tool]
     times = agent_times if agent_times is not None else {}
 
@@ -583,7 +726,7 @@ def build_graph(
         # same second call create_react_agent(response_format=...) would make
         # internally — done here instead so its tokens get counted, which they
         # are not when the prebuilt agent makes it.
-        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult)
+        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult, via_prompt)
 
         dump = parsed.model_dump()
         if cache_set:
@@ -624,6 +767,7 @@ def build_graph(
                 HumanMessage(_human_prompt(task_cfg, inputs, context=state["personal_raw"])),
             ],
             LeadScoringResult,
+            via_prompt,
         )
         _done("scoring", ROLE_SCORING, started)
         pp, pc = state["personal_tokens"]
@@ -648,7 +792,7 @@ def build_graph(
         raw, _, p, c = _chat(llm_flash, [
             SystemMessage(_system_prompt(agent_cfg, task_cfg)),
             HumanMessage(_human_prompt(task_cfg, inputs)),
-        ])
+        ], via_prompt=via_prompt)
         _done("email", ROLE_EMAIL, started)
         return {"email": _StageOutput([ROLE_EMAIL], raw, None, p, c)}
 
@@ -724,8 +868,10 @@ async def process_leads(
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
 
     agent_times: Dict[str, float] = {}
+    provider = LLM_MODEL
     graph = build_graph(
         llm_key, tavily_key, cache_get, cache_set, force_refresh, on_stage, agent_times,
+        provider,
     )
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
 
@@ -741,9 +887,35 @@ async def process_leads(
             return scores, emails, agent_times, cache_hits
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
+            if not is_retryable(e):
+                # Retrying the reasoning re-runs every model call to reach the
+                # same error, at full price. Fail now instead.
+                logger.error("Not retryable (%s); failing immediately", type(e).__name__)
+                raise
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
-            wait = 2 ** attempt
-            logger.info("Retrying in %ds...", wait)
+
+            # Retrying the same provider through its own outage just spends the
+            # remaining attempts. If a fallback is configured, rebuild the graph
+            # against the other one for what is left. Off unless the operator
+            # opted in — the two providers do not score a lead identically.
+            if LLM_FALLBACK_MODEL and provider == LLM_MODEL:
+                fallback_key = _provider_key(LLM_FALLBACK_MODEL)
+                if fallback_key:
+                    provider = LLM_FALLBACK_MODEL
+                    logger.warning("Falling back from %s to %s for the remaining attempts",
+                                   LLM_MODEL, provider)
+                    graph = build_graph(
+                        fallback_key, tavily_key, cache_get, cache_set, force_refresh,
+                        on_stage, agent_times, provider,
+                    )
+                else:
+                    logger.warning("LLM_FALLBACK_MODEL=%s but its API key is unset; "
+                                   "staying on %s", LLM_FALLBACK_MODEL, provider)
+
+            # Full jitter. Without it every job that failed in the same outage
+            # retries in lockstep and re-creates the spike that caused it.
+            wait = random.uniform(0, 2 ** attempt)
+            logger.info("Retrying in %.1fs...", wait)
             await asyncio.sleep(wait)

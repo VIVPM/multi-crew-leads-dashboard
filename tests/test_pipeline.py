@@ -19,9 +19,33 @@ os.environ.setdefault("LLM_MODEL", "GEMINI")  # required at import time
 import pipeline  # noqa: E402
 from pipeline import (  # noqa: E402
     ROLE_COMPANY, ROLE_EMAIL, ROLE_PERSONAL, ROLE_SCORING,
-    CompanyResearchResult, LeadScoringResult, make_tavily_tool, process_leads,
-    scrape_website_tool,
+    CompanyResearchResult, LeadScoringResult, UnsafeURLError, _assert_public_url,
+    is_retryable, make_tavily_tool, process_leads, scrape_website_tool,
 )
+
+# --- egress allowlist on the scrape tool (v2: tool sandboxing) ---
+# The model picks the URL and a lead's own use_case reaches that prompt, so
+# these are the addresses an attacker would aim it at.
+for _bad in ("http://169.254.169.254/latest/meta-data/",  # cloud credentials
+             "http://127.0.0.1:8000/", "http://localhost/", "http://10.0.0.1/",
+             "http://192.168.1.1/", "http://[::1]/", "http://0.0.0.0/",
+             "file:///etc/passwd", "gopher://evil/"):
+    try:
+        _assert_public_url(_bad)
+        raise AssertionError(f"scrape tool would have fetched {_bad}")
+    except UnsafeURLError:
+        pass
+_assert_public_url("https://example.com")  # a real public host still works
+
+# --- retry classification (v2: retry the transport, never the reasoning) ---
+assert is_retryable(TimeoutError("deadline exceeded"))
+assert is_retryable(RuntimeError("503 Service Unavailable"))
+assert is_retryable(RuntimeError("429 rate limit exceeded"))
+assert not is_retryable(RuntimeError("LeadScoringResult parse failed: ..."))
+assert not is_retryable(RuntimeError("400 Invalid function name"))
+assert not is_retryable(UnsafeURLError("Refusing scheme 'file'"))
+assert is_retryable(RuntimeError("something nobody has seen before")), (
+    "unknown failures retry — one wasted attempt beats failing a job that would work")
 
 # Tool names reach Gemini as function declarations, which must be bare
 # identifiers — a name with spaces in it comes back as a 400 on the first agent
@@ -42,7 +66,7 @@ def _fake_research(llm, tools, system, human):
     return [_FakeMessage("research findings")], 100, 20
 
 
-def _fake_chat(llm, messages, schema=None):
+def _fake_chat(llm, messages, schema=None, via_prompt=None):
     if schema is CompanyResearchResult:
         parsed = CompanyResearchResult(
             company_info={
@@ -72,7 +96,7 @@ def _fake_chat(llm, messages, schema=None):
 
 pipeline._research = _fake_research
 pipeline._chat = _fake_chat
-pipeline._build_llms = lambda key: (None, None)
+pipeline._build_llms = lambda key, provider=None: (None, None)
 
 # A cache that behaves like worker.py's: both leads are at the same company, so
 # the second must be served from the first's write.
