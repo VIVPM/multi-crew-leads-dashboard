@@ -947,9 +947,10 @@ def _persist_one_lead(
         update_payload["email_draft"] = email_draft.raw
     supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
 
-    # Tokens are measured per pipeline stage, not per agent, so per-agent rows
-    # are exact only for the single-agent stages (company, email). The scoring
-    # stage covers two agents and splits its total between them.
+    # Per-agent tokens come straight off each node when the pipeline can supply
+    # them (`_AgentRef.tokens`). The even split below is the fallback for a
+    # stage that reports only a total — which is every stage under CrewAI, and
+    # none under LangGraph.
     score_usage = score_obj.token_usage
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
@@ -988,13 +989,15 @@ def _persist_one_lead(
 
     agents_data = []
     for tasks, crew_tokens in crew_buckets:
-        per_tokens = crew_tokens // len(tasks) if tasks else 0
+        split = crew_tokens // len(tasks) if tasks else 0
         for t in tasks:
             name = t.agent if isinstance(t.agent, str) else getattr(t.agent, "role", str(t.agent))
+            exact = getattr(t, "tokens", None)
+            tokens = split if exact is None else exact
             agents_data.append({
                 "agent": name, "status": "Success",
-                "tokens": per_tokens,
-                "cost": round(per_tokens * cost_per_token, 6),
+                "tokens": tokens,
+                "cost": round(tokens * cost_per_token, 6),
                 "time_seconds": agent_times.get(name),
             })
     if cache_hit:

@@ -400,10 +400,19 @@ def format_company_summary(company_dump: dict) -> str:
 # =============================================================================
 
 class _AgentRef:
-    """Stands in for a CrewAI TaskOutput — persist_results reads only `.agent`."""
+    """Stands in for a CrewAI TaskOutput.
 
-    def __init__(self, role: str):
+    `.tokens` is what CrewAI could never provide: it reported usage per crew,
+    not per task, so persist_results had to split a stage's total evenly across
+    its agents. LangGraph gives usage_metadata per node, so the real number is
+    available and gets carried here. None means "no per-agent figure", and
+    persist_results falls back to the even split — which is also what a real
+    CrewAI TaskOutput does, since it has no such attribute at all.
+    """
+
+    def __init__(self, role: str, tokens: Optional[int] = None):
         self.agent = role
+        self.tokens = tokens
 
 
 class _StageOutput:
@@ -414,10 +423,19 @@ class _StageOutput:
     """
 
     def __init__(self, roles: List[str], raw: str, pydantic=None,
-                 prompt_tokens: int = 0, completion_tokens: int = 0):
+                 prompt_tokens: int = 0, completion_tokens: int = 0,
+                 per_role: Optional[List[tuple]] = None):
         self.raw = raw
         self.pydantic = pydantic
-        self.tasks_output = [_AgentRef(r) for r in roles]
+        # per_role is (prompt, completion) for each role, in the same order.
+        # Only the scoring stage needs it — the others are single-agent, where
+        # the stage total already is the agent total.
+        if per_role:
+            self.tasks_output = [
+                _AgentRef(role, p + c) for role, (p, c) in zip(roles, per_role)
+            ]
+        else:
+            self.tasks_output = [_AgentRef(r) for r in roles]
         self.token_usage = types.SimpleNamespace(
             total_tokens=prompt_tokens + completion_tokens,
             prompt_tokens=prompt_tokens,
@@ -907,9 +925,12 @@ def build_graph(
         _done("scoring", ROLE_SCORING, started)
         pp, pc = state["personal_tokens"]
         # Personal research and scoring share one stage, matching how the
-        # CrewAI version reported them as a single crew.
+        # CrewAI version reported them as a single crew — but each node's own
+        # usage is known here, so the two agents get their real numbers rather
+        # than half of the total each.
         return {"scoring": _StageOutput(
             [ROLE_PERSONAL, ROLE_SCORING], raw, parsed, pp + p, pc + c,
+            per_role=[(pp, pc), (p, c)],
         )}
 
     # --- Email (merged draft + optimize) ---

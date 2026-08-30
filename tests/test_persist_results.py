@@ -60,12 +60,16 @@ try:
 
     # Lead A: company research ran, scored 85, email drafted.
     # Lead B: company research served from cache, scored 40, no email.
+    # personal research 90+40, scoring 10+10 — deliberately lopsided, so an
+    # even split (75/75) and the real figures (130/20) can't be confused.
     score_a = _CombinedScoreOutput(
-        _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(85), 100, 50),
+        _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(85), 100, 50,
+                     per_role=[(90, 40), (10, 10)]),
         _StageOutput([ROLE_COMPANY], "company raw", None, 30, 10),
     )
     score_b = _CombinedScoreOutput(
-        _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(40), 100, 50),
+        _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(40), 100, 50,
+                     per_role=[(90, 40), (10, 10)]),
         None,
     )
     email_a = _StageOutput([ROLE_EMAIL], "Subject: hi\n\nBody.", None, 40, 20)
@@ -107,11 +111,19 @@ try:
     assert ra["agents_executed"] == 4 and rb["agents_executed"] == 4
     by_name_a = {x["agent"]: x for x in ra["agents_data"]}
     assert set(by_name_a) == {ROLE_COMPANY, ROLE_PERSONAL, ROLE_SCORING, ROLE_EMAIL}
-    # Single-agent stages are exact; the scoring stage's two agents split its total.
+    # Every row is the agent's real usage, not a share of a stage total. An even
+    # split would have put 75 on both of the last two.
     assert by_name_a[ROLE_COMPANY]["tokens"] == 40
     assert by_name_a[ROLE_EMAIL]["tokens"] == 60
-    assert by_name_a[ROLE_PERSONAL]["tokens"] == 75
-    assert by_name_a[ROLE_SCORING]["tokens"] == 75
+    assert by_name_a[ROLE_PERSONAL]["tokens"] == 130
+    assert by_name_a[ROLE_SCORING]["tokens"] == 20
+    # and they still add up to the stage total, so nothing is lost or invented
+    assert by_name_a[ROLE_PERSONAL]["tokens"] + by_name_a[ROLE_SCORING]["tokens"] == 150
+
+    # A stage that reports no per-agent figures still falls back to the split —
+    # which is what a real CrewAI TaskOutput does, having no .tokens at all.
+    from pipeline import _StageOutput as _SO
+    assert [t.tokens for t in _SO([ROLE_PERSONAL, ROLE_SCORING], "r", None, 100, 50).tasks_output]         == [None, None]
     # agent_times is keyed by the YAML role strings and reaches the rows
     assert by_name_a[ROLE_EMAIL]["time_seconds"] == 4.0
 

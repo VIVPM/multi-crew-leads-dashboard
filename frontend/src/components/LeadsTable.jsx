@@ -90,9 +90,9 @@ function AnalysisModal({ leadId, onClose }) {
 
               <h4 className="analysis-section-title">Agent Performance Breakdown</h4>
               <p className="muted" style={{ fontSize: '0.8rem' }}>
-                Token usage is measured per pipeline stage. Company research and Email each
-                run as a single-agent stage, so those rows are exact; Personal research and
-                Lead scoring share a stage total, so those two are even-split estimates.
+                Token usage is measured per agent, straight from each step of the
+                pipeline — every row below is an exact figure, not a share of a
+                larger total.
               </p>
               <table className="analysis-table">
                 <thead>
