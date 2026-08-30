@@ -16,6 +16,7 @@ import sys
 import time
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -430,6 +431,31 @@ async def main():
         "Worker started (poll interval %ds, up to %d job(s) concurrently)",
         POLL_INTERVAL_S, MAX_CONCURRENT_JOBS,
     )
+    # pipeline.py runs each job's synchronous work through asyncio.to_thread,
+    # which hands it to the loop's default executor. That default is
+    # ThreadPoolExecutor(min(32, cpu_count + 4)) — on a 1-vCPU box, 5 threads.
+    # So MAX_CONCURRENT_JOBS=10 was a number the runtime could not honour: the
+    # loop claimed ten jobs, ran five, and left the rest sitting in `running`
+    # doing nothing while their time budget ticked down toward being reaped.
+    #
+    # Sizing the executor to the setting makes the setting mean what it says.
+    # One thread per in-flight job is exact, not an estimate — the tools inside
+    # a job (requests, tavily) run on that same thread.
+    #
+    # Scoped to this loop, so uvicorn's own threadpool is untouched when
+    # RUN_WORKER_IN_PROCESS=1 puts this loop on a worker thread.
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(
+        ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="pipeline")
+    )
+    _default_pool = min(32, (os.cpu_count() or 1) + 4)
+    if _default_pool < MAX_CONCURRENT_JOBS:
+        logger.info(
+            "Pipeline executor sized to %d; the interpreter default here would "
+            "have been %d, capping real concurrency below the setting.",
+            MAX_CONCURRENT_JOBS, _default_pool,
+        )
+
     try:
         # Handlers can only be installed from the main thread. With
         # RUN_WORKER_IN_PROCESS=1 this runs in a uvicorn worker thread, where
