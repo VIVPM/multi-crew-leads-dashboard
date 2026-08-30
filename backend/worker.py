@@ -15,6 +15,7 @@ import sys
 import time
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -326,6 +327,22 @@ async def process_one_job(job: dict) -> None:
 
 
 async def main():
+    # Every job's real work is sync and reaches the event loop through
+    # asyncio.to_thread (see process_leads), which dispatches to this loop's
+    # default executor. Unset, that executor is min(32, cpu_count + 4) threads:
+    # 12 on an 8-core dev box, where MAX_CONCURRENT_JOBS=10 fits and looks
+    # honest, but 5 on the 1-vCPU box this deploys to. The worker would then
+    # claim ten jobs and actually run five, leaving the rest sitting in
+    # `running` doing nothing while their time budget counts down toward
+    # fail_stale_running_jobs() failing them — and the user pays again on the
+    # re-process. Sizing the pool to the same number makes the setting true.
+    #
+    # Scoped to this loop on purpose. Under RUN_WORKER_IN_PROCESS=1 this runs
+    # via asyncio.run() on its own thread, so uvicorn's anyio threadpool — the
+    # one serving the sync API routes — is untouched.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="job")
+    )
     logger.info(
         "Worker started (poll interval %ds, up to %d job(s) concurrently)",
         POLL_INTERVAL_S, MAX_CONCURRENT_JOBS,
