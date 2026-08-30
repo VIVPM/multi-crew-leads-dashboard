@@ -112,6 +112,12 @@ else:
 
 # Job outcomes as a counter metric, so alerting can query it directly
 _jobs_processed_counter = None
+# Spend, as counters rather than a value read out of analysis_runs one lead at
+# a time. Keys are operator-held, so cost is the number that actually needs a
+# trend line and an alert on it — a run of unusually expensive leads is
+# invisible in a per-lead table until the bill arrives.
+_tokens_counter = None
+_cost_counter = None
 if _have_grafana:
     try:
         from opentelemetry.sdk.metrics import MeterProvider
@@ -129,8 +135,17 @@ if _have_grafana:
             resource=Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend")}),
             metric_readers=[_metric_reader],
         )
-        _jobs_processed_counter = _meter_provider.get_meter("worker").create_counter(
+        _meter = _meter_provider.get_meter("worker")
+        _jobs_processed_counter = _meter.create_counter(
             "jobs_processed_total", description="Jobs finished, by status (done/failed)",
+        )
+        _tokens_counter = _meter.create_counter(
+            "llm_tokens_total", unit="token",
+            description="LLM tokens spent, by provider",
+        )
+        _cost_counter = _meter.create_counter(
+            "llm_cost_usd_total", unit="USD",
+            description="Estimated LLM spend, by provider",
         )
         logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
     except Exception:
@@ -141,7 +156,7 @@ try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
-from pipeline import process_leads, PIPELINE_TIMEOUT_S  # noqa: E402
+from pipeline import LLM_MODEL, process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
@@ -167,6 +182,45 @@ COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
 # seconds earlier, and single-lead jobs already past their model calls get
 # to write their results.
 WORKER_SHUTDOWN_GRACE_S = int(os.getenv("WORKER_SHUTDOWN_GRACE_S", "25"))
+
+# Circuit breaker. Consecutive transport-shaped job failures before the worker
+# stops claiming, and how long it waits before trying again.
+#
+# Without this, a provider outage is worse than downtime: the worker keeps
+# claiming, each job burns its retries, and the whole backlog converts itself
+# into failed jobs that a user has to resubmit — paying for the retries on the
+# way. Pausing leaves the queue intact so the work survives the outage.
+#
+# Only transport failures count. A run of malformed leads failing validation is
+# not an outage and must not stop the queue.
+BREAKER_THRESHOLD = int(os.getenv("BREAKER_THRESHOLD", "5"))
+BREAKER_COOLDOWN_S = int(os.getenv("BREAKER_COOLDOWN_S", "60"))
+
+_consecutive_failures = 0
+_breaker_open_until = 0.0
+
+
+def _record_job_outcome(exc: Optional[BaseException]) -> None:
+    """Feed one job's result to the breaker."""
+    global _consecutive_failures, _breaker_open_until
+    if exc is None:
+        _consecutive_failures = 0  # one success is enough to call it recovered
+        return
+    if not is_retryable(exc):
+        return  # the job's own fault, not the provider's
+    _consecutive_failures += 1
+    if _consecutive_failures >= BREAKER_THRESHOLD:
+        _breaker_open_until = time.monotonic() + BREAKER_COOLDOWN_S
+        _consecutive_failures = 0
+        logger.error(
+            "Circuit breaker open: %d consecutive transport failures. "
+            "Not claiming for %ds; queued jobs stay queued.",
+            BREAKER_THRESHOLD, BREAKER_COOLDOWN_S,
+        )
+
+
+def _breaker_is_open() -> bool:
+    return time.monotonic() < _breaker_open_until
 
 _stopping = False
 
@@ -327,7 +381,23 @@ async def run_job(job: dict) -> list:
         on_stage=_on_stage,
     )
     elapsed = round(time.time() - start, 1)
-    return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
+    results = persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
+
+    # Emitted here rather than inside persist_results so pipeline/DB code stays
+    # free of metrics wiring, and so cost is counted once per job even when a
+    # lead's analysis row is later overwritten by a re-run.
+    if _tokens_counter is not None:
+        tokens = sum((getattr(s.token_usage, "total_tokens", 0) or 0) for s in scores)
+        tokens += sum((getattr(e.token_usage, "total_tokens", 0) or 0) for e in emails if e)
+        prompt = sum((getattr(s.token_usage, "prompt_tokens", 0) or 0) for s in scores)
+        prompt += sum((getattr(e.token_usage, "prompt_tokens", 0) or 0) for e in emails if e)
+        completion = tokens - prompt
+        # Same gemini-2.5-flash rates persist_results prices with.
+        cost = round(prompt * 0.15 / 1_000_000 + completion * 0.60 / 1_000_000, 6)
+        attrs = {"provider": LLM_MODEL}
+        _tokens_counter.add(tokens, attrs)
+        _cost_counter.add(cost, attrs)
+    return results
 
 
 def finish_job(job_id: str, **fields):
@@ -344,11 +414,13 @@ async def process_one_job(job: dict) -> None:
             results = await run_job(job)
             finish_job(job["id"], status="done", results=results)
             logger.info("Job done")
+            _record_job_outcome(None)
             if _jobs_processed_counter:
                 _jobs_processed_counter.add(1, {"status": "done"})
         except Exception as exc:
             logger.exception("Job failed")
             finish_job(job["id"], status="failed", error=str(exc)[:500])
+            _record_job_outcome(exc)
             if _jobs_processed_counter:
                 _jobs_processed_counter.add(1, {"status": "failed"})
 
@@ -376,7 +448,7 @@ async def main():
     in_flight: set = set()
     while not _stopping:
         # Only claim what we can start now, so no job sits claimed but unworked
-        while not _stopping and len(in_flight) < MAX_CONCURRENT_JOBS:
+        while not _stopping and not _breaker_is_open() and len(in_flight) < MAX_CONCURRENT_JOBS:
             try:
                 job = claim_next_job()
             except Exception:
