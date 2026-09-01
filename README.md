@@ -45,13 +45,13 @@ graph TD
     end
 
     subgraph AI ["4 · Agents — CrewAI · 4 agents"]
-        A1["🔎 Personal Research"] --> A3["🏆 Score &amp; Validate"]
+        A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
         A2["🏢 Company Research + Cultural Fit"] -.->|cache hit: skip| A3
-        A3 -->|score &gt; 70| E1["✍️ Email Specialist"]
+        A3 -->|score > 70| E1["✍️ Email Specialist"]
     end
 
     subgraph DATA ["5 · Data — Supabase / Postgres"]
-        Tbls[("users · leads · jobs · analysis_runs<br>company_research_cache · refresh_tokens · login_failures")]
+        Tbls[("users · leads · jobs · analysis_runs\ncompany_research_cache · refresh_tokens · login_failures")]
     end
 
     subgraph EXT ["6 · External AI"]
