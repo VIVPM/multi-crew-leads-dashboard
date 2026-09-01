@@ -6,25 +6,36 @@ A full-stack, multi-agent sales pipeline application: a **React** dashboard back
 
 ## Features
 
-- **Landing page** — Stripe-inspired marketing page with an animated product demo: the agent pipeline lights up in sequence, the score counts up, and the email draft types itself.
-- **React dashboard** — a menu (top-right) switches between pages: **Add a lead**, **Dashboard** (charts — industry, source, score distribution, leads over time), **Lead details** (search, edit, delete, export; per-lead analysis modal with token/cost/timing breakdowns), and **Settings** (company & ICP, email sending). The menu also shows the signed-in account and Log out.
-- **Required ICP** — your company profile & ideal customer profile live in a main-dashboard card and are required, not optional: processing a lead with none set pops a blocking dialog until you fill it in. No generic fallback exists. The placeholder guides you to write not just a strong-fit ICP but explicit **Weak fit** and **Not a fit** lines — spelling those out is what the scoring evaluation showed makes the score trustworthy.
-- **Four-node LangGraph pipeline, one graph per lead** — `company` (Company Research & Cultural Fit, cacheable) → `personal_research` → `scoring` (Lead Scoring & Validation) → `email` (Email Specialist, draft + optimize) off a conditional edge for leads scoring above 70. The two research nodes are `langgraph.prebuilt.create_react_agent`; the other two have no tools and are single model calls.
-- **Company research caching** — company facts + cultural fit are cached per (company, ICP) pair for repeat leads from the same company, with a short TTL (company status can change) and a **Force refresh** checkbox on the lead form to bypass it.
-- **Web-search enrichment** — agents research leads live via **Tavily** search and website scraping. The scrape tool is sandboxed: only `http`/`https`, and every host (including each redirect hop) must resolve to a public address, so a model-chosen URL can't be pointed at `localhost`, a private range, or the cloud metadata endpoint.
-- **Asynchronous job queue** — processing runs in a background worker; the API responds instantly and the UI polls job status, so long LLM runs never block requests. Failures are retried only when retrying could help — a timeout or a 503 gets another attempt with jittered backoff, while a schema error fails immediately instead of re-running every model call at full price. Submissions are **idempotent**: pass an `Idempotency-Key` header and a retry returns the job you already have instead of enqueuing (and billing for) a second one. Shutdown drains rather than drops — SIGTERM stops the worker claiming new jobs and gives in-flight ones a window to finish, so a redeploy no longer fails work it accepted seconds earlier.
-- **Live per-agent progress** — while a lead is processing, a progress bar and step list below the form show which agent is working: Company research & cultural fit → Personal research → Lead scoring → Email draft. Each step ticks over as that agent's task actually completes (the worker publishes stages to `jobs.progress`), so it reflects real pipeline state rather than an animated guess — including **cached** when company research was skipped.
-- **Token-based auth** — signup/login with bcrypt password hashing (signing up logs you straight in, no second login step); a short-lived 60-minute access token plus a revocable 14-day refresh token (stored server-side as a hash) that the frontend renews silently, so a session lasts without a hard hourly logout and logout revokes it server-side; every lead endpoint is ownership-checked; login is rate-limited (5 failed attempts → 15-minute lockout) and signups are capped per IP (10 accounts/hour) so nobody farms daily credits by scripting throwaway accounts.
-- **Operator-held API keys** — Gemini and Tavily keys are supplied once by the operator in `backend/.env`; end users never enter keys.
-- **Daily lead credits** — since the keys are operator-held, every processed lead is the operator's LLM spend on one shared quota, so each account gets a daily allowance set by `DAILY_LEAD_CAP` (1 credit = 1 lead). It's required with no default: a deploy that forgets it fails at startup rather than silently running on a guessed spend limit. The dashboard shows credits remaining, over-limit requests are rejected before any spend, and the count resets at UTC midnight — no credits table or reset job, since "remaining" is just `cap − leads-processed-today`.
-- **Editable & sendable email drafts** — click **Edit** on a lead's drafted email to revise it inline, or **Send** to deliver it through your own connected email account (per-user SMTP settings — a Gmail App Password or any SMTP provider; a daily cap guards the account).
-- **Structured JSON logging** — every log line is correlated by `request_id`/`job_id`/`lead_id`, so one request's or job's full story is a single grep away.
-- **Observability** — `llm_tokens_total` and `llm_cost_usd_total` counters make spend alertable rather than something you read one lead at a time, and a circuit breaker pauses claiming after repeated provider failures. Optional OpenTelemetry tracing of every graph node and LLM call via a targeted openinference instrumentor, exported to Langfuse and/or Grafana Cloud (which also receives a `jobs_processed_total` metric powering no-activity/failure alerts), enabled automatically when the matching env vars are set. Langfuse export targets the **v4** observations-first model: spans go to the OTLP endpoint with `x-langfuse-ingestion-version: 4`, and each job's `job_id`/`lead_id` are copied onto every span so observations stay filterable on their own rather than only via the root.
-- **YAML-driven agents** — all agent roles, task prompts, and workflow logic configurable in `backend/config/` without code changes.
-- **Bulk CSV import** — add leads one at a time or upload a CSV; rows are validated per line and duplicates (by email) are skipped. An import must fit the day's remaining credits: uploading more leads than credits left is blocked upfront with a "upload at most N" message, rather than partially processing. During a run each lead is scored one at a time with a live per-lead list (queued / scoring… / scored / failed), so the team watches them complete one after another.
-- **Borderline scores are flagged, not hidden** — repeat scoring of the same lead varies by ~±3.5 points, so leads landing within 65–75 of the 70 email cutoff are badged **Borderline** with an explanation, rather than silently drafting (or not) on a coin flip.
-- **Red-team test suite** — adversarial inputs (fake companies, prompt injection, contradictory data) with saved pass/fail reports.
-- **Scoring evaluation harness** — reliability checks (repeatability, discrimination, seniority sensitivity, invariance) plus a human gold-set comparison for accuracy.
+**Scoring** — a four-node LangGraph pipeline researches each lead, scores it 0-100
+against your ICP, and drafts a cold outreach email for anything above 70. Company
+research is cached per `(company, ICP)`, so a second lead from the same firm skips
+it. Repeat scoring varies ~±3.5 points, so leads landing in 65-75 are badged
+**Borderline** rather than silently drafted or not on a coin flip.
+
+**Your ICP is required, not optional.** Processing with an empty company profile
+is blocked by a dialog — there is no generic fallback. The placeholder asks for
+explicit *Weak fit* and *Not a fit* lines, because spelling those out is what the
+evaluation showed makes the score trustworthy.
+
+**Never blocks on the LLM** — `POST /leads/process` returns `202` with a job id
+and a background worker does the work; the UI polls and shows which agent is
+running, including **cached** when company research was skipped. Submissions are
+idempotent via an `Idempotency-Key` header, failures retry only when retrying
+could help, and shutdown drains in-flight jobs rather than dropping them.
+
+**Costs are bounded and visible** — keys are operator-held, so each account gets
+`DAILY_LEAD_CAP` leads per UTC day (required, no default: a deploy that forgets it
+fails at startup rather than guessing a spend limit). Per-lead token and cost
+breakdowns are in the Analysis modal, and `llm_tokens_total` / `llm_cost_usd_total`
+make spend alertable rather than something you read one lead at a time.
+
+**The rest** — React dashboard with charts, search, CSV export and bulk import;
+editable drafts sent through your own SMTP account; bcrypt auth with rotating
+refresh tokens, ownership checks and rate limiting; agent prompts in
+`backend/config/*.yaml` with no code changes; structured JSON logs correlated by
+`request_id`/`job_id`/`lead_id`; optional OpenTelemetry tracing to Langfuse
+(v4 observations model) and Grafana Cloud; a red-team suite and a 50-lead
+scoring evaluation.
 
 ---
 
@@ -213,44 +224,20 @@ EMAIL_SEND_DAILY_CAP=80
 
 ### Running on Cloudflare Workers AI
 
-`LLM_MODEL=CLOUDFLARE` works and has been run end to end, but still needs more
-glue than Gemini. Two causes, both unchanged by the move off CrewAI: Workers AI's
-OpenAI shim is compatible on the happy path and stricter elsewhere, and
-`gpt-oss-20b` is a reasoning model that neither framework special-cases.
+`LLM_MODEL=CLOUDFLARE` works end to end but needs more glue than Gemini, for two
+reasons: the OpenAI shim is compatible on the happy path and stricter elsewhere,
+and `gpt-oss-20b` is a reasoning model no framework special-cases.
 
-- **`CLOUDFLARE_MAX_TOKENS` is load-bearing.** The model spends completion
-  tokens reasoning before it writes anything, and Workers AI caps replies at 256
-  by default. Set it too low and replies come back with an empty `content` and
-  `finish_reason="length"` — a blank answer rather than an error. 4096 is
-  comfortable; a lead-scoring reply measured ~550 tokens. It is now set once on
-  the `ChatOpenAI` constructor and applies to every call, so the monkeypatch
-  that used to force it onto `litellm.completion` is gone.
-- **Structured output has to be spelled out in the prompt.** All three of
-  LangChain's `with_structured_output` methods were measured against this model
-  and all three fail, each differently: `json_schema` returns a bare `-1.0`
-  where the object belongs, `function_calling` is ignored outright (the model
-  writes its answer into `content` instead of emitting the forced call), and
-  `json_mode` produces a markdown table because LangChain never tells the model
-  the schema. `STRUCTURED_VIA_PROMPT` switches to `PydanticOutputParser`
-  instructions plus `response_format: json_object`, which is exactly the job
-  `instructor` was doing under CrewAI. Gemini's native path is untouched.
-- **Cloudflare rejects an assistant message with `content: null`**, which OpenAI
-  allows next to `tool_calls`, and rejects list-shaped content. It only bites on
-  the *second* call of a tool round-trip, so it reads as a random mid-run
-  failure rather than a format problem. `_WorkersAIChatOpenAI` overrides
-  `_get_request_payload` to coerce both — the same fix the CrewAI version
-  applied one layer down on litellm's params.
+| Quirk | Handling |
+|---|---|
+| Replies capped at 256 tokens by default, and reasoning eats that before any content appears — you get empty `content` with `finish_reason="length"`, not an error | `CLOUDFLARE_MAX_TOKENS=4096`, set once on the constructor. A lead-scoring reply measured ~550 tokens |
+| **All three** `with_structured_output` methods fail: `json_schema` returns a bare `-1.0`, `function_calling` is ignored (the model writes into `content`), `json_mode` emits a markdown table because the schema is never sent | `STRUCTURED_VIA_PROMPT` uses `PydanticOutputParser` + `response_format: json_object`. Gemini's native path is untouched |
+| Rejects `content: null` on an assistant message (which OpenAI allows beside `tool_calls`) and list-shaped content — and only on the *second* call of a tool round-trip, so it reads as a random mid-run failure | `_WorkersAIChatOpenAI` coerces both in `_get_request_payload` |
+| Streaming reports **double** the real usage — 162/126/288 where the non-streaming call gives 81/60/141 | Streaming stays off here, so this provider reports no TTFT. Correct billing beats a latency metric |
 
-Two workarounds did die with CrewAI: `litellm.register_model()` (ChatOpenAI does
-native tool calling regardless) and the `OPENAI_API_KEY`/`OPENAI_BASE_URL`
-assignment that existed only to feed the client `instructor` built behind our
-back. Net, the Cloudflare glue went from ~150 lines to ~45, and none of it
-patches a third-party internal any more.
-
-Scoring calibration is its own question: on the same lead Gemini scored 76 while
-this model returned 100 on two of three runs (an untuned post-migration spot
-check put them at 94 and 92). Treat the gold-set numbers in `docs/` as
-Gemini-only until they're re-measured here.
+**The two providers disagree on scores**, so this isn't a drop-in swap: measured
+on the same lead, Gemini 96 vs Workers AI 91, and 78 vs 94 on another. Treat the
+evaluation numbers below as Gemini-only until they're re-measured here.
 
 Run the API and the worker (two terminals, from the repo root):
 
@@ -306,7 +293,7 @@ Gemini and Tavily keys are provided once by the operator in `backend/.env` (`GEM
 2. **Describe your company & ICP** in the main dashboard's Company Profile card and save it — this is what cultural-fit assessment and email drafting are measured against, and it's **required**: try to process a lead with it empty and a dialog blocks you until you fill it in (no generic fallback exists).
 3. **(Optional) Connect your email** — in the **Email sending** card, add your from-address and an app password (a Gmail App Password, or any SMTP host/port) if you want to actually send drafts, not just view them.
 4. **Add a lead** (name, company, email required) and click **Save & Process** — the lead is queued, the graph scores it and (if it scores above 70) drafts an email. A progress bar and step list appear below the form and advance as each agent finishes, so you can see which one is working. Check **Force refresh** first to bypass the company-research cache for that batch.
-5. **Review results** — expand a lead card for the scoring breakdown and email draft; click **Edit** to revise the draft, or **Send** to email it (once your email account is connected). Open **📊 Analysis** for duration, token, and cost details (every agent's tokens and cost are its own measured usage, not a share of a stage total; a row marked **Cached** means company research was served from cache, **Skipped** means the email node never ran because the score was ≤ 70 — both always listed at 0, so the breakdown always shows all 4 agents).
+5. **Review results** — expand a lead card for the breakdown and draft; **Edit** to revise, **Send** to email it. **📊 Analysis** shows duration, tokens and cost per agent — each figure is that agent's own measured usage. A row reads **Cached** when company research came from cache and **Skipped** when the score was ≤ 70, both at 0, so all four agents always appear.
 6. **Search / export** — filter the table and export the filtered set to CSV.
 
 Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit allowance); job status is `pending → running → done | failed`.
@@ -315,18 +302,89 @@ Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit a
 
 ## Scaling notes
 
-- Lead processing is decoupled from HTTP via the `jobs` table. Each `worker.py` process runs up to `MAX_CONCURRENT_JOBS` (default 10) jobs concurrently via `asyncio` — unrelated users' jobs run in parallel, not queued behind each other one at a time. Add more `worker.py` processes to raise the ceiling further; running several is safe (load-tested), since a starting worker ages each `running` job against its own time budget instead of assuming everything in flight is abandoned. Requires the `started_at` column from `migrations.sql`.
-- Access tokens are stateless (HMAC-signed) and refresh tokens live in the shared `refresh_tokens` table, so any API instance can serve or refresh any session — instances scale horizontally behind a load balancer; set the same `SECRET_KEY` on every one.
-- Both rate limiters are Supabase-backed, not in-memory, so they hold correctly across multiple API instances: login (`login_failures`, per username) and signup (`signup_attempts`, per IP). The signup cap (`SIGNUP_MAX_PER_IP`/`SIGNUP_WINDOW_S`, default 10/hour) counts one row per created account, so a spammer can't mint accounts to farm each one's daily credits.
-- `POST /leads/process` accepts an optional **`Idempotency-Key`** header. A repeat with the same key returns the existing job as **200** with `idempotent_replay: true`, instead of the usual **202** for a newly accepted one; two concurrent submits on one key still produce exactly one job. Scoped per user, so one account's key can never collide with another's. Requires the `jobs.idempotency_key` column and its partial unique index from `migrations.sql` — without them the header is ignored rather than erroring, so an unapplied migration costs idempotency, not processing.
-- Every `429` carries a **`Retry-After`**. The daily lead and email caps compute the seconds to UTC midnight, where they actually reset; the login lockout and per-IP signup cap report their own windows.
-- Company research (facts + cultural fit) is cached per `(company, ICP)` pair — `COMPANY_CACHE_TTL_DAYS` (default 7) bounds how long a company shutting down / getting acquired could go undetected; `ProcessLeadsRequest.force_refresh` bypasses the cache for a batch, exposed in the UI as a **Force refresh** checkbox on the lead form.
-- Concurrent requests for the same brand-new company don't duplicate the research: the first cache miss atomically claims the row (`company_key` is unique), so a second concurrent miss waits on the winner instead of re-running Tavily + Gemini itself.
-- `GET /leads` returns only the columns the list renders. `scoring_result` and `email_draft` are ~78% of a lead row but are only shown once a card is expanded, so they come from `GET /leads/{lead_id}/detail` on demand — measured **~100KB → 15.8KB** for a 50-lead account on the most-requested endpoint. Trade-off: search no longer matches text *inside* drafts or scoring JSON (server-side search would be the fix if that's ever wanted).
-- Every route in `backend.py` is a sync `def`, so FastAPI runs each in a worker thread — anyio caps that pool at 40 by default, which is the first ceiling under load. The two hottest read endpoints (`GET /leads`, `GET /jobs/{id}`) use a genuinely async Supabase client instead, so they suspend on I/O rather than holding a thread. Converting more routes means converting *every* blocking call inside them too; a half-converted `async def` blocks the whole event loop, which is worse than leaving it sync.
+| Concern | How it's handled |
+|---|---|
+| **Throughput** | Jobs live in a `jobs` table, not in the request. Each worker runs up to `MAX_CONCURRENT_JOBS` (default 10) concurrently, and sizes its thread pool to match — the interpreter default is `min(32, cpu+4)`, which is 5 on a 1-vCPU box and would silently cap it. Run more workers to go wider; that's load-tested and safe because a starting worker ages each `running` job against its own budget instead of assuming everything in flight is abandoned. |
+| **Horizontal API** | Access tokens are stateless HMAC; refresh tokens live in Supabase. Any instance serves any session — just set the same `SECRET_KEY` everywhere. |
+| **Rate limits** | Both are Supabase-backed, not in-memory, so they hold across instances: login per username, signup per IP (one row per created account, so nobody mints accounts to farm daily credits). Every `429` carries `Retry-After`. |
+| **Duplicate submits** | `Idempotency-Key` returns the existing job as `200` with `idempotent_replay: true` instead of `202`. Two concurrent submits on one key still produce one job. Needs `jobs.idempotency_key` from `migrations.sql`; without it the header is ignored rather than erroring. |
+| **Duplicate research** | The first cache miss atomically claims the row via the unique `company_key`, so a concurrent miss waits on the winner rather than re-running Tavily + Gemini. `COMPANY_CACHE_TTL_DAYS` (default 7) bounds staleness. |
+| **Payload size** | `GET /leads` returns only what the list renders; `scoring_result` and `email_draft` are ~78% of a row and load on demand from `/leads/{id}/detail`. Measured **~100KB → 15.8KB** for a 50-lead account. Trade-off: search no longer matches text inside drafts. |
+| **First ceiling** | Every route is a sync `def`, so FastAPI runs it in anyio's threadpool — capped at 40. The two hottest reads (`GET /leads`, `GET /jobs/{id}`) are genuinely async and suspend on I/O instead. Converting more means converting every blocking call inside them; a half-converted `async def` blocks the whole loop and is worse than leaving it sync. |
 
 ---
 
+
+---
+
+## Load testing
+
+Two harnesses, both stubbing the LLM so they measure *this* system rather than
+Gemini's latency: `backend/load_test.py` (worker drain, multi-worker safety) and
+`backend/load_test_api.py` (API latency, ramp). Raw results are in
+`load_test_results/`.
+
+### Worker drain — 20 jobs, 4 workers
+
+Does the queue drain, and do concurrent workers corrupt each other's work?
+
+| | |
+|---|---|
+| Jobs completed | **20 done, 0 failed, 0 stuck** |
+| Drain time | 50.3s for 200 leads (20 jobs × 10) |
+| Peak concurrent | 20 |
+| Claim latency | p50 576ms · p95 622ms |
+| Queue wait | p50 22.3s · p95 27.1s |
+| Contested claims | 20 won, 9 lost, 25 empty polls |
+
+The 9 lost claims are the point, not a defect: four workers raced for the same
+row and the conditional `UPDATE ... WHERE status='pending'` let exactly one win.
+Nothing was double-processed. This is the test that caught an earlier bug where a
+starting worker failed **100%** of another worker's in-flight jobs — fixed by
+ageing each job against its own `started_at` budget.
+
+### API latency — idle vs saturated worker
+
+Does a busy worker slow the API? Run at 20 concurrent clients with 5 jobs
+processing in-process, which is the worst case (`RUN_WORKER_IN_PROCESS=1` shares
+an interpreter with the API).
+
+| Endpoint | Idle p50 / p95 | Saturated p50 / p95 |
+|---|---|---|
+| `GET /` health | 0ms / 31ms | 0ms / 16ms |
+| `GET /leads` | 312ms / 390ms | 313ms / 844ms |
+| `GET /jobs/{id}` | 297ms / 344ms | 312ms / 813ms |
+| `POST /auth/login` | 1610ms / 1890ms | 1547ms / 1828ms |
+
+**0 errors in both phases.** Medians barely move; p95 roughly doubles on the two
+Supabase reads under load. Login is slow in both — that's bcrypt work factor, by
+design, and it's unaffected by worker load.
+
+### Ramp — deployed Render instance
+
+Read-mix traffic against the real deployment, stepping concurrency up until
+latency degrades.
+
+| Concurrency | Requests | Errors | p50 | p95 | Throughput |
+|---|---|---|---|---|---|
+| 10 | 289 | 0% | 328ms | 532ms | 28.1 req/s |
+| 25 | 374 | 0% | 657ms | 1109ms | 34.8 req/s |
+| 50 | 395 | 0% | 1110ms | 2890ms | 35.0 req/s |
+| 75 | 327 | 0% | 1906ms | 6219ms | 27.1 req/s |
+| 100 | 343 | 0% | 2594ms | 7813ms | 27.2 req/s |
+
+**Estimated comfortable ceiling: ~25 concurrent users** on one free-tier instance.
+Throughput plateaus around 35 req/s at 50 concurrent and then *falls* while
+latency keeps climbing — the signature of a saturated queue, not a broken one.
+Zero errors at every level, so the failure mode is slowness rather than refusal.
+
+### Cost calibration
+
+`load_test.py --calibrate` runs real leads to price a batch. The recorded run
+(5 leads, ~$0.029/lead, 258s median per lead) is **CrewAI-era** and no longer
+representative: the LangGraph pipeline measures **~$0.011/lead** at 15-40k tokens
+and 45-85s. The queue and API numbers above are unaffected, since those runs stub
+the LLM entirely.
 
 ## Testing & Evaluation
 
@@ -336,9 +394,7 @@ Processing is capped per account per day by `DAILY_LEAD_CAP` (the daily credit a
 |---|---|---|
 | Unit tests (no network) | python tests/test_security.py | ✅ |
 | CSV parser (18 checks) | cd frontend && npm test | ✅ |
-| Lint | 
-uff check backend/ tests/ · 
-pm run lint | ✅ |
+| Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
 | Red teaming | python backend/adversarial_testing.py | — (real LLM calls) |
 | Scoring Evaluation | python backend/run_full_eval.py | — (evaluates all 50 leads) |
 
