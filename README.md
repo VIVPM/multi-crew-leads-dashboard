@@ -214,7 +214,7 @@ Operator-held in `backend/.env` — users never enter keys:
 
 ## Load Testing
 
-Two harnesses in `backend/`, both stub the LLM so runs cost nothing. Results in `load_test_results/`.
+Two harnesses in `backend/`, both stub the LLM unless calibration is explicitly requested. Results in `load_test_results/`.
 
 ### Worker drain + multi-worker safety
 
@@ -223,11 +223,12 @@ Two harnesses in `backend/`, both stub the LLM so runs cost nothing. Results in 
 | Metric | Value |
 |---|---|
 | Completed / failed / stuck | 20 / 0 / 0 |
-| Contested claims | 9 (all safely rejected) |
+| Claims won / lost / empty | 20 / 9 / 25 |
+| Worker boot | ~16.5s per worker |
 | Drain time | 50.3s |
 | Queue wait p50 / p95 | 22.3s / 27.1s |
 
-**Takeaway:** multi-worker is safe — the conditional UPDATE rejects every double-claim. ~31% contested-claim loss rate is immaterial; `SELECT … FOR UPDATE SKIP LOCKED` is the upgrade if worker count grows.
+**What it caught:** a starting worker ran `fail_stale_running_jobs` and killed 100% of another worker's in-flight jobs. Fixed by ageing each job against its own `started_at` budget rather than a flat timeout — a worker can't reap a job that's still within its time allowance. The 9 contested claims (conditional UPDATE rejections) are the other safety layer; ~31% loss rate is immaterial, `SELECT … FOR UPDATE SKIP LOCKED` is the upgrade if worker count grows.
 
 ### API latency under saturation
 
