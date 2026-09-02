@@ -10,7 +10,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Required ICP** — processing is blocked until a company profile and ideal customer profile are saved
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
-- **Reliable execution** — idempotent submissions, targeted retries, graceful worker shutdown, optional provider failover, and a circuit breaker for provider outages
+- **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, optional provider failover, and a circuit breaker
 - **Bounded, visible spend** — operator-held keys, required `DAILY_LEAD_CAP`, and per-agent token/cost/timing details
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits
 - **React dashboard** — charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending
@@ -87,6 +87,7 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 ├── backend/
 │   ├── backend.py             # FastAPI: auth, lead CRUD, profiles, job queue
 │   ├── worker.py              # concurrent job processor and company cache
+│   ├── queue_policy.py        # tenant round-robin job selection
 │   ├── pipeline.py            # LangGraph graph and process_leads entry point
 │   ├── security.py            # bcrypt and access/refresh tokens
 │   ├── logging_setup.py       # JSON logs and correlation IDs
@@ -104,6 +105,7 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   └── nginx.conf
 ├── tests/test_security.py
 ├── tests/test_pipeline.py
+├── tests/test_queue_policy.py
 ├── tests/test_persist_results.py
 ├── .github/workflows/ci.yml
 ├── docker-compose.yml
@@ -152,6 +154,8 @@ DAILY_LEAD_CAP=5                     # required, no default
 ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173
 
 RUN_WORKER_IN_PROCESS=1              # optional single-service deployment
+MAX_CONCURRENT_JOBS=10               # concurrent jobs inside the one worker process
+FAIR_CLAIM_SCAN_LIMIT=100            # oldest pending rows considered for fairness
 WORKER_SHUTDOWN_GRACE_S=25
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
@@ -170,7 +174,7 @@ uvicorn backend.backend:app --host 0.0.0.0 --port 8000
 python backend/worker.py
 ```
 
-For a single-service deployment, set `RUN_WORKER_IN_PROCESS=1`. Use a dedicated worker for greater throughput.
+For a single-service deployment, set `RUN_WORKER_IN_PROCESS=1`. When hosting the worker separately, set it to `0` and run exactly one `python backend/worker.py` process. That one process handles up to `MAX_CONCURRENT_JOBS=10` jobs concurrently; tenant round-robin keeps claims fair across accounts.
 
 ### Cloudflare Workers AI
 
@@ -224,7 +228,9 @@ Jobs move through `pending → running → done | failed`. Daily processing is l
 
 ## Scaling Notes
 
-- **Worker concurrency** — each process runs `MAX_CONCURRENT_JOBS` (default 10) jobs and owns a matching thread pool. Add worker processes to scale horizontally; job claims are atomic and stale work is judged from each job's `started_at`.
+- **Tenant fairness** — the worker scans the oldest `FAIR_CLAIM_SCAN_LIMIT` pending rows, rotates across their `user_id` values, and preserves FIFO within each tenant. The conditional update remains the atomic claim boundary.
+- **Worker capacity** — the chosen deployment runs one worker process with up to `MAX_CONCURRENT_JOBS=10` concurrent pipelines. Its executor is sized to the setting, so all claimed jobs can actually start.
+- **Autoscaling remains pending** — the current deployment uses one fixed worker. It does not publish a queue-depth scaling metric or configure managed scale-up/scale-down rules. `MAX_CONCURRENT_JOBS` controls concurrency inside that worker; it is not autoscaling.
 - **Stateless API** — access tokens are HMAC-signed and refresh tokens live in Supabase, so API instances can scale with a shared `SECRET_KEY`.
 - **Distributed limits** — login and signup limits are Supabase-backed and hold across instances. Every `429` includes `Retry-After`.
 - **Idempotency** — repeated `Idempotency-Key` submissions return the existing job. Concurrent requests with one key still create a single job.
