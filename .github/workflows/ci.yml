@@ -46,14 +46,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
-      # Both suites run without a network or an API key. test_pipeline.py stubs
+      # All three suites run without a network or an API key. test_pipeline.py stubs
       # the two functions that reach a model, so it exercises the graph wiring
       # (routing, cache skip, token accounting, tool-name validity) and nothing
-      # that costs money.
+      # that costs money; test_queue_policy.py covers fair scheduling without
+      # importing the configured app.
       - name: Unit tests (no network)
         run: |
           python tests/test_security.py
           python tests/test_pipeline.py
+          python tests/test_queue_policy.py
 
   frontend:
     runs-on: ubuntu-latest
