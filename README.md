@@ -255,7 +255,7 @@ Both harnesses stub the LLM unless calibration is explicitly requested. Raw repo
 | Queue wait p50 / p95 | 22.3s / 27.1s |
 | Contested claims | 20 won / 9 safely rejected |
 
-The conditional claim allowed exactly one worker to take each job. This test also caught a stale-job bug where a new worker failed another worker's in-flight jobs; recovery now uses each job's `started_at` budget.
+The conditional claim allowed exactly one worker to take each job, and stale-job recovery ages each job against its own `started_at` budget, so a starting worker never reaps another worker's in-flight work.
 
 ### API latency under saturation
 
