@@ -88,11 +88,10 @@ graph TD
 │   ├── security.py           # bcrypt + access/refresh tokens
 │   ├── logging_setup.py      # structured JSON logs + correlation IDs
 │   ├── adversarial_testing.py # red-team suite
-│   ├── scoring_eval.py       # scoring reliability (repeatability, sensitivity)
-│   ├── scoring_gold_set.py   # agent vs human gold set (accuracy)
+│   ├── run_full_eval.py      # 50-lead evaluation (accuracy + stability + adversarial)
+│   ├── compute_metrics.py    # metrics helper for run_full_eval
 │   ├── load_test.py          # worker drain + multi-worker safety (--calibrate for real cost)
 │   ├── load_test_api.py      # API latency under saturation + production ramp
-│   ├── test_crews.py         # crew smoke test + CrewAI eval
 │   ├── Dockerfile            # one image, two commands (API / worker)
 │   ├── requirements.txt
 │   └── config/               # agent & task YAML (all three crews)
@@ -348,7 +347,7 @@ Scores are single runs; with ~1.5 std-dev, treat ±3 as noise. Leads in 65–75 
 
 ## What Was Tuned
 
-All gains came from prompts in `company_icp.txt` and `lead_qualification_tasks.yaml` — no scoring logic in Python.
+All gains came from the prompts in `lead_qualification_tasks.yaml` and the user-entered ICP text (`users.company_context`) — no scoring logic in Python.
 
 1. **"Dedicated team" rule** — companies without engineering/IT capacity to test an enterprise product are disqualified. Fixed false positives on small local businesses (photography studios → 10-20 range).
 
