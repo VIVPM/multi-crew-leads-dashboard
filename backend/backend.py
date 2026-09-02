@@ -200,11 +200,10 @@ async def _init_async_supabase():
         options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
     )
 
-# Optional HTTP-layer tracing to Grafana Cloud. The FastAPI instrumentor still
-# isn't in requirements.txt, so the ImportError below is expected. The reason it
-# was left out — a semantic-conventions clash with the opentelemetry-sdk crewai
-# pinned — died with crewai, so adding opentelemetry-instrumentation-fastapi is
-# now just a question of wanting HTTP spans, not a dependency fight.
+# Optional HTTP-layer tracing to Grafana Cloud. opentelemetry-instrumentation-
+# fastapi is deliberately not in requirements.txt, so the ImportError below is
+# the normal path, not a failure. Nothing blocks adding it — it is only a
+# question of whether HTTP spans are wanted alongside the LLM ones.
 if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     try:
         from opentelemetry.sdk.trace import TracerProvider
