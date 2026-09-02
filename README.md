@@ -227,7 +227,7 @@ Two harnesses in `backend/`, both stub the LLM unless calibration is explicitly 
 | Drain time | 50.3s |
 | Queue wait p50 / p95 | 22.3s / 27.1s |
 
-**What it caught:** a starting worker ran `fail_stale_running_jobs` and killed 100% of another worker's in-flight jobs. Fixed by ageing each job against its own `started_at` budget rather than a flat timeout — a worker can't reap a job that's still within its time allowance. The 9 contested claims (conditional UPDATE rejections) are the other safety layer; ~31% loss rate is immaterial, `SELECT … FOR UPDATE SKIP LOCKED` is the upgrade if worker count grows.
+**Design:** each job stamps `started_at` when claimed, and `fail_stale_running_jobs` ages each job against its own budget — so a booting worker can't reap another worker's in-flight jobs. The 9 contested claims (conditional UPDATE rejections) are the other safety layer; ~31% loss rate is immaterial, `SELECT … FOR UPDATE SKIP LOCKED` is the upgrade if worker count grows.
 
 ### API latency under saturation
 
