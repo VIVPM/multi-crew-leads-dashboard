@@ -172,6 +172,7 @@ try:
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
 from pipeline import LLM_MODEL, process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
+from queue_policy import choose_round_robin_job  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
@@ -179,6 +180,17 @@ POLL_INTERVAL_S = 3
 PIPELINE_MAX_ATTEMPTS = 3
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
+if MAX_CONCURRENT_JOBS < 1:
+    raise RuntimeError("MAX_CONCURRENT_JOBS must be at least 1")
+
+# Round-robin fairness is applied to this oldest-first candidate window.  With
+# DAILY_LEAD_CAP=5, 100 rows is enough to see past one tenant's entire daily
+# burst while keeping each poll bounded.  Increase it only if multi-day queue
+# backlogs become normal.
+FAIR_CLAIM_SCAN_LIMIT = int(os.getenv("FAIR_CLAIM_SCAN_LIMIT", "100"))
+if FAIR_CLAIM_SCAN_LIMIT < 2:
+    raise RuntimeError("FAIR_CLAIM_SCAN_LIMIT must be at least 2")
+_last_claimed_user_id: Optional[str] = None
 
 # Short TTL: a company can shut down or get acquired between lookups
 COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
@@ -352,18 +364,26 @@ def fail_stale_running_jobs():
 
 
 def claim_next_job():
-    """Atomically claim the oldest pending job; returns None if there is none."""
+    """Fairly choose and atomically claim a pending job.
+
+    The database remains the durable queue.  Within the oldest candidate
+    window, tenants are served round-robin and each tenant remains FIFO.  The
+    cursor is process-local by design: this deployment uses one worker, while
+    the conditional update below still prevents double processing if another
+    worker is ever added.
+    """
+    global _last_claimed_user_id
     pending = (
         supabase.table("jobs")
         .select("*")
         .eq("status", "pending")
         .order("created_at")
-        .limit(1)
+        .limit(FAIR_CLAIM_SCAN_LIMIT)
         .execute()
     )
     if not pending.data:
         return None
-    job = pending.data[0]
+    job = choose_round_robin_job(pending.data, _last_claimed_user_id)
     claimed = (
         supabase.table("jobs")
         .update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
@@ -373,6 +393,7 @@ def claim_next_job():
     )
     if not claimed.data:
         return None
+    _last_claimed_user_id = str(job.get("user_id") or "")
     return job
 
 
