@@ -342,7 +342,7 @@ def calibrate(n_leads: int, base: str) -> None:
         {"company_context": donor[0]["company_context"]}).eq("username", LOAD_USER).execute()
 
     auth = {"Authorization": f"Bearer {token}"}
-    lead_ids = []
+    created = []
     for company, title in companies:
         r = httpx.post(f"{base}/leads", headers=auth, timeout=30, json={
             "name": f"Calibration {company}", "company": company, "job_title": title,
@@ -351,9 +351,15 @@ def calibrate(n_leads: int, base: str) -> None:
             "industry": "Technology", "location": "United States", "source": "Website",
         })
         r.raise_for_status()
-        lead_ids.append(r.json()["id"])  # create_lead returns the inserted row
+        created.append(r.json())  # create_lead returns the inserted row
 
-    leads_payload = [{"id": i} for i in lead_ids if i]
+    # The whole row, not just its id: /leads/process stores req.leads verbatim
+    # and only checks ownership by id, so posting [{"id": n}] hands the pipeline
+    # a lead with no company or use_case. It scores every one of them 0 for
+    # missing data and the calibration measures nothing. The frontend posts the
+    # full lead for the same reason (App.jsx:182).
+    leads_payload = [c for c in created if c.get("id")]
+    lead_ids = [c["id"] for c in leads_payload]
     print(f"Created {len(leads_payload)} leads; processing for real (~${0.019 * len(leads_payload):.2f})...")
 
     t0 = time.time()
