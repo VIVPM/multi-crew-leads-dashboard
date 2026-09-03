@@ -16,16 +16,14 @@ frontend/dist
 
 # Local-only notes and generated output
 upgrade_roadmap.txt
-evaluation_plan.txt
+v0-v1-v2.txt
 migrations.sql
 CLAUDE.md
 .claude
 company_icp.txt
-gold_set_template.csv
 scoring_eval_results
 adversarial_results
-adversial_results
 load_test_results
-sample_leads.csv
+sample_leads_*.csv
 *.md
 !README.md
