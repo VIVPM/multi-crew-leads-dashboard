@@ -32,6 +32,7 @@ import uuid
 import argparse
 import asyncio
 import subprocess
+from types import SimpleNamespace
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -59,12 +60,17 @@ def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
         time.sleep(start_delay)
     import worker
 
+    # worker.py sums token_usage off every score to emit the cost metrics, so a
+    # bare None here fails the job before it ever reaches the queue measurement.
+    _usage = SimpleNamespace(total_tokens=0, prompt_tokens=0, completion_tokens=0)
+
     async def stub_process_leads(leads, *_a, **_k):
         # Sequential per lead, matching how the real pipeline bills time, so a
         # 10-lead job takes 10x a 1-lead job here too.
         await asyncio.sleep(lead_seconds * len(leads))
         n = len(leads)
-        return [None] * n, [None] * n, {}, [False] * n
+        scores = [SimpleNamespace(token_usage=_usage) for _ in range(n)]
+        return scores, [None] * n, {}, [False] * n
 
     def stub_persist_results(leads, *_a, **_k):
         return [{"lead_id": lead.get("id"), "stub": True} for lead in leads]
@@ -277,8 +283,9 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
               f"worker, {claims['empty']} on an empty queue")
         if claims["lost"]:
             print(f"    -> {claims['lost'] / contested * 100:.0f}% of contested claims lost and slept 3s instead")
-            print("       of taking the next job (claim_next_job only ever looks at the")
-            print("       single oldest pending row).")
+            print("       of taking the next job. Every job here belongs to one user, so")
+            print("       round-robin has a single tenant to rotate through and all the")
+            print("       workers converge on the same oldest row.")
 
     out_dir = os.path.join(os.path.dirname(BASE_DIR), "load_test_results")
     os.makedirs(out_dir, exist_ok=True)
