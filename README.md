@@ -298,7 +298,9 @@ Run Python scripts with the backend virtual environment.
 |---|---|---|
 | Unit tests | `python tests/test_security.py` | ✅ |
 | Graph wiring | `python tests/test_pipeline.py` | ✅ |
+| Claim fairness | `python tests/test_queue_policy.py` | ✅ |
 | CSV parser | `cd frontend && npm test` | ✅ |
+| Persistence | `python tests/test_persist_results.py` | needs Supabase |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
 | Red team | `python backend/adversarial_testing.py` | real LLM |
 | Full evaluation | `python backend/run_full_eval.py` | real LLM |
