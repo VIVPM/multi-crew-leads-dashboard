@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-07-28T10:00:05.409849+00:00",
-  "tag": "LOADTEST-api-6e14f3d7",
+  "timestamp": "2026-09-03T18:30:00.075854+00:00",
+  "tag": "LOADTEST-api-e6087f1f",
   "config": {
     "port": 8011,
     "concurrency": 20,
@@ -21,57 +21,57 @@
   "levels": [
     {
       "concurrency": 10,
-      "requests": 289,
+      "requests": 281,
       "errors": 0,
       "error_pct": 0.0,
-      "fast_p50_ms": 327.9999999795109,
-      "fast_p95_ms": 532.0000000065193,
+      "fast_p50_ms": 328.00000000861473,
+      "fast_p95_ms": 687.9999999946449,
       "login_p95_ms": NaN,
-      "req_per_s": 28.1,
-      "elapsed_s": 10.3
+      "req_per_s": 27.0,
+      "elapsed_s": 10.4
     },
     {
       "concurrency": 25,
-      "requests": 374,
+      "requests": 404,
       "errors": 0,
       "error_pct": 0.0,
-      "fast_p50_ms": 657.0000000065193,
-      "fast_p95_ms": 1108.9999999967404,
+      "fast_p50_ms": 594.0000000118744,
+      "fast_p95_ms": 1077.999999979511,
       "login_p95_ms": NaN,
-      "req_per_s": 34.8,
-      "elapsed_s": 10.7
+      "req_per_s": 39.1,
+      "elapsed_s": 10.3
     },
     {
       "concurrency": 50,
-      "requests": 395,
+      "requests": 362,
       "errors": 0,
       "error_pct": 0.0,
-      "fast_p50_ms": 1109.9999999860302,
-      "fast_p95_ms": 2890.00000001397,
+      "fast_p50_ms": 1202.999999979511,
+      "fast_p95_ms": 3592.9999999934807,
       "login_p95_ms": NaN,
-      "req_per_s": 35.0,
+      "req_per_s": 32.0,
       "elapsed_s": 11.3
     },
     {
       "concurrency": 75,
-      "requests": 327,
+      "requests": 417,
       "errors": 0,
       "error_pct": 0.0,
-      "fast_p50_ms": 1906.0000000172295,
-      "fast_p95_ms": 6218.9999999827705,
+      "fast_p50_ms": 1608.9999999967404,
+      "fast_p95_ms": 4655.999999988126,
       "login_p95_ms": NaN,
-      "req_per_s": 27.1,
+      "req_per_s": 34.3,
       "elapsed_s": 12.1
     },
     {
       "concurrency": 100,
-      "requests": 343,
+      "requests": 414,
       "errors": 0,
       "error_pct": 0.0,
-      "fast_p50_ms": 2594.000000040978,
-      "fast_p95_ms": 7813.000000023749,
+      "fast_p50_ms": 2375.0,
+      "fast_p95_ms": 6719.000000011874,
       "login_p95_ms": NaN,
-      "req_per_s": 27.2,
+      "req_per_s": 33.0,
       "elapsed_s": 12.6
     }
   ],

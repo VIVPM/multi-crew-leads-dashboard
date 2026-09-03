@@ -277,13 +277,13 @@ Read-only traffic against the deployed Render instance:
 
 | Concurrent | req/s | p50 | p95 | Errors |
 |---|---|---|---|---|
-| 10 | 28.1 | 328ms | 532ms | 0 |
-| 25 | 34.8 | 657ms | 1109ms | 0 |
-| 50 | 35.0 | 1110ms | 2890ms | 0 |
-| 75 | 27.1 | 1906ms | 6219ms | 0 |
-| 100 | 27.2 | 2594ms | 7813ms | 0 |
+| 10 | 27.0 | 328ms | 688ms | 0 |
+| 25 | 39.1 | 594ms | 1078ms | 0 |
+| 50 | 32.0 | 1203ms | 3593ms | 0 |
+| 75 | 34.3 | 1609ms | 4656ms | 0 |
+| 100 | 33.0 | 2375ms | 6719ms | 0 |
 
-The comfortable ceiling is about 25 concurrent users on one free-tier instance. Throughput plateaus near 35 req/s, then declines; the system slows without producing errors.
+The comfortable ceiling is about 25 concurrent users on one free-tier instance. Throughput plateaus near 35 req/s, then flattens; the system slows without producing errors. The ceiling held across the CrewAI and LangGraph runs, which is expected — this measures the sync-`def` endpoints against anyio's threadpool, and the framework behind the worker is idle throughout.
 
 The ramp also drove bcrypt's work factor from 12 to 10. At factors used previously, login p95 reached 18–29 seconds at only 10–25 concurrent users on Render's 0.1-vCPU tier because hashing serialized on the constrained CPU. Factor 10 reduced that cost by roughly four times while retaining bcrypt's adaptive password hashing.
 
