@@ -249,26 +249,27 @@ Both harnesses stub the LLM unless calibration is explicitly requested. Raw repo
 | Metric | Result |
 |---|---|
 | Completed / failed / stuck | **20 / 0 / 0** |
-| Drain time | 50.3s |
+| Drain time | 43.3s |
 | Peak concurrent leads | 20 |
-| Claim latency p50 / p95 | 576ms / 622ms |
-| Queue wait p50 / p95 | 22.3s / 27.1s |
-| Contested claims | 20 won / 9 safely rejected |
+| Worker boot | 8.4-8.7s to first claim |
+| Claim latency p50 / p95 | 632ms / 759ms |
+| Queue wait p50 / p95 | 15.6s / 21.5s |
+| Contested claims | 20 won / 12 safely rejected |
 
 The conditional claim allowed exactly one worker to take each job, and stale-job recovery ages each job against its own `started_at` budget, so a starting worker never reaps another worker's in-flight work.
 
 ### API latency under saturation
 
-`backend/load_test_api.py`: 20 clients with five jobs running in-process.
+`backend/load_test_api.py`: 20 clients with six jobs running in-process.
 
 | Endpoint | Idle p95 | Saturated p95 |
 |---|---|---|
-| `GET /` | 31ms | 16ms |
-| `GET /leads` | 390ms | 844ms |
-| `GET /jobs/{id}` | 344ms | 813ms |
-| `POST /auth/login` | 1890ms | 1828ms |
+| `GET /` | 47ms | 31ms |
+| `GET /leads` | 922ms | 407ms |
+| `GET /jobs/{id}` | 360ms | 375ms |
+| `POST /auth/login` | 1719ms | 1562ms |
 
-Both phases completed with zero errors. Read p95 roughly doubled under load but remained sub-second; login remained bcrypt-bound.
+Both phases completed with zero errors, and throughput held at 42 to 40 req/s. Nothing degraded under load: the worker thread shares a GIL with the sync endpoints but never starves them, and login stays bcrypt-bound either way.
 
 ### Production ramp
 
