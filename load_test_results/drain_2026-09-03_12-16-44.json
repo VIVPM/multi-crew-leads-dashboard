@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-09-03T06:46:44.831521+00:00",
+  "tag": "LOADTEST-60ff5fa5",
+  "config": {
+    "jobs": 20,
+    "workers": 4,
+    "leads_per_job": 10,
+    "lead_seconds": 2.0,
+    "max_concurrent": 10,
+    "timeout": 200.0,
+    "stagger": 0,
+    "cleanup": false,
+    "calibrate": null,
+    "base": "http://127.0.0.1:8000",
+    "worker_mode": false,
+    "start_delay": 0
+  },
+  "claims": {
+    "win": 20,
+    "lost": 12,
+    "empty": 22
+  },
+  "worker_boot_s": [
+    8.692343950271606,
+    8.692343950271606,
+    8.368343830108643,
+    8.692343950271606
+  ],
+  "claim_ms_p50": 632.0,
+  "claim_ms_p95": 759.0,
+  "drain_s": 43.328000000008615,
+  "done": 20,
+  "failed": 0,
+  "stuck": 0,
+  "peak_running": 20,
+  "queue_wait_p50": 15.578000000008615,
+  "queue_wait_p95": 21.46799999999348,
+  "service_p50": 24.39100000000326,
+  "service_p95": 26.10899999999674
+}
