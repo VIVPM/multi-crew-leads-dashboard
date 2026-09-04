@@ -229,8 +229,8 @@ Jobs move through `pending → running → done | failed`. Daily processing is l
 ## Scaling Notes
 
 - **Tenant fairness** — the worker scans the oldest `FAIR_CLAIM_SCAN_LIMIT` pending rows, rotates across their `user_id` values, and preserves FIFO within each tenant. The conditional update remains the atomic claim boundary.
-- **Worker capacity** — the chosen deployment runs one worker process with up to `MAX_CONCURRENT_JOBS=10` concurrent pipelines. Its executor is sized to the setting, so all claimed jobs can actually start.
-- **Autoscaling remains pending** — the current deployment uses one fixed worker. It does not publish a queue-depth scaling metric or configure managed scale-up/scale-down rules. `MAX_CONCURRENT_JOBS` controls concurrency inside that worker; it is not autoscaling.
+- **Worker capacity** — the chosen deployment runs one worker process with up to `MAX_CONCURRENT_JOBS=10` concurrent pipelines. Its executor is sized to that ceiling rather than the current target, so a scale-up can start work immediately instead of queueing behind a smaller pool.
+- **Concurrency autoscales on queue depth.** The host runs a single instance, so there is no worker count to scale; the same control loop moves the job slots inside the one worker instead. Depth is polled each cycle and published as `queue_pending_jobs`; the target slots ride between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` (10) and are published as `worker_target_concurrency`. Scale-up is immediate — queued work should never wait out a timer — while scale-in halves and only after `SCALE_COOLDOWN_S`, and never cancels a running job. Adding *more workers* would still need a multi-instance host.
 - **Stateless API** — access tokens are HMAC-signed and refresh tokens live in Supabase, so API instances can scale with a shared `SECRET_KEY`.
 - **Distributed limits** — login and signup limits are Supabase-backed and hold across instances. Every `429` includes `Retry-After`.
 - **Idempotency** — repeated `Idempotency-Key` submissions return the existing job. Concurrent requests with one key still create a single job.
