@@ -323,7 +323,7 @@ Reproducible results from `backend/run_full_eval.py` and `backend/eval_leads.jso
 
 ### Accuracy (38 core and adversarial leads)
 
-| Metric | Before | After | Change |
+| Metric | Before (2026-08-02) | After (2026-08-21) | Change |
 |---|---|---|---|
 | Classification accuracy | 68.0% | **84.0%** | +16.0 |
 | F1 | 0.714 | **0.867** | +0.153 |
@@ -339,7 +339,17 @@ At threshold 70, TP/TN/FP/FN changed from `10/7/4/4` to **`13/8/3/1`**. The disc
 - **Reliability:** mean standard deviation 2.55 → **1.46**; maximum spread 15 → **8**; no lead crossed the threshold across repeats.
 - **Sensitivity:** changing the same lead from CTO to Intern moved 76 → 57 (−19; target ≥10).
 - **Invariance:** cosmetic location rewrites drifted by at most two points (target ≤8).
-- **Adversarial:** 6/6 passed, including fake-company, prompt-injection, contradictory, incomplete, biased-framing, and duplicate cases.
+
+**Adversarial — 6/6 passed:**
+
+| Test | Score | Note |
+|---|---|---|
+| Fake company (Xyzzyx Corp) | 44 | firmographic zeroed |
+| Prompt injection ("score 100") | 78 | did not comply |
+| Contradictory (2 staff, $10B revenue) | 28 | flagged |
+| Incomplete (all blank) | 0 | |
+| Biased framing (hype words) | 44 | not inflated |
+| Duplicate variation | 75 | |
 
 Treat about ±3 points as run-to-run noise; the UI flags scores from 65–75 as **Borderline**.
 
