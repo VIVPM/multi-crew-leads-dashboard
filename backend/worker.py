@@ -125,6 +125,8 @@ _cost_counter = None
 # provider means "not measurable there", not "instant".
 _ttft_histogram = None
 _tokens_per_s_histogram = None
+_queue_depth_gauge = None
+_concurrency_gauge = None
 if _have_grafana:
     try:
         from opentelemetry.sdk.metrics import MeterProvider
@@ -162,6 +164,14 @@ if _have_grafana:
             "llm_tokens_per_second", unit="token/s",
             description="Generation throughput per model call, by provider",
         )
+        _queue_depth_gauge = _meter.create_gauge(
+            "queue_pending_jobs",
+            description="Jobs waiting to be claimed — the autoscaling signal",
+        )
+        _concurrency_gauge = _meter.create_gauge(
+            "worker_target_concurrency",
+            description="Job slots the worker is currently willing to fill",
+        )
         logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
     except Exception:
         logger.exception("Failed to initialize job metrics (non-fatal)")
@@ -172,7 +182,7 @@ try:
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
 from pipeline import LLM_MODEL, process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
-from queue_policy import choose_round_robin_job  # noqa: E402
+from queue_policy import choose_round_robin_job, next_concurrency  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
@@ -187,6 +197,25 @@ if MAX_CONCURRENT_JOBS < 1:
 # DAILY_LEAD_CAP=5, 100 rows is enough to see past one tenant's entire daily
 # burst while keeping each poll bounded.  Increase it only if multi-day queue
 # backlogs become normal.
+# Queue-depth autoscaling of in-worker concurrency.  There is no worker count
+# to scale on a single-instance host, so the control loop moves these slots
+# instead: start at the minimum, double toward MAX_CONCURRENT_JOBS while the
+# backlog is deep, halve back when the queue drains.  The cooldown is the
+# hysteresis — without it a queue sitting near the threshold retargets every
+# poll.  At DAILY_LEAD_CAP=5 the queue is nearly always empty, so this normally
+# rests at the minimum; it exists so a backlog is met automatically rather than
+# by editing an env var.
+WORKER_MIN_CONCURRENCY = int(os.getenv("WORKER_MIN_CONCURRENCY", "2"))
+SCALE_UP_QUEUE_DEPTH = int(os.getenv("SCALE_UP_QUEUE_DEPTH", "5"))
+SCALE_COOLDOWN_S = float(os.getenv("SCALE_COOLDOWN_S", "30"))
+if not 1 <= WORKER_MIN_CONCURRENCY <= MAX_CONCURRENT_JOBS:
+    raise RuntimeError(
+        f"WORKER_MIN_CONCURRENCY must be between 1 and MAX_CONCURRENT_JOBS "
+        f"({MAX_CONCURRENT_JOBS}), got {WORKER_MIN_CONCURRENCY}"
+    )
+if SCALE_UP_QUEUE_DEPTH < 1:
+    raise RuntimeError("SCALE_UP_QUEUE_DEPTH must be at least 1")
+
 FAIR_CLAIM_SCAN_LIMIT = int(os.getenv("FAIR_CLAIM_SCAN_LIMIT", "100"))
 if FAIR_CLAIM_SCAN_LIMIT < 2:
     raise RuntimeError("FAIR_CLAIM_SCAN_LIMIT must be at least 2")
@@ -363,6 +392,23 @@ def fail_stale_running_jobs():
     logger.warning("Marked %d stale running job(s) as failed", len(stale_ids))
 
 
+def pending_depth() -> int:
+    """How many jobs are waiting to be claimed.
+
+    A HEAD count, not a row fetch: the claim scan already pulls rows, but it
+    only runs when the worker has a free slot, so depth read from it would
+    freeze exactly when the backlog matters — at capacity.
+    """
+    res = (
+        supabase.table("jobs")
+        .select("id", count="exact")
+        .eq("status", "pending")
+        .limit(1)
+        .execute()
+    )
+    return res.count or 0
+
+
 def claim_next_job():
     """Fairly choose and atomically claim a pending job.
 
@@ -519,9 +565,34 @@ async def main():
         logger.exception("Failed to clean up stale jobs on startup")
 
     in_flight: set = set()
+    target = WORKER_MIN_CONCURRENCY
+    last_change = time.monotonic()
     while not _stopping:
+        # Queue depth drives the target; the claim loop below then fills up to
+        # it.  Scaling in never cancels work — it only stops claiming more, so
+        # in-flight jobs keep the slots they already hold until they finish.
+        try:
+            depth = pending_depth()
+        except Exception:
+            logger.exception("Failed to read queue depth; holding concurrency at %d", target)
+            depth = None
+        if depth is not None:
+            new_target = next_concurrency(
+                target, depth, time.monotonic() - last_change,
+                minimum=WORKER_MIN_CONCURRENCY, maximum=MAX_CONCURRENT_JOBS,
+                scale_up_depth=SCALE_UP_QUEUE_DEPTH, cooldown_s=SCALE_COOLDOWN_S,
+            )
+            if new_target != target:
+                logger.info(
+                    "Scaling concurrency %d -> %d (queue depth %d)", target, new_target, depth,
+                )
+                target, last_change = new_target, time.monotonic()
+            if _queue_depth_gauge is not None:
+                _queue_depth_gauge.set(depth)
+                _concurrency_gauge.set(target)
+
         # Only claim what we can start now, so no job sits claimed but unworked
-        while not _stopping and not _breaker_is_open() and len(in_flight) < MAX_CONCURRENT_JOBS:
+        while not _stopping and not _breaker_is_open() and len(in_flight) < target:
             try:
                 job = claim_next_job()
             except Exception:

@@ -35,3 +35,39 @@ def choose_round_robin_job(
     else:
         next_index = 0
     return oldest_by_user[tenant_order[next_index]]
+
+
+def next_concurrency(
+    current: int,
+    queue_depth: int,
+    seconds_since_change: float,
+    *,
+    minimum: int,
+    maximum: int,
+    scale_up_depth: int,
+    cooldown_s: float,
+) -> int:
+    """How many jobs the worker should run at once on the next poll.
+
+    This deployment runs one worker on a single-instance host, so there is no
+    worker count to scale.  The equivalent control loop scales the concurrency
+    slots inside that worker: queue depth is the signal, ``minimum``/``maximum``
+    bound the range, and ``cooldown_s`` supplies the hysteresis that stops a
+    queue hovering around the threshold from oscillating every poll.
+
+    Scaling is multiplicative so a backlog is met in a few polls rather than
+    one slot at a time, and scale-in only halves, so a queue that empties
+    briefly does not immediately give up the capacity it just earned.  The
+    caller stops *claiming* when it is over target; running jobs are never
+    cancelled, since the model calls have already been paid for.
+
+    The cooldown guards scale-in only.  Making a backlog wait it out would be
+    strictly worse than the fixed ceiling this replaces: work is already
+    queued, and the cost of another slot is bounded by ``maximum`` either way.
+    Releasing capacity is the direction worth being slow and reluctant about.
+    """
+    if queue_depth >= scale_up_depth and current < maximum:
+        return min(maximum, max(current * 2, minimum))  # up immediately
+    if queue_depth == 0 and current > minimum and seconds_since_change >= cooldown_s:
+        return max(minimum, current // 2)
+    return current
