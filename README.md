@@ -1,6 +1,6 @@
 # Sales Pipeline — Lead Scoring & Email Generation
 
-Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** agents (Google Gemini or Cloudflare Workers AI) → **Supabase**. Agents research and score leads; those above 70 get a drafted outreach email.
+Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** agents (Google Gemini or Cloudflare Workers AI) → **Supabase**. Agents research and score leads; those above 70 get a drafted outreach email automatically, and borderline leads (65–70) can draft one on demand.
 
 ---
 
@@ -16,7 +16,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Operator-held API keys** — Gemini + Tavily in `.env`, users never enter keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default)
 - **Editable & sendable email drafts** — per-user SMTP (Gmail App Password or any provider), daily send cap
 - **Bulk CSV import** — validated per row, deduped by email, blocked if credits insufficient
-- **Borderline flagging** — scores within 65–75 badged **Borderline** (±3.5 run-to-run noise at threshold)
+- **Borderline flagging** — scores within 65–75 badged **Borderline**; leads scoring 65–70 get a **Draft Email** button to run just the email crew on demand
 - **Structured JSON logging** — correlated by `request_id`/`job_id`/`lead_id`
 - **OpenTelemetry** — optional tracing to Langfuse (v4 observations-first) and/or Grafana Cloud (metrics + alerts), auto-enabled by env vars
 - **YAML-driven agents** — roles, prompts, workflow in `backend/config/`

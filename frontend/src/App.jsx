@@ -63,6 +63,11 @@ export default function App() {
   // Bumped after a process or cancel to remount LeadForm with a clean slate
   const [formResetKey, setFormResetKey] = useState(0)
   const [globalMsg, setGlobalMsg] = useState(null)
+  useEffect(() => {
+    if (!globalMsg) return
+    const t = setTimeout(() => setGlobalMsg(null), 8000)
+    return () => clearTimeout(t)
+  }, [globalMsg])
   const [credits, setCredits] = useState(null) // { cap, used, remaining } — daily lead allowance
 
   const [companyContext, setCompanyContext] = useState('')

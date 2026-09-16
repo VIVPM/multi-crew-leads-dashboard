@@ -172,6 +172,11 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [open, setOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState(null)
+  useEffect(() => {
+    if (!err) return
+    const t = setTimeout(() => setErr(null), 5000)
+    return () => clearTimeout(t)
+  }, [err])
   const [showAnalysis, setShowAnalysis] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [editingEmail, setEditingEmail] = useState(false)
