@@ -758,6 +758,37 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
 
 
 # =============================================================================
+# Draft email for a borderline lead that scored below the email threshold
+# =============================================================================
+
+@app.post("/leads/{lead_id}/draft-email")
+def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
+    lead = _get_owned_lead(lead_id, user_id)
+    if lead.get("email_draft"):
+        raise HTTPException(status_code=400, detail="This lead already has an email draft.")
+    if not lead.get("scoring_result"):
+        raise HTTPException(status_code=400, detail="This lead has not been scored yet.")
+
+    profile = supabase.table("users").select("company_context").eq("id", user_id).execute()
+    company_context = (profile.data[0].get("company_context") if profile.data else None) or ""
+    if not company_context.strip():
+        raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
+
+    from pipeline import build_crews
+    crews = build_crews(LLM_API_KEY)
+    email_input = {
+        **lead["scoring_result"],
+        "our_company_context": company_context,
+    }
+    result = crews["email"].kickoff(inputs=email_input)
+    draft = result.raw
+
+    supabase.table("leads").update({"email_draft": draft}).eq("id", lead_id).execute()
+    logger.info("Drafted email for borderline lead %s (score %s)", lead_id, lead.get("score"))
+    return {"email_draft": draft}
+
+
+# =============================================================================
 # Lead processing — enqueue a job; worker.py executes it
 # =============================================================================
 

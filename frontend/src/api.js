@@ -86,6 +86,10 @@ export async function api(method, path, body) {
   return res.json();
 }
 
+export function draftEmailForLead(leadId) {
+  return api('POST', `/leads/${leadId}/draft-email`)
+}
+
 export function friendlyError(err) {
   const msg = String(err?.message || err).toLowerCase();
   if (msg.includes("timeout") || msg.includes("timed out"))
