@@ -9,12 +9,9 @@ __pycache__/
 .claude
 .playwright-mcp/
 migrations.sql
-evaluation_plan.txt
 CLAUDE.md
 upgrade_roadmap.txt
 company_icp.txt
-gold_set_template.csv
-demo_script_full.txt
 sample_leads_3.csv
 sample_leads_5.csv
 
