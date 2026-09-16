@@ -9,7 +9,7 @@ const EMAIL_THRESHOLD = 70
 const BORDERLINE_LOW = 65
 const BORDERLINE_HIGH = 75
 const BORDERLINE_HINT =
-  `Scored close to the ${EMAIL_THRESHOLD} cutoff, and repeat runs vary by a few points — ` +
+  `Scored within a few points of the ${EMAIL_THRESHOLD} cutoff — ` +
   `this lead could qualify or not depending on the run. Worth reviewing by hand.`
 
 function flattenToText(obj) {
@@ -180,6 +180,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [sending, setSending] = useState(false)
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [sentMsg, setSentMsg] = useState(null)
+  const [drafting, setDrafting] = useState(false)
   // Heavy fields aren't in the list response; fetched when the card expands
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -249,6 +250,21 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
     }
   }
 
+  async function handleDraftEmail() {
+    setDrafting(true)
+    setErr(null)
+    try {
+      const res = await api('POST', `/leads/${lead.id}/draft-email`)
+      setDetail(d => ({ ...(d || {}), email_draft: res.email_draft }))
+      setEmailDraft(res.email_draft)
+      onRefresh()
+    } catch (e) {
+      setErr(friendlyError(e))
+    } finally {
+      setDrafting(false)
+    }
+  }
+
   return (
     <div className="lead-card">
       <div className="lead-card-header" onClick={() => setOpen(o => !o)}>
@@ -268,12 +284,22 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
           {err && <div className="alert alert-error">{err}</div>}
           {isBorderline && (
             <div className="alert alert-warning">
-              <strong>Borderline ({lead.score}).</strong> This sits within a few points of
-              the {EMAIL_THRESHOLD} cutoff, and re-scoring the same lead moves the number by
-              a few points — so whether an email gets drafted is partly luck of the run.
+              <strong>Borderline ({lead.score}).</strong> Emails are only drafted for scores
+              above {EMAIL_THRESHOLD}.
               {detail?.email_draft
                 ? ' An email was drafted; read it before sending.'
-                : ' No email was drafted — if this lead looks worth it, use Edit → Save and process, or write to them directly.'}
+                : lead.score <= EMAIL_THRESHOLD
+                  ? <> No email was drafted for this score.{' '}
+                      <button
+                        className="btn btn-sm btn-outline"
+                        style={{ marginLeft: '0.5rem' }}
+                        onClick={handleDraftEmail}
+                        disabled={drafting || !detail}
+                      >
+                        {drafting ? 'Drafting…' : 'Draft Email'}
+                      </button>
+                    </>
+                  : ' Re-scoring may shift the result — review by hand.'}
             </div>
           )}
           {sentMsg && (

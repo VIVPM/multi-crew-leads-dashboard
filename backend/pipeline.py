@@ -822,6 +822,36 @@ class LeadState(TypedDict, total=False):
     email: Optional[_StageOutput]
 
 
+def _email_messages(scoring: dict, icp: str) -> list:
+    """The email step's prompt, shared by the graph node and draft_email."""
+    agent_cfg = _CONFIGS["email_agents"]["email_specialist_agent"]
+    task_cfg = _CONFIGS["email_tasks"]["email_drafting_and_optimization"]
+    inputs = {
+        "our_company_context": icp,
+        "personal_info": scoring["personal_info"],
+        "company_info": scoring["company_info"],
+        "lead_score": scoring["lead_score"],
+    }
+    return [
+        SystemMessage(_system_prompt(agent_cfg, task_cfg)),
+        HumanMessage(_human_prompt(task_cfg, inputs)),
+    ]
+
+
+def draft_email(llm_key: str, scoring_result: dict, icp: str) -> str:
+    """Draft an email for a lead that is already scored — no research, no re-score.
+
+    For borderline leads the graph skipped because they landed at or just under
+    EMAIL_SCORE_THRESHOLD. One model call on the stored scoring_result, so it
+    costs a fraction of a full run.
+    """
+    llm_flash, _ = _build_llms(llm_key)
+    raw, _, _, _ = _chat(
+        llm_flash, _email_messages(scoring_result, icp), via_prompt=LLM_MODEL == "CLOUDFLARE",
+    )
+    return raw
+
+
 def build_graph(
     llm_key: str,
     tavily_key: str,
@@ -936,19 +966,10 @@ def build_graph(
     # --- Email (merged draft + optimize) ---
     def email_node(state: LeadState) -> dict:
         started = time.time()
-        agent_cfg = _CONFIGS["email_agents"]["email_specialist_agent"]
-        task_cfg = _CONFIGS["email_tasks"]["email_drafting_and_optimization"]
-        dump = state["scoring"].pydantic.model_dump()
-        inputs = {
-            "our_company_context": state["icp"],
-            "personal_info": dump["personal_info"],
-            "company_info": dump["company_info"],
-            "lead_score": dump["lead_score"],
-        }
-        raw, _, p, c = _chat(llm_flash, [
-            SystemMessage(_system_prompt(agent_cfg, task_cfg)),
-            HumanMessage(_human_prompt(task_cfg, inputs)),
-        ], via_prompt=via_prompt, cb=cb)
+        raw, _, p, c = _chat(
+            llm_flash, _email_messages(state["scoring"].pydantic.model_dump(), state["icp"]),
+            via_prompt=via_prompt, cb=cb,
+        )
         _done("email", ROLE_EMAIL, started)
         return {"email": _StageOutput([ROLE_EMAIL], raw, None, p, c)}
 

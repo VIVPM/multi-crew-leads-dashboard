@@ -771,6 +771,50 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
 
 
 # =============================================================================
+# Draft email on demand for a borderline lead the graph skipped
+# =============================================================================
+
+BORDERLINE_LOW = 65  # matches the frontend's Borderline badge
+
+
+@app.post("/leads/{lead_id}/draft-email")
+def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
+    # Imported here, not at module level: pipeline builds provider clients on
+    # import, and the API process shouldn't pay for that until someone clicks.
+    from pipeline import EMAIL_SCORE_THRESHOLD, draft_email
+
+    lead = _get_owned_lead(lead_id, user_id)
+    if lead.get("email_draft"):
+        raise HTTPException(status_code=400, detail="This lead already has an email draft.")
+    if not lead.get("scoring_result"):
+        raise HTTPException(status_code=400, detail="This lead has not been scored yet.")
+    # The graph drafts only above the threshold, so a 70 gets no email either —
+    # hence <=, not <. Enforced here too: the button is only a convenience, and
+    # this is an operator-paid model call.
+    score = lead.get("score")
+    if score is None or not BORDERLINE_LOW <= score <= EMAIL_SCORE_THRESHOLD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only leads scoring {BORDERLINE_LOW}-{EMAIL_SCORE_THRESHOLD} can be drafted on demand.",
+        )
+
+    profile = supabase.table("users").select("company_context").eq("id", user_id).execute()
+    company_context = (profile.data[0].get("company_context") if profile.data else None) or ""
+    if not company_context.strip():
+        raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
+
+    try:
+        draft = draft_email(LLM_API_KEY, lead["scoring_result"], company_context)
+    except Exception:
+        logger.exception("Failed to draft email for lead %s", lead_id)
+        raise HTTPException(status_code=502, detail="Couldn't draft the email right now. Try again shortly.")
+
+    supabase.table("leads").update({"email_draft": draft}).eq("id", lead_id).execute()
+    logger.info("Drafted email on demand for borderline lead %s (score %s)", lead_id, score)
+    return {"email_draft": draft}
+
+
+# =============================================================================
 # Lead processing — enqueue a job; worker.py executes it
 # =============================================================================
 

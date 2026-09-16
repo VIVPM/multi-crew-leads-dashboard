@@ -14,7 +14,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Bounded, visible spend** — operator-held keys, required `DAILY_LEAD_CAP`, and per-agent token/cost/timing details
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits
 - **React dashboard** — charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending
-- **Borderline flagging** — scores from 65–75 are marked **Borderline** because repeat scoring varies about ±3.5 points near the threshold
+- **Borderline flagging** — scores from 65–75 are marked **Borderline** because repeat scoring varies about ±3.5 points near the threshold; a lead at 65–70 gets no automatic email, so a **Draft Email** button drafts one on demand from the stored scores without re-scoring
 - **Observability and evaluation** — structured correlated logs, optional OpenTelemetry to Langfuse/Grafana, red-team tests, and a 50-lead evaluation suite
 
 ## Architecture

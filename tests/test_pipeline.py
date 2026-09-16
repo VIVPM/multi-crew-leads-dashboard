@@ -179,4 +179,12 @@ assert set(agent_times) == {ROLE_COMPANY, ROLE_PERSONAL, ROLE_SCORING, ROLE_EMAI
 assert ROLE_COMPANY == "Company Research & Cultural Fit Analyst"
 assert ROLE_EMAIL == "Email Specialist"
 
+# --- on-demand draft for a borderline lead (POST /leads/{id}/draft-email) ---
+# Runs from the stored scoring_result, a plain dict, with the same prompt the
+# graph's email node uses — and without researching or re-scoring.
+_stored = a.pydantic.model_dump()
+_msgs = pipeline._email_messages(_stored, "We sell widgets.")
+assert "We sell widgets." in _msgs[1].content and "Acme" in _msgs[1].content
+assert pipeline.draft_email("fake-llm-key", _stored, "We sell widgets.").startswith("Subject:")
+
 print("All pipeline graph checks passed.")
