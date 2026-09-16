@@ -63,6 +63,13 @@ export default function App() {
   // Bumped after a process or cancel to remount LeadForm with a clean slate
   const [formResetKey, setFormResetKey] = useState(0)
   const [globalMsg, setGlobalMsg] = useState(null)
+  // Notifications clear themselves; depending on the message object means a
+  // new one restarts the clock instead of inheriting the old one's timer.
+  useEffect(() => {
+    if (!globalMsg) return
+    const t = setTimeout(() => setGlobalMsg(null), 4000)
+    return () => clearTimeout(t)
+  }, [globalMsg])
   const [credits, setCredits] = useState(null) // { cap, used, remaining } — daily lead allowance
 
   const [companyContext, setCompanyContext] = useState('')

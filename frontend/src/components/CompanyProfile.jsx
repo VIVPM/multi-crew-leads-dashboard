@@ -19,7 +19,7 @@ export default function CompanyProfile({ value, loaded, expanded, onToggleExpand
       onSaved(text)
       onToggleExpanded(false)
       onMessage?.('Company profile saved.')
-      setTimeout(() => setStatus(null), 2000)
+      setTimeout(() => setStatus(null), 3000)
     } catch (e) {
       setStatus('error')
       setError(friendlyError(e))

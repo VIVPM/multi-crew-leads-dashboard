@@ -242,7 +242,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
       await api('POST', `/leads/${lead.id}/send-email`)
       onRefresh()
       setSentMsg(`Email sent successfully on ${new Date().toLocaleString()}`)
-      setTimeout(() => setSentMsg(null), 5000)
+      setTimeout(() => setSentMsg(null), 4000)
     } catch (e) {
       setErr(friendlyError(e))
     } finally {

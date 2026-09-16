@@ -42,7 +42,7 @@ export default function EmailSettings({ onMessage }) {
       setSmtpPassword('') // never keep the password in the form after saving
       setExpanded(false)
       onMessage?.('Email sending settings saved.')
-      setTimeout(() => setStatus(null), 2000)
+      setTimeout(() => setStatus(null), 3000)
     } catch (e) {
       setStatus('error')
       setError(friendlyError(e))
