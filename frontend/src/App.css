@@ -892,7 +892,7 @@ body {
 
 .lead-detail { display: flex; gap: 0.4rem; font-size: 0.83rem; }
 .detail-label { color: var(--ink-mute); white-space: nowrap; }
-.detail-val { color: var(--ink); }
+.detail-val { color: var(--ink); min-width: 0; overflow-wrap: anywhere; } /* long emails otherwise run off the card */
 
 .lead-section { margin-bottom: 0.75rem; }
 .lead-section-title {
@@ -1562,4 +1562,14 @@ body {
   .lp-cream { grid-template-columns: 1fr; padding: 1.5rem; }
   .lp-section { padding: 48px 20px; }
   .lp-nav { padding: 12px 16px; }
+}
+
+/* Phones. 900px suits tablets, but at ~375px two detail columns squeeze
+   "Head of Sales Operations" onto three lines, and the analysis table's
+   five columns overflow the popup. */
+@media (max-width: 600px) {
+  .lead-details-grid { grid-template-columns: 1fr; }
+  .analysis-table th, .analysis-table td { padding: 0.45rem 0.3rem; }
+  .analysis-table td { font-size: 0.74rem; }
+  .analysis-table th { letter-spacing: 0.02em; }
 }

@@ -284,6 +284,9 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
           {err && <div className="alert alert-error">{err}</div>}
           {isBorderline && (
             <div className="alert alert-warning">
+              {/* One child: .alert is a flex row, so loose text and the button
+                  would each become a column and squeeze to a word per line on a phone. */}
+              <div>
               <strong>Borderline ({lead.score}).</strong> Emails are only drafted for scores
               above {EMAIL_THRESHOLD}.
               {detail?.email_draft
@@ -300,6 +303,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
                       </button>
                     </>
                   : ' Re-scoring may shift the result — review by hand.'}
+              </div>
             </div>
           )}
           {sentMsg && (
