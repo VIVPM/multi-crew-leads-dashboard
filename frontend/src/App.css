@@ -1478,4 +1478,6 @@ body {
 @media (max-width: 600px) {
   .lead-details-grid { grid-template-columns: 1fr; }
   .search-input { flex-basis: 100%; min-width: 0; }
+  .modal-body { overflow-x: auto; }
+  .modal-overlay { padding: 0.5rem; }
 }
