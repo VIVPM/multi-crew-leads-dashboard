@@ -1474,3 +1474,8 @@ body {
   .lp-section { padding: 48px 20px; }
   .lp-nav { padding: 12px 16px; }
 }
+
+@media (max-width: 600px) {
+  .lead-details-grid { grid-template-columns: 1fr; }
+  .search-input { flex-basis: 100%; min-width: 0; }
+}
