@@ -1,3 +1,4 @@
+# Defines company research, personal research, and lead-scoring tasks.
 personal_research:
   description: >
     Collect and analyze the following information about the lead:

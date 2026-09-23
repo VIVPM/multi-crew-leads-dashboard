@@ -1,3 +1,4 @@
+# Defines the email drafting task and output requirements.
 email_drafting_and_optimization:
   description: >
     Write this the way an actual salesperson at our company would write a
@@ -35,7 +36,7 @@ email_drafting_and_optimization:
     time or a question. Use that.
 
     This ships as a plain-text email exactly as written, not rendered
-    markdown. Never use *, **, _, #, or any other markdown syntax — no
+    markdown. Never use *, **, _,
     bold, no headers, no bullet asterisks. Plain sentences and paragraphs
     only.
 

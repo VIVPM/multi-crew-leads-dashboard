@@ -1,3 +1,4 @@
+# Defines the research and lead-scoring agents.
 personal_research_agent:
   role: >
     Personal Research Specialist

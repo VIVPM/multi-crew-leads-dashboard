@@ -1,3 +1,4 @@
+# Defines the email specialist agent.
 email_specialist_agent:
   role: >
     Email Specialist
