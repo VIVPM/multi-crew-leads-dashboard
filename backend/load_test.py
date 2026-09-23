@@ -46,22 +46,16 @@ TAG_PREFIX = "LOADTEST"
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
-# =============================================================================
-# Worker mode — a real worker with the LLM boundary stubbed out
-# =============================================================================
-
 def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
-    # Delaying inside the worker (rather than between spawns) keeps the
-    # coordinator free to start watching at t=0 — otherwise a staggered run
-    # only observes the tail of each job and reports impossibly short service
-    # times.
+
+
     if start_delay:
         time.sleep(start_delay)
     import worker
 
     async def stub_process_leads(leads, *_a, **_k):
-        # Sequential per lead, matching how the real pipeline bills time, so a
-        # 10-lead job takes 10x a 1-lead job here too.
+
+
         await asyncio.sleep(lead_seconds * len(leads))
         n = len(leads)
         return [None] * n, [None] * n, {}, [False] * n
@@ -78,17 +72,13 @@ def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
         if job:
             outcome = "win"
         else:
-            # claim_next_job returns None for two very different reasons: it
-            # lost the conditional update to another worker, or there was
-            # nothing pending at all. Counting both as "lost race" massively
-            # overstates contention, since an idle worker polls an empty queue
-            # every 3s forever.
+
+
             still_pending = (worker.supabase.table("jobs").select("id")
                              .eq("status", "pending").limit(1).execute().data)
             outcome = "lost" if still_pending else "empty"
-        # Wall clock (not monotonic) so the coordinator can compare across
-        # processes — the first attempt also dates worker boot, which otherwise
-        # gets misread as queue contention (importing crewai is slow).
+
+
         print(f"LT_CLAIM {outcome} {time.time():.3f} {_dur:.3f}", flush=True)
         return job
 
@@ -97,10 +87,6 @@ def worker_mode(lead_seconds: float, start_delay: float = 0) -> None:
     worker.claim_next_job = counting_claim
     asyncio.run(worker.main())
 
-
-# =============================================================================
-# Coordinator
-# =============================================================================
 
 def preflight() -> None:
     """Refuse to run if real work is in the queue.
@@ -135,7 +121,7 @@ def seed(tag: str, n_jobs: int, leads_per_job: int) -> tuple:
                   for i in range(leads_per_job)],
         "our_company_context": tag,
         "force_refresh": False,
-        # real keys are never needed — process_leads is stubbed
+
         "gemini_api_key": "stub",
         "tavily_api_key": "stub",
     } for j in range(n_jobs)]
@@ -150,9 +136,8 @@ def seed(tag: str, n_jobs: int, leads_per_job: int) -> tuple:
 def spawn_workers(n: int, lead_seconds: float, max_concurrent: int, stagger: float = 0) -> list:
     env = dict(os.environ)
     env["MAX_CONCURRENT_JOBS"] = str(max_concurrent)
-    # Keep synthetic jobs out of Langfuse/Grafana — otherwise a load run
-    # inflates jobs_processed_total and can fire the real alerts. Also cuts
-    # worker startup from ~13s to ~1s.
+
+
     for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
               "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
         env.pop(k, None)
@@ -189,7 +174,7 @@ def watch(tag: str, n_jobs: int, t0: float, timeout_s: float) -> dict:
                 running_at.setdefault(jid, now)
                 live += 1
             elif st in ("done", "failed"):
-                running_at.setdefault(jid, now)  # finished between polls
+                running_at.setdefault(jid, now)
                 finished_at.setdefault(jid, now)
                 if st == "failed" and r.get("error"):
                     errors[jid] = r["error"]
@@ -247,8 +232,8 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
         print(f"\n  Worker boot        {min(boots):.1f}-{max(boots):.1f}s to first claim "
               f"(importing crewai; subtract from queue wait)")
     if m["wait"]:
-        # min, not max: a job can be claimed as soon as the FIRST worker is up,
-        # so a late-joining worker's boot time is not queueing time.
+
+
         contention = pctl(m["wait"], 50) - (min(boots) if boots else 0)
         print(f"  Queue wait         p50 {pctl(m['wait'], 50):6.1f}s   "
               f"p95 {pctl(m['wait'], 95):6.1f}s   max {max(m['wait']):6.1f}s")
@@ -268,9 +253,7 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
         for msg, c in Counter(m["errors"].values()).most_common():
             print(f"    {c:3}x  {msg[:88]}")
 
-    # Only win/lost say anything about contention. Polls of an empty queue are
-    # just an idle worker ticking every POLL_INTERVAL_S and would swamp the
-    # ratio if counted.
+
     contested = claims["win"] + claims["lost"]
     if contested:
         print(f"\n  Claim attempts     {claims['win']} won, {claims['lost']} lost to another "
@@ -312,7 +295,7 @@ def calibrate(n_leads: int, base: str) -> None:
     import httpx
     from load_test_api import LOAD_USER, ensure_user
 
-    # Real companies, all distinct, so no two leads share cached research.
+
     companies = [
         ("Twilio", "Director of Revenue Operations"),
         ("Snowflake", "VP Sales Operations"),
@@ -344,7 +327,7 @@ def calibrate(n_leads: int, base: str) -> None:
             "industry": "Technology", "location": "United States", "source": "Website",
         })
         r.raise_for_status()
-        lead_ids.append(r.json()["id"])  # create_lead returns the inserted row
+        lead_ids.append(r.json()["id"])
 
     leads_payload = [{"id": i} for i in lead_ids if i]
     print(f"Created {len(leads_payload)} leads; processing for real (~${0.019 * len(leads_payload):.2f})...")
@@ -378,10 +361,8 @@ def calibrate(n_leads: int, base: str) -> None:
     print(f"  Job status         {status}")
     print(f"  Wall clock         {wall:.0f}s ({wall / 60:.1f} min)")
     n = len(leads_payload)
-    # analysis_runs.duration_seconds is the whole job's elapsed time written
-    # onto every lead (backend.py:742), not a per-lead measurement — so divide,
-    # never average. Single-lead jobs from the UI make the two look identical,
-    # which is exactly how that gets misread.
+
+
     pipeline_s = per_lead[0] if per_lead else wall
     print(f"  Pipeline time      {pipeline_s:.0f}s for {n} leads "
           f"-> {pipeline_s / n:.0f}s per lead")

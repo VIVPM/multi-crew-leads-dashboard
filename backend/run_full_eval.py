@@ -20,7 +20,7 @@ all Tier 1 and Tier 2 metrics:
 
   Runs:
     backend\\.venv\\Scripts\\python.exe backend\\run_full_eval.py
-    
+
   Batches of 10 are used for all single-pass groups. Reliability leads
   are scored 3 times each (not 10) to save cost while still measuring variance.
 """
@@ -52,7 +52,7 @@ except ModuleNotFoundError as e:
     sys.exit(f"{e}\n\nRun with:\n    \"{venv_python}\" \"{__file__}\"\n")
 
 EMAIL_THRESHOLD = 70
-RELIABILITY_REPEATS = 3   # 3 repeats per reliability lead (saves cost vs 10)
+RELIABILITY_REPEATS = 3
 MAX_COSMETIC_DRIFT = 8
 MIN_SENIORITY_DROP = 10
 MAX_STDEV = 5.0
@@ -120,9 +120,9 @@ def compute_metrics(all_results):
     """Compute all Tier 1 + Tier 2 metrics from the scored results."""
     metrics = {}
 
-    # ── Split results by group ──
+
     accuracy = [r for r in all_results if r["group"] in ("accuracy", "adversarial") and r["score"] is not None]
-    reliability = {}  # id -> list of scores
+    reliability = {}
     for r in all_results:
         if r["group"] == "reliability" and r["score"] is not None:
             reliability.setdefault(r["id"], {"expect": r["expect"], "scores": []})
@@ -132,18 +132,12 @@ def compute_metrics(all_results):
     invariance = {r["id"]: r for r in all_results if r["group"] == "invariance" and r["score"] is not None}
     adversarial = [r for r in all_results if r["group"] == "adversarial"]
 
-    # ═══════════════════════════════════════════
-    #  TIER 2: Accuracy metrics
-    # ═══════════════════════════════════════════
-    
-    # Map expected category to a score expectation for threshold-based metrics
-    # disqualified -> below threshold, weak -> below threshold
-    # strong -> above threshold, borderline -> could go either way
+
     tp = fp = fn = tn = 0
     within_10_count = 0
     abs_errors = []
-    
-    # Map categories to expected numeric ranges and midpoints for MAE
+
+
     expect_to_midpoint = {
         "disqualified": 20,
         "weak": 35,
@@ -156,18 +150,18 @@ def compute_metrics(all_results):
         "borderline": (50, 70),
         "strong": (71, 100),
     }
-    
+
     for r in accuracy:
         expected_cat = r["expect"]
         actual = r["score"]
-        
-        # Confusion matrix at threshold 70
+
+
         expected_above = expected_cat == "strong"
         expected_below = expected_cat in ("disqualified", "weak")
         actual_above = actual > EMAIL_THRESHOLD
-        
+
         if expected_cat == "borderline":
-            # Borderline leads can go either way — count them but don't penalise
+
             pass
         elif expected_above and actual_above:
             tp += 1
@@ -177,19 +171,19 @@ def compute_metrics(all_results):
             fp += 1
         elif expected_below and not actual_above:
             tn += 1
-            
-        # Regional Error (MAE)
+
+
         if expected_cat in expect_to_midpoint:
             expected_mid = expect_to_midpoint[expected_cat]
             low, high = expect_to_range[expected_cat]
-            
-            # If the AI scored within the correct expected region, the error is 0
+
+
             if low <= actual <= high:
                 error = 0
             else:
-                # If they missed the region, calculate difference to the midpoint
+
                 error = abs(actual - expected_mid)
-                
+
             abs_errors.append(error)
             if error <= 10:
                 within_10_count += 1
@@ -199,29 +193,28 @@ def compute_metrics(all_results):
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
     classification_accuracy = (tp + tn) / total_classified if total_classified > 0 else 0
-    
+
     mae = statistics.mean(abs_errors) if abs_errors else None
     within_10_pct = within_10_count / len(abs_errors) * 100 if abs_errors else None
-    
-    # Spearman rank correlation (accuracy group)
-    # Map categories to ordinal ranks for Spearman
+
+
     cat_rank = {"disqualified": 1, "weak": 2, "borderline": 3, "strong": 4}
     ranked_pairs = [(cat_rank[r["expect"]], r["score"]) for r in accuracy if r["expect"] in cat_rank]
     spearman = None
     if len(ranked_pairs) >= 3:
-        # Manual Spearman: Pearson correlation on ranks
+
         try:
             expected_ranks = [p[0] for p in ranked_pairs]
             actual_scores = [p[1] for p in ranked_pairs]
-            
-            # Rank the actual scores
+
+
             n = len(actual_scores)
             sorted_indices = sorted(range(n), key=lambda i: actual_scores[i])
             actual_ranks = [0.0] * n
             for rank, idx in enumerate(sorted_indices, 1):
                 actual_ranks[idx] = float(rank)
-            
-            # Pearson on the two rank vectors
+
+
             mean_e = sum(expected_ranks) / n
             mean_a = sum(actual_ranks) / n
             num = sum((expected_ranks[i] - mean_e) * (actual_ranks[i] - mean_a) for i in range(n))
@@ -244,10 +237,7 @@ def compute_metrics(all_results):
         "spearman_rank_correlation": spearman,
     }
 
-    # ═══════════════════════════════════════════
-    #  TIER 1: Reliability metrics
-    # ═══════════════════════════════════════════
-    
+
     rel_checks = []
     flippers = []
     for rid, data in reliability.items():
@@ -259,10 +249,10 @@ def compute_metrics(all_results):
         mean = statistics.mean(scores)
         above = sum(1 for s in scores if s > EMAIL_THRESHOLD)
         spread = max(scores) - min(scores)
-        
+
         if 0 < above < len(scores):
             flippers.append(f"{rid} ({above}/{len(scores)} above {EMAIL_THRESHOLD}, range {min(scores)}-{max(scores)})")
-        
+
         rel_checks.append({
             "id": rid, "expect": data["expect"],
             "mean": round(mean, 1), "stdev": round(sd, 2), "spread": spread,
@@ -270,8 +260,8 @@ def compute_metrics(all_results):
             "pass": sd <= MAX_STDEV,
             "detail": f"mean={mean:.1f} stdev={sd:.2f} range={min(scores)}-{max(scores)}"
         })
-    
-    # Discriminant: strong vs weak in reliability group
+
+
     strong_scores = [s for d in reliability.values() if d["expect"] == "strong" for s in d["scores"]]
     weak_scores = [s for d in reliability.values() if d["expect"] == "weak" for s in d["scores"]]
     discriminant = None
@@ -282,17 +272,14 @@ def compute_metrics(all_results):
             "gap": gap,
             "detail": f"worst strong {min(strong_scores)} - best weak {max(weak_scores)} = {gap}"
         }
-    
+
     metrics["tier1_reliability"] = {
         "per_lead": rel_checks,
         "threshold_stability": {"pass": not flippers, "flippers": flippers},
         "discriminant": discriminant,
     }
 
-    # ═══════════════════════════════════════════
-    #  TIER 1: Sensitivity
-    # ═══════════════════════════════════════════
-    
+
     senior = sensitivity.get("sens_senior")
     junior = sensitivity.get("sens_junior")
     if senior and junior and senior["score"] is not None and junior["score"] is not None:
@@ -307,10 +294,7 @@ def compute_metrics(all_results):
     else:
         metrics["tier1_sensitivity"] = {"pass": None, "detail": "missing results"}
 
-    # ═══════════════════════════════════════════
-    #  TIER 1: Invariance
-    # ═══════════════════════════════════════════
-    
+
     inv_checks = []
     for pair_name in ["cosmetic_1", "cosmetic_2"]:
         base_id = f"inv_base_0{pair_name[-1]}"
@@ -329,10 +313,7 @@ def compute_metrics(all_results):
             })
     metrics["tier1_invariance"] = inv_checks
 
-    # ═══════════════════════════════════════════
-    #  Adversarial checks
-    # ═══════════════════════════════════════════
-    
+
     adv_checks = []
     for r in adversarial:
         aid = r["id"]
@@ -352,7 +333,7 @@ def compute_metrics(all_results):
             reason = f"Score {score}, should flag contradictions"
         elif aid == "adv_incomplete":
             if score is None:
-                passed = True  # erroring gracefully is acceptable
+                passed = True
                 reason = "Errored gracefully on empty data"
             else:
                 passed = score < 50
@@ -361,11 +342,11 @@ def compute_metrics(all_results):
             passed = score is not None and score < 85
             reason = f"Score {score}, hype words alone should not inflate above 85"
         elif aid == "adv_duplicate_variation":
-            passed = score is not None  # just needs to produce a score
+            passed = score is not None
             reason = f"Score {score}, should produce a reasonable score"
-        
+
         adv_checks.append({"id": aid, "score": score, "pass": passed, "reason": reason})
-    
+
     metrics["adversarial"] = adv_checks
 
     return metrics
@@ -376,8 +357,8 @@ def print_report(metrics):
     print("\n" + "=" * 74)
     print("FULL EVALUATION REPORT")
     print("=" * 74)
-    
-    # Tier 2
+
+
     t2 = metrics["tier2_accuracy"]
     print("\n── TIER 2: ACCURACY ──")
     cm = t2["confusion_matrix"]
@@ -391,7 +372,7 @@ def print_report(metrics):
     print(f"  Within-10:               {t2['within_10_pct']}%")
     print(f"  Spearman (rank corr):    {t2['spearman_rank_correlation']}")
 
-    # Tier 1 Reliability
+
     t1r = metrics["tier1_reliability"]
     print("\n── TIER 1: RELIABILITY ──")
     for c in t1r["per_lead"]:
@@ -407,19 +388,19 @@ def print_report(metrics):
         status = "PASS" if d["pass"] else "FAIL"
         print(f"  [{status}] discriminant         {d['detail']}")
 
-    # Tier 1 Sensitivity
+
     t1s = metrics["tier1_sensitivity"]
     print("\n── TIER 1: SENSITIVITY ──")
     status = "PASS" if t1s.get("pass") else ("SKIP" if t1s.get("pass") is None else "FAIL")
     print(f"  [{status}] seniority  {t1s.get('detail', '')}")
 
-    # Tier 1 Invariance
+
     print("\n── TIER 1: INVARIANCE ──")
     for c in metrics["tier1_invariance"]:
         status = "PASS" if c["pass"] else "FAIL"
         print(f"  [{status}] {c['pair']:12}  {c['detail']}")
 
-    # Adversarial
+
     print("\n── ADVERSARIAL ──")
     adv_passed = 0
     for c in metrics["adversarial"]:
@@ -429,7 +410,7 @@ def print_report(metrics):
         print(f"  [{status}] {c['id']:25}  {c['reason']}")
     print(f"  Adversarial: {adv_passed}/{len(metrics['adversarial'])} passed")
 
-    # Overall summary
+
     print("\n" + "=" * 74)
     print("SUMMARY")
     print("=" * 74)
@@ -447,7 +428,7 @@ def print_report(metrics):
         all_checks.append(c["pass"])
     for c in metrics["adversarial"]:
         all_checks.append(c["pass"])
-    
+
     passed = sum(1 for x in all_checks if x)
     print(f"  Total checks: {passed}/{len(all_checks)} passed")
     print(f"  Classification accuracy: {t2['classification_accuracy']}%")
@@ -464,15 +445,15 @@ async def main():
         data = json.load(f)
 
     all_leads = data["leads"]
-    
-    # Separate by group for different treatment
+
+
     accuracy_leads = [lead for lead in all_leads if lead["group"] == "accuracy"]
     reliability_leads = [lead for lead in all_leads if lead["group"] == "reliability"]
     sensitivity_leads = [lead for lead in all_leads if lead["group"] == "sensitivity"]
     invariance_leads = [lead for lead in all_leads if lead["group"] == "invariance"]
     adversarial_leads = [lead for lead in all_leads if lead["group"] == "adversarial"]
 
-    # Count total runs
+
     single_pass = len(accuracy_leads) + len(sensitivity_leads) + len(invariance_leads) + len(adversarial_leads)
     reliability_runs = len(reliability_leads) * RELIABILITY_REPEATS
     total_runs = single_pass + reliability_runs
@@ -489,7 +470,7 @@ async def main():
 
     all_results = []
 
-    # ── Phase 1: Accuracy group (single pass, batched) ──
+
     print(f"\n{'─'*74}")
     print(f"PHASE 1: ACCURACY ({len(accuracy_leads)} leads)")
     print(f"{'─'*74}", flush=True)
@@ -501,10 +482,10 @@ async def main():
         items = [(lead, lead["lead"]) for lead in batch]
         results = await score_batch(items, icp, gemini_key, tavily_key, f"acc-B{batch_num}")
         all_results.extend(results)
-        # Save intermediate results
+
         _save_intermediate(all_results)
 
-    # ── Phase 2: Reliability group (N repeats per lead) ──
+
     print(f"\n{'─'*74}")
     print(f"PHASE 2: RELIABILITY ({len(reliability_leads)} leads x {RELIABILITY_REPEATS} repeats)")
     print(f"{'─'*74}", flush=True)
@@ -521,7 +502,7 @@ async def main():
             })
         _save_intermediate(all_results)
 
-    # ── Phase 3: Sensitivity (single pass) ──
+
     print(f"\n{'─'*74}")
     print(f"PHASE 3: SENSITIVITY ({len(sensitivity_leads)} leads)")
     print(f"{'─'*74}", flush=True)
@@ -530,7 +511,7 @@ async def main():
     all_results.extend(results)
     _save_intermediate(all_results)
 
-    # ── Phase 4: Invariance (single pass) ──
+
     print(f"\n{'─'*74}")
     print(f"PHASE 4: INVARIANCE ({len(invariance_leads)} leads)")
     print(f"{'─'*74}", flush=True)
@@ -539,7 +520,7 @@ async def main():
     all_results.extend(results)
     _save_intermediate(all_results)
 
-    # ── Phase 5: Adversarial (single pass) ──
+
     print(f"\n{'─'*74}")
     print(f"PHASE 5: ADVERSARIAL ({len(adversarial_leads)} leads)")
     print(f"{'─'*74}", flush=True)
@@ -547,15 +528,15 @@ async def main():
     results = await score_batch(items, icp, gemini_key, tavily_key, "adv")
     all_results.extend(results)
 
-    # ── Compute metrics ──
+
     metrics = compute_metrics(all_results)
     print_report(metrics)
 
-    # ── Save final report ──
+
     out_dir = os.path.join(ROOT_DIR, "scoring_eval_results")
     os.makedirs(out_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    
+
     report_path = os.path.join(out_dir, f"full_eval_{ts}.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump({

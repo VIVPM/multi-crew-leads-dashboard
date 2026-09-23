@@ -51,14 +51,10 @@ supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 LOAD_USER = "loadtest@local"
 LOAD_PASS = "loadtest-pw-9137"
-# Distinctive email prefix so seeded perf rows can be deleted precisely without
-# ever touching a real lead.
+
+
 LEAD_SEED_PREFIX = "perf-seed-"
 
-
-# =============================================================================
-# Serve mode — the real API, with the LLM stubbed
-# =============================================================================
 
 def serve_mode(port: int, lead_seconds: float, in_process_worker: bool) -> None:
     """Run the real FastAPI app, stubbing only the LLM call.
@@ -88,10 +84,6 @@ def serve_mode(port: int, lead_seconds: float, in_process_worker: bool) -> None:
     uvicorn.run(backend_mod.app, host="127.0.0.1", port=port, log_level="error")
 
 
-# =============================================================================
-# Client
-# =============================================================================
-
 async def _hammer(base: str, token: str, user_id: str, job_id: str,
                   concurrency: int, duration: float, mix: str = "all") -> dict:
     """Fire a request mix and record every latency.
@@ -112,9 +104,8 @@ async def _hammer(base: str, token: str, user_id: str, job_id: str,
     errors = {"count": 0, "samples": []}
     stop = time.monotonic() + duration
     auth = {"Authorization": f"Bearer {token}"}
-    # httpx defaults to max_connections=100 — below that silently caps what
-    # this function can actually send, so a "500 concurrent" run would really
-    # measure the client's own pool, not the server. Scale it to concurrency.
+
+
     limits = httpx.Limits(max_connections=concurrency + 20, max_keepalive_connections=concurrency)
 
     cycle = [
@@ -149,9 +140,8 @@ async def _hammer(base: str, token: str, user_id: str, job_id: str,
     started = time.monotonic()
     async with httpx.AsyncClient(base_url=base, limits=limits) as client:
         await asyncio.gather(*[one_client(client) for _ in range(concurrency)])
-    # Real elapsed, not the nominal duration: a slow in-flight request (login,
-    # especially) can run well past the stop time, so dividing by `duration`
-    # would overstate throughput.
+
+
     elapsed = time.monotonic() - started
 
     return {"lat": results, "errors": errors, "elapsed": elapsed}
@@ -442,8 +432,8 @@ def main() -> None:
                          "deployment could pick up and actually spend money on.")
     args = ap.parse_args()
     if args.ramp:
-        # A different question than idle-vs-saturated (worker busy or not) —
-        # keep the worker out of it so the ramp measures one variable.
+
+
         args.in_process_worker = False
 
     if args.serve:
@@ -453,7 +443,7 @@ def main() -> None:
         sys.exit("--base-url only supports --ramp — the idle/saturated test's Phase 2 seeds a "
                  "real 'pending' job, unsafe against a live deployment with a real worker.")
 
-    preflight()  # DB-level check either way: refuses to run if real work is queued
+    preflight()
     tag = f"{TAG_PREFIX}-api-{uuid.uuid4().hex[:8]}"
 
     api = None
@@ -478,7 +468,7 @@ def main() -> None:
                                stdout=api_log, stderr=subprocess.STDOUT)
 
     running = 0
-    seeded_for_user = None  # set once we know the user id, so finally can clean up
+    seeded_for_user = None
     try:
         if not wait_for_health(base):
             sys.exit(f"Could not reach {base} — "
@@ -489,11 +479,11 @@ def main() -> None:
 
         token, user_id = ensure_user(base)
         if args.base_url:
-            # Never seed a 'pending' job against a live deployment — see the
-            # safety note on --base-url above. This row is inert by construction.
+
+
             probe = insert_done_probe(tag, user_id)
         else:
-            seed_jobs(tag, user_id, 1, 1)  # one throwaway job so GET /jobs/{id} is a real lookup
+            seed_jobs(tag, user_id, 1, 1)
             probe = (supabase.table("jobs").select("id").eq("our_company_context", tag)
                      .limit(1).execute().data or [{}])[0].get("id", str(uuid.uuid4()))
 
