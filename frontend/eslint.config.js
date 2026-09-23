@@ -1,3 +1,4 @@
+// Configures ESLint for the React frontend and Vite configuration.
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
@@ -28,8 +29,6 @@ export default defineConfig([
     },
   },
   {
-    // vite.config.js etc. run in Node, not the browser — process/import.meta
-    // need Node's globals, not the app's.
     files: ['*.config.js'],
     extends: [js.configs.recommended],
     languageOptions: {
