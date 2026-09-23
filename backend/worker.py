@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# cp1252 consoles can't print the emoji CrewAI's event bus logs
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -27,18 +27,16 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# Loaded here because the tracing setup below runs before backend.backend is imported
+
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 from logging_setup import configure_logging, job_context, current_correlation_ids  # noqa: E402
 
-configure_logging()  # idempotent — no-op if backend.py already configured it in-process
+configure_logging()
 logger = logging.getLogger("worker")
 
-# Optional OTLP tracing of agent/task/LLM calls, exported to Langfuse and/or
-# Grafana Cloud. Must run before crewai/litellm are imported — the litellm
-# instrumentor patches litellm at import time.
+
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 _have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
@@ -57,18 +55,8 @@ if _have_langfuse or _have_grafana:
             "service.namespace": "lead-coordinator",
             "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
         }))
-        # Langfuse v4 queries observations directly, so an attribute that sits
-        # only on the root span can't filter or aggregate its children. Copy the
-        # job/lead IDs onto every span. Reads the same contextvars the JSON logs
-        # use, so a span and a log line for one job carry matching IDs.
-        #
-        # Both prefixes on purpose, confirmed against a real canary trace:
-        # `langfuse.trace.metadata.*` is folded into the trace's metadata and
-        # does NOT appear on the individual observations, so on its own it
-        # gives trace-level filtering only. `langfuse.observation.metadata.*`
-        # is what lands on each observation and makes it filterable by itself,
-        # which is the v4 requirement. Plain unprefixed attributes fall into
-        # the metadata.attributes catch-all, which isn't queryable at all.
+
+
         class _CorrelationSpanProcessor(SpanProcessor):
             def on_start(self, span, parent_context=None):
                 for key, value in current_correlation_ids().items():
@@ -85,8 +73,8 @@ if _have_langfuse or _have_grafana:
             _auth = base64.b64encode(_creds.encode()).decode()
             _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
                 endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-                # v4 ingestion: without this header directly-ingested OTEL data
-                # can lag the v4 data model and the v2 APIs by up to 10 minutes.
+
+
                 headers={
                     "Authorization": f"Basic {_auth}",
                     "x-langfuse-ingestion-version": "4",
@@ -109,7 +97,7 @@ if _have_langfuse or _have_grafana:
 else:
     logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
 
-# Job outcomes as a counter metric, so alerting can query it directly
+
 _jobs_processed_counter = None
 if _have_grafana:
     try:
@@ -135,7 +123,7 @@ if _have_grafana:
     except Exception:
         logger.exception("Failed to initialize job metrics (non-fatal)")
 
-# Import path differs between uvicorn (repo root) and standalone
+
 try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
@@ -144,12 +132,12 @@ from pipeline import process_leads, PIPELINE_TIMEOUT_S  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
-# Mirrors process_leads' max_retries — bounds how long a job can legitimately run
+
 PIPELINE_MAX_ATTEMPTS = 3
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 
-# Short TTL: a company can shut down or get acquired between lookups
+
 COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
 
 
@@ -160,7 +148,7 @@ def _cache_row(key: str) -> Optional[dict]:
         .select("company_info,cultural_fit_score,cultural_fit_notes")
         .eq("company_key", key)
         .gte("cached_at", cutoff)
-        .gte("cultural_fit_score", 0)  # excludes in-flight claim placeholders (sentinel -1)
+        .gte("cultural_fit_score", 0)
         .limit(1)
         .execute()
     )
@@ -183,21 +171,21 @@ def cache_get_company(key: str) -> Optional[dict]:
             "company_key": key,
             "company_name": key.split(":", 1)[0],
             "company_info": {},
-            "cultural_fit_score": -1,  # sentinel: claimed, research in flight
+            "cultural_fit_score": -1,
             "cached_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-        return None  # we won the claim — caller does the research
+        return None
     except Exception:
-        pass  # someone else already claimed this key — wait on them instead
+        pass
 
-    # Wait for the winner; if it crashed, fall through and research it ourselves
+
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         time.sleep(2)
         hit = _cache_row(key)
         if hit is not None:
             return hit
-    return None  # winner still not done — research it ourselves as a fallback
+    return None
 
 
 def cache_set_company(key: str, company_name: str, data: dict) -> None:
@@ -210,7 +198,7 @@ def cache_set_company(key: str, company_name: str, data: dict) -> None:
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        # Upsert rather than select-then-write, so two writers can't create two rows
+
         supabase.table("company_research_cache").upsert(row, on_conflict="company_key").execute()
     except Exception:
         logger.exception("Failed to write company research cache (non-fatal)")
@@ -235,7 +223,7 @@ def fail_stale_running_jobs():
     for job in rows:
         started = job.get("started_at")
         if not started:
-            # No timestamp to age it against, so treat it as abandoned
+
             stale_ids.append(job["id"])
             continue
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -272,7 +260,7 @@ def claim_next_job():
         supabase.table("jobs")
         .update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", job["id"])
-        .eq("status", "pending")  # conditional update: loses the race harmlessly
+        .eq("status", "pending")
         .execute()
     )
     if not claimed.data:
@@ -284,7 +272,7 @@ async def run_job(job: dict) -> list:
     leads = job["leads"]
     start = time.time()
 
-    # Stage updates for the UI's progress tracker, written as each agent finishes
+
     progress: dict = {}
 
     def _on_stage(stage: str, state: str) -> None:
@@ -327,19 +315,8 @@ async def process_one_job(job: dict) -> None:
 
 
 async def main():
-    # Every job's real work is sync and reaches the event loop through
-    # asyncio.to_thread (see process_leads), which dispatches to this loop's
-    # default executor. Unset, that executor is min(32, cpu_count + 4) threads:
-    # 12 on an 8-core dev box, where MAX_CONCURRENT_JOBS=10 fits and looks
-    # honest, but 5 on the 1-vCPU box this deploys to. The worker would then
-    # claim ten jobs and actually run five, leaving the rest sitting in
-    # `running` doing nothing while their time budget counts down toward
-    # fail_stale_running_jobs() failing them — and the user pays again on the
-    # re-process. Sizing the pool to the same number makes the setting true.
-    #
-    # Scoped to this loop on purpose. Under RUN_WORKER_IN_PROCESS=1 this runs
-    # via asyncio.run() on its own thread, so uvicorn's anyio threadpool — the
-    # one serving the sync API routes — is untouched.
+
+
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="job")
     )
@@ -354,7 +331,7 @@ async def main():
 
     in_flight: set = set()
     while True:
-        # Only claim what we can start now, so no job sits claimed but unworked
+
         while len(in_flight) < MAX_CONCURRENT_JOBS:
             try:
                 job = claim_next_job()
@@ -370,7 +347,7 @@ async def main():
         if not in_flight:
             await asyncio.sleep(POLL_INTERVAL_S)
         else:
-            # Wake when a slot frees up or the poll interval elapses
+
             await asyncio.wait(in_flight, timeout=POLL_INTERVAL_S, return_when=asyncio.FIRST_COMPLETED)
 
 

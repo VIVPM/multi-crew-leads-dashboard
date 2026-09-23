@@ -18,7 +18,7 @@ Per-lead flow for each item in `leads`:
 """
 
 import os
-os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"   # prevent signal handler errors in threads
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 
 import asyncio
 import hashlib
@@ -53,10 +53,6 @@ def make_tavily_tool(tavily_key: str):
         return str(result)
     return tavily_search_tool
 
-
-# =============================================================================
-# Pydantic schemas
-# =============================================================================
 
 class LeadPersonalInfo(BaseModel):
     name: str
@@ -101,10 +97,6 @@ class LeadScoringResult(BaseModel):
     lead_score: LeadScore
 
 
-# =============================================================================
-# YAML config loading
-# =============================================================================
-
 def _load_configs() -> Dict[str, dict]:
     """Load all four YAML config files relative to this file's directory."""
     base = os.path.dirname(os.path.abspath(__file__))
@@ -121,16 +113,12 @@ def _load_configs() -> Dict[str, dict]:
     return configs
 
 
-# Load once at module level (no Streamlit dependency)
 _CONFIGS = _load_configs()
 
-# Per-attempt pipeline timeout, scaled by lead count in process_leads()
+
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
 
-# Which provider powers the agents: "GEMINI" or "CLOUDFLARE" (Workers AI,
-# through its OpenAI-compatible endpoint). Required, with no default — this
-# picks which account gets billed, and a fallback would quietly send real
-# traffic to a provider nobody chose.
+
 try:
     LLM_MODEL = os.environ["LLM_MODEL"].strip().upper()
 except KeyError:
@@ -148,10 +136,6 @@ if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
         "quietly bill the wrong account."
     )
 
-
-# =============================================================================
-# Company research cache key + summary formatting
-# =============================================================================
 
 def normalize_company_key(company_name: str, our_company_context: str) -> str:
     """
@@ -194,7 +178,7 @@ class _CombinedScoreOutput:
         self._scoring_output = scoring_output
         self._company_output = company_output
 
-    # Exposed separately so the analysis breakdown can attribute tokens per crew
+
     @property
     def scoring_output(self):
         return self._scoring_output
@@ -234,10 +218,6 @@ class _CombinedScoreOutput:
     def __getitem__(self, key):
         return self._scoring_output[key]
 
-
-# =============================================================================
-# Crew factory — accepts the Gemini and Tavily API keys from the UI
-# =============================================================================
 
 def _force_instructor_json_mode() -> None:
     """Have `instructor` read structured output from content, not from a tool call.
@@ -307,7 +287,7 @@ class _CloudflareLLM(LLM):
             if content is None:
                 message["content"] = ""
             elif isinstance(content, list):
-                # Same reason: content blocks must arrive as a plain string.
+
                 message["content"] = "".join(
                     part.get("text", "")
                     for part in content
@@ -332,17 +312,11 @@ def _build_llms(llm_key: str):
                 "LLM_MODEL=CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID (the account the "
                 "Workers AI endpoint belongs to). Set it in backend/.env."
             )
-        # Workers AI speaks the OpenAI wire format, so LiteLLM routes it with the
-        # openai/ prefix plus an api_base rather than needing a native provider.
+
+
         api_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
-        # LiteLLM has no entry for this model name, so it reports the model as not
-        # supporting function calling and CrewAI silently falls back to ReAct-style
-        # text prompting ("Thought:/Action:"). gpt-oss won't answer that way: it
-        # emits its whole turn on the reasoning channel and returns content=None,
-        # which surfaces as "Invalid response from LLM call - None or empty" on the
-        # very first agent step. Registering the model restores native tool calling,
-        # where it answers normally. Cheap and local — register_model only writes to
-        # LiteLLM's in-memory model table.
+
+
         litellm.register_model({
             f"openai/{CLOUDFLARE_MODEL}": {
                 "max_tokens": CLOUDFLARE_MAX_TOKENS,
@@ -353,19 +327,8 @@ def _build_llms(llm_key: str):
                 "supports_function_calling": True,
             },
         })
-        # max_tokens is not optional here. gpt-oss-20b is a reasoning model: it
-        # spends completion tokens on its own reasoning before it emits any
-        # content, and Workers AI defaults the cap to 256. Left alone, the
-        # reasoning eats the whole budget and the reply comes back with
-        # finish_reason="length" and an empty content field, which reaches CrewAI
-        # as a blank answer rather than an error. Measured: a lead-scoring reply
-        # needs ~550 tokens, so 4096 leaves room for the longer email task too.
-        # CrewAI converts task output to pydantic through `instructor`, which
-        # builds its own OpenAI client instead of reusing the LLM object's
-        # credentials — it reads OPENAI_API_KEY/OPENAI_BASE_URL and otherwise
-        # fails with "Missing credentials" partway through the scoring crew.
-        # Pointing those at Workers AI is safe here because nothing else in this
-        # process talks to OpenAI.
+
+
         _force_cloudflare_max_tokens()
         _force_instructor_json_mode()
 
@@ -400,7 +363,7 @@ def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
 
     search_tools = [make_tavily_tool(tavily_key), ScrapeWebsiteTool()]
 
-    # --- Personal research + scoring/validation ---
+
     personal_research_agent = Agent(
         config=_CONFIGS["lead_agents"]["personal_research_agent"],
         tools=search_tools,
@@ -408,7 +371,7 @@ def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
     )
     scoring_validation_agent = Agent(
         config=_CONFIGS["lead_agents"]["scoring_validation_agent"],
-        llm=llm_flash,  # no tools: aggregates/validates context already gathered
+        llm=llm_flash,
     )
 
     personal_research_task = Task(
@@ -427,7 +390,7 @@ def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
         verbose=True,
     )
 
-    # --- Company research (independently kickoff-able for cache skipping) ---
+
     company_research_agent = Agent(
         config=_CONFIGS["lead_agents"]["company_research_agent"],
         tools=search_tools,
@@ -444,7 +407,7 @@ def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
         verbose=True,
     )
 
-    # --- Email (merged draft + optimize) ---
+
     email_specialist_agent = Agent(
         config=_CONFIGS["email_agents"]["email_specialist_agent"],
         llm=llm_flash,
@@ -466,10 +429,6 @@ def build_crews(llm_key: str, tavily_key: str) -> Dict[str, Crew]:
     }
 
 
-# =============================================================================
-# Per-lead orchestration (sync — run inside a worker thread, see process_leads)
-# =============================================================================
-
 def _score_one_lead(
     lead: dict,
     crews: Dict[str, Crew],
@@ -485,7 +444,7 @@ def _score_one_lead(
 
     company_output = None
     if cached:
-        # The company crew never runs on a hit, so report its stage here
+
         if on_stage:
             on_stage("company", "cached")
         company_summary = format_company_summary(cached)
@@ -539,29 +498,15 @@ def _process_batch(
     return scores, emails, cache_hits
 
 
-# =============================================================================
-# Public async entry-point (called by worker.py)
-# =============================================================================
-
-# Failures a retry cannot fix. Re-running these spends the same money to reach
-# the same error: a schema the model can't satisfy, a key that isn't valid, a
-# request the provider rejected outright. Everything else — timeouts, 429s,
-# 5xx, dropped connections, and anything unrecognised — is retried, because one
-# wasted attempt is cheaper than failing a job that would have worked.
-#
-# Looked up by name instead of imported: litellm keeps PermissionDeniedError in
-# litellm.exceptions but not on the package root, and instructor has moved
-# InstructorRetryException between releases. A name that disappears should cost
-# us one classification, not crash the worker at import time.
 _PERMANENT_ERROR_NAMES = (
-    "AuthenticationError",          # bad or revoked key
-    "PermissionDeniedError",        # key lacks access to the model
-    "BadRequestError",              # malformed request; identical next time
-    "NotFoundError",                # model or endpoint doesn't exist
-    "ContextWindowExceededError",   # prompt is too long, and won't shrink
-    "UnsupportedParamsError",       # provider rejects a parameter we send
-    "ContentPolicyViolationError",  # blocked content
-    "JSONSchemaValidationError",    # response can't satisfy the schema
+    "AuthenticationError",
+    "PermissionDeniedError",
+    "BadRequestError",
+    "NotFoundError",
+    "ContextWindowExceededError",
+    "UnsupportedParamsError",
+    "ContentPolicyViolationError",
+    "JSONSchemaValidationError",
 )
 
 
@@ -572,8 +517,8 @@ def _build_permanent_errors() -> tuple:
         )
         if isinstance(exc, type) and issubclass(exc, BaseException)
     ]
-    # Structured-output failures: the model produced something the pydantic
-    # model rejects. instructor has already retried internally by this point.
+
+
     found += [ValidationError, ConverterError]
     try:
         from instructor.core.exceptions import InstructorRetryException
@@ -625,9 +570,7 @@ async def process_leads(
     task_timing: List[Dict] = []
     start_ref: List[float] = [0.0]
 
-    # Maps each agent to its pipeline stage, read off the crews themselves so it
-    # can't drift from the YAML. Roles are stripped — folded scalars (`role: >`)
-    # leave a trailing newline.
+
     stage_by_role = {
         crews["company"].agents[0].role.strip(): "company",
         crews["personal_scoring"].agents[0].role.strip(): "personal_research",
@@ -641,7 +584,7 @@ async def process_leads(
             else getattr(output.agent, "role", str(output.agent))
         )
         task_timing.append({"agent": agent_name, "ts": time.time()})
-        # A finished task means its stage is done
+
         if on_stage:
             stage = stage_by_role.get(agent_name.strip())
             if stage:
@@ -689,9 +632,8 @@ async def process_leads(
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
-            # Full jitter, not a flat 2**attempt. Every job that fails during one
-            # provider outage would otherwise wake at the same second and rebuild
-            # the spike that knocked it over.
+
+
             wait = random.uniform(0, 2 ** attempt)
             logger.info("Retrying in %.1fs...", wait)
             await asyncio.sleep(wait)

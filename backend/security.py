@@ -12,28 +12,13 @@ import time
 
 import bcrypt
 
-# Access token: short-lived so a leaked one expires fast (it's stateless and
-# can't be revoked). The refresh token below covers staying logged in.
-TOKEN_TTL_S = 60 * 60           # 60 minutes
-# Refresh token: long-lived, revocable (stored server-side), silently mints
-# new access tokens. This is the real "how long you stay logged in" window.
-REFRESH_TTL_S = 14 * 24 * 3600  # 14 days
+
+TOKEN_TTL_S = 60 * 60
 
 
-# ---------------------------------------------------------------------------
-# Passwords
-# ---------------------------------------------------------------------------
+REFRESH_TTL_S = 14 * 24 * 3600
 
-# bcrypt's default cost is 12 rounds. Load testing against the deployed
-# Render free tier (0.1 vCPU) measured 18-29s p95 login latency at just
-# 10-25 concurrent users — bcrypt is deliberately CPU-heavy, and a tenth of a
-# core doesn't parallelize concurrent hashing, it serializes it. Cost 10 is
-# ~4x less CPU time per hash (each step doubles/halves the work) and is
-# still within bcrypt's commonly-accepted range for production use — a real
-# but modest tradeoff, made explicitly here rather than silently. This only
-# affects hashes created from now on: bcrypt embeds the cost used in the hash
-# string itself, and checkpw reads it back out automatically, so existing
-# cost-12 hashes keep verifying correctly with no migration needed.
+
 _BCRYPT_ROUNDS = 10
 
 
@@ -48,8 +33,8 @@ def is_legacy_hash(hashed: str) -> bool:
 
 def verify_password(password: str, hashed: str) -> bool:
     if is_legacy_hash(hashed):
-        # legacy unsalted SHA-256 — accepted so existing users can log in;
-        # the caller re-hashes with bcrypt on success (lazy migration)
+
+
         digest = hashlib.sha256(password.encode()).hexdigest()
         return hmac.compare_digest(digest, hashed)
     try:
@@ -57,10 +42,6 @@ def verify_password(password: str, hashed: str) -> bool:
     except ValueError:
         return False
 
-
-# ---------------------------------------------------------------------------
-# Session tokens: base64(user_id:expiry:hmac_sha256(secret, user_id:expiry))
-# ---------------------------------------------------------------------------
 
 def make_token(user_id: str, secret: str, ttl_s: int = TOKEN_TTL_S) -> str:
     payload = f"{user_id}:{int(time.time()) + ttl_s}"
@@ -84,10 +65,6 @@ def verify_token(token: str, secret: str) -> str:
         raise ValueError("token expired")
     return user_id
 
-
-# ---------------------------------------------------------------------------
-# Refresh tokens: opaque random strings, stored server-side only as a hash
-# ---------------------------------------------------------------------------
 
 def make_refresh_token() -> tuple[str, str]:
     """Return (raw_token, token_hash). The raw goes to the client once; only
