@@ -1,11 +1,7 @@
-// CSV import parsing for the bulk-import flow. Kept out of the component so
-// the parsing rules are testable on their own (plain JS, no JSX/React).
-
+// Parses and validates lead CSV imports.
 export const MAX_ROWS = 200
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 
-// Accepts the same column names the CSV export produces, so an exported file
-// round-trips straight back in. Unknown columns (e.g. Score) are ignored.
 const HEADER_MAP = {
   'name': 'name',
   'job title': 'job_title', 'job_title': 'job_title',
@@ -17,8 +13,7 @@ const HEADER_MAP = {
   'source': 'source',
 }
 
-// Minimal RFC-4180-ish parser: handles quoted fields, embedded commas/newlines
-// and "" escapes. Avoids pulling in a CSV dependency for ~25 lines.
+// Parses quoted fields, embedded commas or newlines, and escaped quotes.
 export function parseCSV(text) {
   const rows = []
   let row = [], field = '', inQuotes = false
@@ -41,7 +36,6 @@ export function toLeads(text) {
   const rows = parseCSV(text)
   if (!rows.length) return { leads: [], errors: ['That file is empty.'] }
 
-  // trim() already strips the UTF-8 BOM the CSV export writes, so exports round-trip
   const header = rows[0].map(h => h.trim().toLowerCase())
   const cols = header.map(h => HEADER_MAP[h] || null)
   for (const required of ['name', 'company', 'email']) {
@@ -54,7 +48,7 @@ export function toLeads(text) {
   rows.slice(1).forEach((cells, i) => {
     const lead = {}
     cols.forEach((key, c) => { if (key) lead[key] = (cells[c] ?? '').trim() })
-    const line = i + 2 // 1-indexed, +1 for the header row
+    const line = i + 2
     if (!lead.name || !lead.company || !lead.email) {
       errors.push(`Row ${line}: name, company and email are all required.`)
     } else if (!EMAIL_RE.test(lead.email)) {

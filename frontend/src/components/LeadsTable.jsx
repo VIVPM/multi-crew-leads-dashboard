@@ -1,10 +1,9 @@
+// Lists leads and manages analysis, drafts, sending, and deletion.
 import { useState, useEffect } from 'react'
 import { api, draftEmailForLead, friendlyError } from '../api'
 
 const PAGE_SIZES = [10, 25, 50, 100]
 
-// Repeat scoring of the same lead varies by ~+/-3.5 points, so a lead in this
-// band could land either side of the cutoff on a different run.
 const EMAIL_THRESHOLD = 70
 const BORDERLINE_LOW = 65
 const BORDERLINE_HIGH = 75
@@ -21,7 +20,7 @@ function flattenToText(obj) {
 function exportCSV(leads) {
   const cols = ['Name', 'Job Title', 'Company', 'Email', 'Use Case', 'Industry', 'Location', 'Source', 'Score']
   const keys = ['name', 'job_title', 'company', 'email', 'use_case', 'industry', 'location', 'source', 'score']
-  const sanitize = s => (/^[=+\-@]/.test(s) ? `'${s}` : s) // neutralize spreadsheet formula injection
+  const sanitize = s => (/^[=+\-@]/.test(s) ? `'${s}` : s)
   const rows = leads.map(l => keys.map(k => `"${sanitize((l[k] ?? '').toString()).replace(/"/g, '""')}"`).join(','))
   const csv = [cols.join(','), ...rows].join('\n')
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
@@ -186,15 +185,13 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [sentMsg, setSentMsg] = useState(null)
   const [drafting, setDrafting] = useState(false)
-  // Heavy fields aren't in the list response; fetched when the card expands
+
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const score = lead.score != null ? ` • Score: ${lead.score}` : ''
   const isBorderline =
     lead.score != null && lead.score >= BORDERLINE_LOW && lead.score <= BORDERLINE_HIGH
 
-  // detailLoading must not be a dependency — it would re-run this effect and
-  // cancel the in-flight request, leaving the card stuck on "Loading…".
   useEffect(() => {
     if (!open || detail) return
     let cancelled = false
@@ -229,7 +226,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
     try {
       await api('PUT', `/leads/${lead.id}`, { email_draft: emailDraft })
       setEditingEmail(false)
-      // The list response has no email_draft, so keep the fetched detail in sync
+
       setDetail(d => ({ ...(d || {}), email_draft: emailDraft }))
       onRefresh()
     } catch (e) {
@@ -387,10 +384,7 @@ function LeadCard({ lead, onEdit, onDelete, onRefresh }) {
           )}
 
           <div className="lead-card-actions">
-            {/* Edit stays available after processing: re-scoring a borderline
-                lead can cross the cutoff on the next run (see the borderline
-                note above, which tells the user to do exactly this). The
-                "Processed" badge sits first, with Edit beside it. */}
+
             {lead.score != null && <span className="badge badge-green">Processed</span>}
             <button className="btn btn-sm btn-outline" onClick={() => onEdit(lead)}>Edit</button>
             <button className="btn btn-sm btn-danger" onClick={() => setShowDeleteConfirm(true)} disabled={deleting}>

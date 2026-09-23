@@ -1,10 +1,10 @@
+// Captures lead details and displays live processing progress.
 import { useState } from 'react'
 
 const EMAIL_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 const MAX_LEN = 255
 const SOURCES = ['Website', 'Referral', 'Event', 'Social Media', 'Other']
 
-// Tooltip shown on the ⓘ beside the Use Case field
 const USE_CASE_HINT =
   'What this lead is trying to achieve that your product can help with — written ' +
   'as a short goal in their own words, not a description of your product.\n\n' +
@@ -12,7 +12,6 @@ const USE_CASE_HINT =
   'The crew uses it to judge how well your product fits this lead, and to explain ' +
   'in the drafted email why your product suits that goal.'
 
-// Pipeline stages in run order; keys match pipeline.py's on_stage names
 const PROCESS_STEPS = [
   ['company', 'Company research & cultural fit'],
   ['personal_research', 'Personal research'],
@@ -20,8 +19,7 @@ const PROCESS_STEPS = [
   ['email', 'Email draft'],
 ]
 
-// Live step tracker. The first stage the worker hasn't reported yet is the
-// one currently running.
+// Shows completed, active, cached, and pending pipeline stages.
 function StepTracker({ steps }) {
   const p = steps || {}
   const currentIdx = PROCESS_STEPS.findIndex(([key]) => !p[key])
@@ -101,7 +99,6 @@ function validate(fields) {
 }
 
 export default function LeadForm({ lead, onSave, onCancel }) {
-  // The parent keys this component by lead id, so a different lead remounts it
   const [fields, setFields] = useState(() => ({
     name: lead?.name || '',
     job_title: lead?.job_title || '',
@@ -113,8 +110,8 @@ export default function LeadForm({ lead, onSave, onCancel }) {
     source: lead?.source || 'Website',
   }))
   const [errors, setErrors] = useState([])
-  const [status, setStatus] = useState(null) // 'saving' | 'processing' | null
-  const [steps, setSteps] = useState(null)   // live {stage: state} progress map
+  const [status, setStatus] = useState(null)
+  const [steps, setSteps] = useState(null)
   const [forceRefresh, setForceRefresh] = useState(false)
 
   function set(key, val) {
@@ -124,7 +121,7 @@ export default function LeadForm({ lead, onSave, onCancel }) {
   async function handleSubmit(e) {
     e.preventDefault()
     const errs = validate(fields)
-    // Show one problem at a time, in field order
+
     if (errs.length) { setErrors([errs[0]]); return }
     setErrors([])
     try {

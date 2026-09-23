@@ -1,11 +1,12 @@
+// Renders login and signup forms.
 import { useState } from 'react'
 import { api, friendlyError } from '../api'
 
 export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
-  const [mode, setMode] = useState(initialMode) // 'login' | 'signup'
+  const [mode, setMode] = useState(initialMode)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [message, setMessage] = useState(null) // { type: 'error'|'success', text }
+  const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e) {
@@ -27,9 +28,6 @@ export default function Auth({ onLogin, onBack, initialMode = 'login' }) {
     }
     setLoading(true)
     try {
-      // Signup and login return the same token shape, and signup signs the
-      // new user straight in — so both paths go to the main window, no second
-      // "please log in" step.
       const path = mode === 'signup' ? '/auth/signup' : '/auth/login'
       const data = await api('POST', path, { username, password })
       onLogin(data.user_id, data.username, data.token, data.refresh_token)

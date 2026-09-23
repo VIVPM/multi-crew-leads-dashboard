@@ -1,11 +1,10 @@
+// Edits the company profile and ideal customer profile.
 import { useState, useEffect } from 'react'
 import { api, friendlyError } from '../api'
 
-// Controlled by App.jsx: `value` is the saved profile, `expanded` is lifted
-// so the "ICP required" dialog can force this open and scroll to it.
 export default function CompanyProfile({ value, loaded, expanded, onToggleExpanded, onSaved, onMessage }) {
   const [text, setText] = useState(value)
-  const [status, setStatus] = useState(null) // 'saving' | 'saved' | 'error' | null
+  const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => { setText(value) }, [value])

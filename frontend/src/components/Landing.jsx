@@ -1,3 +1,4 @@
+// Renders the product landing page and animated workflow preview.
 import { useEffect, useRef, useState } from 'react'
 
 const AGENTS = [
@@ -26,7 +27,6 @@ const STEPS = [
 ]
 
 function useCountUp(target, durationMs, delayMs) {
-  // reduced motion: start (and stay) at the target — no animation
   const [value, setValue] = useState(() =>
     window.matchMedia('(prefers-reduced-motion: reduce)').matches ? target : 0,
   )
@@ -76,7 +76,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
 
   return (
     <div className="lp">
-      {/* Nav */}
+
       <nav className="lp-nav">
         <span className="lp-wordmark">
           <span className="lp-logo">🎯</span> Sales Pipeline
@@ -87,7 +87,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
         </div>
       </nav>
 
-      {/* Hero on the gradient mesh */}
       <header className="lp-hero">
         <div className="lp-hero-copy">
           <p className="lp-eyebrow lp-fade" style={{ '--d': '0ms' }}>Multi-agent sales automation</p>
@@ -104,7 +103,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
           </div>
         </div>
 
-        {/* Animated product composite — the crew running a real lead */}
         <div className="lp-composite lp-fade" style={{ '--d': '480ms' }}>
           <div className="lp-mock-header">
             <span className="lp-mock-lead">Jane Doe — Acme Software</span>
@@ -128,7 +126,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
         </div>
       </header>
 
-      {/* How it works — a real sequence, so the numbers mean something */}
       <section className="lp-section" id="how">
         <Reveal>
           <h2 className="lp-h2">From form to ready-to-send email in three steps</h2>
@@ -146,7 +143,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
         </div>
       </section>
 
-      {/* Feature band */}
       <section className="lp-section lp-band-soft">
         <div className="lp-features">
           <Reveal className="lp-stagger-0">
@@ -179,7 +175,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
         </div>
       </section>
 
-      {/* Cream interlude — the human artifact */}
       <section className="lp-section">
         <Reveal>
           <div className="lp-cream">
@@ -201,7 +196,6 @@ export default function Landing({ onSignIn, onGetStarted }) {
         </Reveal>
       </section>
 
-      {/* Dark CTA band */}
       <section className="lp-section lp-section-tight">
         <Reveal>
           <div className="lp-dark-cta">

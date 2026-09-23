@@ -1,9 +1,7 @@
+// Manages per-user SMTP settings.
 import { useState, useEffect } from 'react'
 import { api, friendlyError } from '../api'
 
-// Self-contained (fetches its own settings) unlike CompanyProfile, since
-// nothing else in the app needs this state — sending is opt-in per lead,
-// not required to use the rest of the product.
 export default function EmailSettings({ onMessage }) {
   const [expanded, setExpanded] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -12,7 +10,7 @@ export default function EmailSettings({ onMessage }) {
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com')
   const [smtpPort, setSmtpPort] = useState(587)
   const [smtpPassword, setSmtpPassword] = useState('')
-  const [status, setStatus] = useState(null) // 'saving' | 'saved' | 'error' | null
+  const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
@@ -23,7 +21,7 @@ export default function EmailSettings({ onMessage }) {
         setSmtpPort(data.smtp_port || 587)
         setConfigured(!!data.configured)
       })
-      .catch(() => { /* falls back to defaults; save flow surfaces its own errors */ })
+      .catch(() => {  })
       .finally(() => setLoaded(true))
   }, [])
 
@@ -39,7 +37,7 @@ export default function EmailSettings({ onMessage }) {
       })
       setStatus('saved')
       setConfigured(true)
-      setSmtpPassword('') // never keep the password in the form after saving
+      setSmtpPassword('')
       setExpanded(false)
       onMessage?.('Email sending settings saved.')
       setTimeout(() => setStatus(null), 2000)

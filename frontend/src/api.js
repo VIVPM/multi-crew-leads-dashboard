@@ -1,9 +1,4 @@
-// Required in production builds (no hardcoded fallback — same reasoning as
-// the backend's ALLOWED_ORIGINS: the real deployed URL doesn't belong in
-// source). Vite inlines env vars at build time, so this has to be set when
-// the bundle is built, not when it's served — see the README setup section.
-// Dev keeps a plain localhost fallback since that value isn't sensitive and
-// every contributor needs it to just work.
+// Provides authenticated backend requests and user-facing error messages.
 if (!import.meta.env.DEV && !import.meta.env.VITE_BACKEND_URL) {
   throw new Error(
     "VITE_BACKEND_URL is not set. It must be set at build time (Vite inlines " +
@@ -35,9 +30,7 @@ async function doFetch(method, path, body, token) {
   return fetch(`${BACKEND}${path}`, opts);
 }
 
-// Exchange the refresh token for a new access token and update the stored
-// session. Returns the new access token, or null if the refresh token is
-// expired or revoked.
+// Refreshes and stores the access token, returning null when renewal fails.
 async function refreshAccessToken() {
   const s = readSession();
   if (!s?.refreshToken) return null;
@@ -60,15 +53,11 @@ async function refreshAccessToken() {
 export async function api(method, path, body) {
   let res = await doFetch(method, path, body, readSession()?.token);
 
-  // Access token expired mid-session — silently refresh once and retry, so the
-  // user isn't kicked to login every hour. Only when we actually have a refresh
-  // token (i.e. logged in) and not on the refresh call itself.
   if (res.status === 401 && path !== "/auth/refresh" && readSession()?.refreshToken) {
     const newToken = await refreshAccessToken();
     if (newToken) {
       res = await doFetch(method, path, body, newToken);
     } else {
-      // Refresh token itself is dead — clear the session and let the app show login.
       localStorage.removeItem(SESSION_KEY);
       window.dispatchEvent(new Event("sp-auth-expired"));
     }
@@ -80,7 +69,9 @@ export async function api(method, path, body) {
       const d = (await res.json()).detail;
       if (typeof d === "string") detail = d;
       else if (Array.isArray(d)) detail = d.map(x => x.msg || String(x)).join("; ");
-    } catch { /* non-JSON error body — keep the HTTP status */ }
+    } catch {
+      throw new Error(detail);
+    }
     throw new Error(detail);
   }
   return res.json();

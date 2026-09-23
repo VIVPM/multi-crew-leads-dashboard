@@ -1,3 +1,4 @@
+// Visualizes lead totals, scores, industries, sources, and activity.
 import { useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -5,7 +6,6 @@ import {
   LineChart, Line, CartesianGrid,
 } from 'recharts'
 
-// Stripe design system: chart colors come from the documented gradient stops only
 const COLORS = ['#533afd', '#ea2261', '#f96bee', '#665efd', '#1c1e54', '#9b6829', '#b9b9f9', '#4434d4']
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -34,8 +34,6 @@ function scoreHistogram(leads) {
     buckets[idx].count++
   })
 
-  // Collapse consecutive empty buckets into one wide range so the chart stays
-  // continuous (no gaps hidden) without a wall of empty 5-point bars.
   const merged = []
   for (const b of buckets) {
     const prev = merged[merged.length - 1]
@@ -63,7 +61,7 @@ function avgScoreByIndustry(leads) {
     .sort((a, b) => a.avg - b.avg)
 }
 
-// Years that actually have at least one dated lead, newest first.
+// Returns years containing dated leads, newest first.
 function availableYears(leads) {
   const years = new Set(
     leads.filter(l => l.created_at).map(l => new Date(l.created_at).getFullYear())
@@ -71,8 +69,7 @@ function availableYears(leads) {
   return [...years].sort((a, b) => b - a)
 }
 
-// All 12 months always present (0 where there's no data), so the chart
-// shape stays the same Jan-Dec regardless of which months have leads.
+// Builds a fixed January-to-December series for the selected year.
 function leadsByMonth(leads, year) {
   const counts = Array(12).fill(0)
   leads.forEach(l => {
@@ -109,10 +106,7 @@ function NoData() {
   return <p className="no-data">No data yet</p>
 }
 
-// Legend below the pie instead of labels on the slices — slice labels
-// clipped or overlapped for longer names (countries, sources); a legend
-// stays readable no matter how long the name or how thin the slice.
-// Percentage only shows on hover (tooltip), not as a permanent slice label.
+// Renders a pie chart with an external legend for long labels.
 function LegendPie({ data }) {
   const total = data.reduce((sum, d) => sum + d.value, 0)
   const pct = value => `${Math.round((value / total) * 100)}%`
