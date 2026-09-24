@@ -117,6 +117,7 @@ _CONFIGS = _load_configs()
 
 
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
+LLM_CALL_TIMEOUT_S = 60
 
 
 try:
@@ -340,12 +341,13 @@ def _build_llms(llm_key: str):
             api_key=llm_key,
             api_base=api_base,
             max_tokens=CLOUDFLARE_MAX_TOKENS,
+            timeout=LLM_CALL_TIMEOUT_S,
         )
         return llm, llm
 
     return (
-        LLM(model="gemini/gemini-2.5-flash", api_key=llm_key),
-        LLM(model="gemini/gemini-2.5-flash-lite", api_key=llm_key),
+        LLM(model="gemini/gemini-2.5-flash", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
+        LLM(model="gemini/gemini-2.5-flash-lite", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
     )
 
 
