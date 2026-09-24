@@ -508,17 +508,12 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
 
 
 def _leads_used_today(user_id: str) -> int:
-    """Leads this user has submitted for processing since UTC midnight.
-
-    This is the whole "credit" mechanism: remaining = cap - this. Reset is free —
-    at midnight the window moves and the count is 0 again, so there's no credits
-    table and no nightly restore job. The row count stays small because the cap
-    itself bounds how many jobs a user can create per day.
-    """
+    """Leads this user has queued or processed successfully since UTC midnight; failed jobs don't count."""
     since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     rows = (
         supabase.table("jobs").select("leads")
-        .eq("user_id", user_id).gte("created_at", since.isoformat()).execute()
+        .eq("user_id", user_id).gte("created_at", since.isoformat())
+        .neq("status", "failed").execute()
     ).data or []
     return sum(len(r.get("leads") or []) for r in rows)
 
@@ -719,7 +714,7 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
 
     from pipeline import build_crews
-    crews = build_crews(LLM_API_KEY)
+    crews = build_crews(LLM_API_KEY, TAVILY_API_KEY)
     email_input = {
         **lead["scoring_result"],
         "our_company_context": company_context,
