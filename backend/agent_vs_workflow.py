@@ -42,18 +42,14 @@ from supabase import create_client  # noqa: E402
 
 import pipeline  # noqa: E402
 
-# Same rates persist_results and worker.py price with, so these numbers line up
-# with the per-lead costs quoted in the README.
+
 PROMPT_RATE, COMPLETION_RATE = 0.15 / 1_000_000, 0.60 / 1_000_000
 
 _real_research = pipeline._research
 _company_role = pipeline.ROLE_COMPANY
 _company_name = ""
 
-# What a lead looks like the first time it's processed. The stored row also has
-# score, scoring_result and email_draft from the earlier run; lead_data is
-# formatted straight into the prompts, so passing those would show the model its
-# own previous answer.
+
 LEAD_INPUT_FIELDS = ("id", "name", "job_title", "company", "email", "use_case",
                      "industry", "location", "source")
 
@@ -69,7 +65,7 @@ def _workflow_company_research(llm, tools, system, human, cb=None):
     structuring _chat call in company_node is still counted.
     """
     if _company_role not in system:
-        return _real_research(llm, tools, system, human, cb)  # personal research stays an agent
+        return _real_research(llm, tools, system, human, cb)
 
     search = next(t for t in tools if t.name == "tavily_web_search")
     queries = [
@@ -87,8 +83,8 @@ def pick_lead(sb, lead_id):
     if lead_id:
         rows = q.eq("id", lead_id).execute().data
     else:
-        # Skip load-test and calibration leads: they're synthetic people, and
-        # the whole point is a lead that came through the product for real.
+
+
         rows = [r for r in q.order("created_at", desc=True).limit(50).execute().data
                 if not str(r.get("name", "")).startswith(("Calibration ", "LOADTEST", "Lead "))
                 and r.get("company")]
@@ -155,8 +151,8 @@ def table(hybrid, current):
 
 
 if __name__ == "__main__":
-    # The Windows console defaults to cp1252, which has no box-drawing
-    # characters — the first run crashed on the table after spending the money.
+
+
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--lead-id", type=int)
@@ -170,8 +166,8 @@ if __name__ == "__main__":
 
     current_runs, hybrid_runs = [], []
     for i in range(args.runs):
-        # Alternate the order so neither side always runs against a warmer
-        # Tavily or provider cache.
+
+
         for hybrid in ((False, True) if i % 2 == 0 else (True, False)):
             r = run_once(lead, icp, hybrid)
             (hybrid_runs if hybrid else current_runs).append(r)

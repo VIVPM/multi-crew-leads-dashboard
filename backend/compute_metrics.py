@@ -18,13 +18,13 @@ async def main():
     all_results = data["results"]
     print(f"Loaded {len(all_results)} results from intermediate file.")
 
-    # Load eval leads to get the adversarial leads
+
     json_path = os.path.join(BASE_DIR, "eval_leads.json")
     with open(json_path, "r", encoding="utf-8") as f:
         leads_data = json.load(f)
-    
+
     adversarial_leads = [lead for lead in leads_data["leads"] if lead["group"] == "adversarial"]
-    
+
     gemini_key = os.environ["GEMINI_API_KEY"]
     tavily_key = os.environ["TAVILY_API_KEY"]
     icp = load_icp()
@@ -38,7 +38,7 @@ async def main():
     metrics = compute_metrics(all_results)
     print_report(metrics)
 
-    # Save final report
+
     from datetime import datetime
     out_dir = os.path.join(ROOT_DIR, "scoring_eval_results")
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
