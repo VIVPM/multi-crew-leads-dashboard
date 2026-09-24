@@ -1,6 +1,6 @@
+// Authenticated navigation and account menu.
 import { useState, useRef, useEffect } from 'react'
 
-// Each page is a distinct view in App.jsx, switched by the menu.
 const PAGES = [
   { id: 'add-lead', label: 'Add new lead' },
   { id: 'dashboard', label: 'Dashboard' },
@@ -34,7 +34,6 @@ export default function Navbar({ username, page, onNavigate, onLogout, credits }
   const [open, setOpen] = useState(false)
   const menuRef = useRef(null)
 
-  // Close on outside click or Escape — standard menu behaviour.
   useEffect(() => {
     if (!open) return
     const onDocClick = e => { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false) }

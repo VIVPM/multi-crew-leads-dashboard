@@ -1,3 +1,4 @@
+// ESLint rules for frontend source and tests.
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
@@ -25,11 +26,10 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      'no-empty': ['error', { allowEmptyCatch: true }],
     },
   },
   {
-    // vite.config.js etc. run in Node, not the browser — process/import.meta
-    // need Node's globals, not the app's.
     files: ['*.config.js'],
     extends: [js.configs.recommended],
     languageOptions: {

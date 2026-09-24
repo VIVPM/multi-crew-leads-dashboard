@@ -1,10 +1,11 @@
+// CSV upload, validation, and bulk lead processing.
 import { useState, useRef } from 'react'
 import { api, friendlyError } from '../api'
 import { toLeads, MAX_ROWS } from '../csv'
 
 const STATUS_META = {
   pending:    { icon: '○', label: 'Queued' },
-  processing: { icon: '',  label: 'Scoring…' }, // a spinner is rendered instead of an icon
+  processing: { icon: '',  label: 'Scoring…' },
   done:       { icon: '✓', label: 'Scored' },
   failed:     { icon: '✕', label: 'Failed' },
 }
@@ -16,7 +17,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
   const [errors, setErrors] = useState([])
   const [fileName, setFileName] = useState('')
   const [running, setRunning] = useState(false)
-  // null | 'creating' | { items: [{ name, status }], done, total }
+
   const [progress, setProgress] = useState(null)
   const fileRef = useRef(null)
 
@@ -40,17 +41,16 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  // An import must fit the day's remaining credits — blocked upfront, not partially run
   const overBudget = Number.isFinite(remaining) && leads.length > remaining
 
   async function handleStart() {
     if (!canProcess) { onNeedIcp(); return }
-    if (overBudget) return // the button is disabled in this state; guard anyway
+    if (overBudget) return
     setRunning(true)
     setErrors([])
     setProgress('creating')
     try {
-      // Create every row first (creation is free — no LLM), then score them.
+
       const { created, skipped } = await api('POST', '/leads/bulk', { leads })
       const dupeNote = skipped.length ? ` ${skipped.length} skipped as already imported.` : ''
       onImported()
@@ -61,7 +61,6 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
         return
       }
 
-      // One lead per job, sequentially, so each result appears as it lands
       const items = created.map(l => ({ name: l.name || l.company || 'Lead', status: 'pending' }))
       setProgress({ items: [...items], done: 0, total: items.length })
 
@@ -78,7 +77,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
           failed++
         }
         setProgress({ items: [...items], done: scored + failed, total: items.length })
-        onImported() // refresh the table + credit badge as each one lands
+        onImported()
       }
 
       const parts = [`Imported ${created.length} lead(s).`]
@@ -105,8 +104,8 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
         must fit your daily credits{cap ? ` (${cap}/day, 1 credit scores 1 lead)` : ''}.
       </p>
 
-      {/* native file input is unstyleable across browsers — hide it and drive
-          it from the label, which keeps the click/keyboard behaviour for free */}
+      {
+}
       <label className={`file-picker ${running ? 'is-disabled' : ''}`}>
         <input
           ref={fileRef}
@@ -130,7 +129,7 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
         </div>
       )}
 
-      {/* Hard block: the file has more leads than credits left today. */}
+      {}
       {fileName && !running && leads.length > 0 && overBudget && (
         <div className="alert alert-error">
           {remaining === 0

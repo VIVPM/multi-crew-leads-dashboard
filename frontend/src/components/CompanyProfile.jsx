@@ -1,3 +1,4 @@
+// Company profile and ICP settings.
 import { useState, useEffect } from 'react'
 import { api, friendlyError } from '../api'
 
@@ -5,7 +6,7 @@ import { api, friendlyError } from '../api'
 // so the "ICP required" dialog can force this open and scroll to it.
 export default function CompanyProfile({ value, loaded, expanded, onToggleExpanded, onSaved, onMessage }) {
   const [text, setText] = useState(value)
-  const [status, setStatus] = useState(null) // 'saving' | 'saved' | 'error' | null
+  const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => { setText(value) }, [value])

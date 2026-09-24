@@ -1,3 +1,4 @@
+// Per-user SMTP settings.
 import { useState, useEffect } from 'react'
 import { api, friendlyError } from '../api'
 
@@ -12,7 +13,7 @@ export default function EmailSettings({ onMessage }) {
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com')
   const [smtpPort, setSmtpPort] = useState(587)
   const [smtpPassword, setSmtpPassword] = useState('')
-  const [status, setStatus] = useState(null) // 'saving' | 'saved' | 'error' | null
+  const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
@@ -23,7 +24,7 @@ export default function EmailSettings({ onMessage }) {
         setSmtpPort(data.smtp_port || 587)
         setConfigured(!!data.configured)
       })
-      .catch(() => { /* falls back to defaults; save flow surfaces its own errors */ })
+      .catch(() => { })
       .finally(() => setLoaded(true))
   }, [])
 
@@ -39,7 +40,7 @@ export default function EmailSettings({ onMessage }) {
       })
       setStatus('saved')
       setConfigured(true)
-      setSmtpPassword('') // never keep the password in the form after saving
+      setSmtpPassword('')
       setExpanded(false)
       onMessage?.('Email sending settings saved.')
       setTimeout(() => setStatus(null), 3000)

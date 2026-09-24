@@ -1,10 +1,4 @@
-/* ============================================================
-   Design system: Stripe-inspired (awesome-design-md/stripe)
-   Deep navy ink, electric indigo CTAs, thin display type with
-   negative tracking, tabular figures on every numeric cell,
-   gradient mesh on the auth hero, cream interlude on email drafts.
-   ============================================================ */
-
+/* Application layout, components, themes, and responsive styles. */
 :root {
   --primary: #533afd;
   --primary-deep: #4434d4;
@@ -33,9 +27,7 @@
   --font: 'Inter', 'SF Pro Display', system-ui, -apple-system, sans-serif;
 }
 
-/* ============================================================
-   Reset & base
-   ============================================================ */
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -61,7 +53,7 @@ body {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
 
-/* numeric cells — the financial-data signature */
+
 .tnum,
 .metric-value,
 .analysis-table td,
@@ -72,16 +64,14 @@ body {
   letter-spacing: -0.3px;
 }
 
-/* ============================================================
-   Layout
-   ============================================================ */
+
 .app-layout {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
-/* Navbar — the dark-app shell, now a top bar instead of a left sidebar */
+
 .navbar {
   background: var(--brand-dark);
   color: var(--on-primary);
@@ -115,10 +105,10 @@ body {
   gap: 1rem;
 }
 
-/* the ICP-required dialog scrolls here; keep it clear of the sticky navbar */
+
 #company-profile-card { scroll-margin-top: 72px; }
 
-/* ---- Hamburger menu (top-right) ---- */
+
 .navbar-menu { position: relative; }
 
 .menu-button {
@@ -180,7 +170,7 @@ body {
 .menu-item-danger { color: #c11855; }
 .menu-item-danger:hover { background: #fff0f5; }
 
-/* Main content */
+
 .main-content {
   flex: 1;
   padding: 2rem 2.5rem;
@@ -234,9 +224,7 @@ body {
   color: var(--ink-secondary);
 }
 
-/* ============================================================
-   Auth page — gradient mesh hero (the brand's signature)
-   ============================================================ */
+
 .auth-container {
   min-height: 100vh;
   display: flex;
@@ -312,9 +300,7 @@ body {
 
 .auth-form .form-group { margin-bottom: 1rem; }
 
-/* ============================================================
-   Cards
-   ============================================================ */
+
 .card {
   background: var(--canvas);
   border: 1px solid var(--hairline);
@@ -332,9 +318,7 @@ body {
   color: var(--ink);
 }
 
-/* ============================================================
-   Form elements
-   ============================================================ */
+
 .form-group { margin-bottom: 0.9rem; }
 
 .form-group label {
@@ -345,7 +329,7 @@ body {
   margin-bottom: 0.3rem;
 }
 
-/* Round ⓘ next to a field label — hover/focus shows a styled popover */
+
 .field-hint {
   position: relative;
   display: inline-flex;
@@ -386,9 +370,7 @@ body {
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-2);
-  /* reset the trigger's small italic figure styling — white-space especially:
-     the credits badge sets nowrap, which would otherwise inherit here and stop
-     the tooltip text wrapping at all */
+
   font-size: 0.74rem;
   font-style: normal;
   font-weight: 300;
@@ -420,7 +402,7 @@ body {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.7rem;
 }
-/* upward arrow, bordered: outline triangle + fill triangle on top */
+
 .field-hint-pop::before,
 .field-hint-pop::after {
   content: "";
@@ -431,8 +413,7 @@ body {
 .field-hint-pop::before { left: 13px; border-bottom-color: var(--hairline); }
 .field-hint-pop::after  { left: 13px; border-width: 5px; border-bottom-color: var(--canvas); margin-left: 1px; margin-bottom: -1px; }
 
-/* Anchor the popover to the trigger's right edge — for hints near the right
-   side of the page, where the default left-anchored one would run off-screen. */
+
 .field-hint--end .field-hint-pop { left: auto; right: -10px; }
 .field-hint--end .field-hint-pop::before { left: auto; right: 13px; }
 .field-hint--end .field-hint-pop::after {
@@ -467,7 +448,7 @@ body {
   box-shadow: 0 0 0 3px rgba(83, 58, 253, 0.12);
 }
 
-/* Company profile card (main content) */
+
 .company-profile-card { cursor: default; }
 
 .company-profile-header {
@@ -518,9 +499,7 @@ body {
   cursor: pointer;
 }
 
-/* ============================================================
-   Buttons — tight indigo pills
-   ============================================================ */
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -543,7 +522,7 @@ body {
 .btn-primary:hover:not(:disabled) { background: var(--primary-deep); border-color: var(--primary-deep); }
 .btn-primary:active:not(:disabled) { background: var(--primary-press); border-color: var(--primary-press); }
 
-/* the primary action of its band shares the single-indigo CTA system */
+
 .btn-success { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
 .btn-success:hover:not(:disabled) { background: var(--primary-deep); border-color: var(--primary-deep); }
 .btn-success:active:not(:disabled) { background: var(--primary-press); border-color: var(--primary-press); }
@@ -558,9 +537,7 @@ body {
 
 .btn-sm { padding: 6px 12px; font-size: 13px; }
 
-/* ============================================================
-   Alerts — semantic tints from the brand's gradient stops
-   ============================================================ */
+
 .alert {
   padding: 0.6rem 0.85rem;
   border-radius: var(--r-md);
@@ -588,13 +565,10 @@ body {
 }
 .alert-close:hover { opacity: 1; }
 
-/* ============================================================
-   Lead form card (collapsible, same pattern as .company-profile-card)
-   ============================================================ */
+
 .lead-form-card { margin-bottom: 1.5rem; }
 
-/* Two ways in — one lead at a time, or a CSV — as sibling tabs rather than
-   two separate cards, so they read as one "add leads" surface. */
+
 .lead-entry-tabs {
   display: flex;
   gap: 0.5rem;
@@ -622,13 +596,11 @@ body {
   color: var(--on-primary);
 }
 
-/* .alert is display:flex (row) for icon+text alerts; the progress panel reuses
-   .alert for styling but needs its header, bar, and step list stacked and
-   full-width, so override the row layout here. */
+
 .bulk-progress {
   flex-direction: column;
   align-items: stretch;
-  /* sits directly under the form's action buttons — keep it off them */
+
   margin-top: 1.1rem;
 }
 
@@ -647,7 +619,7 @@ body {
   transition: width 0.3s ease;
 }
 
-/* Spinner — used for single-lead processing and the current bulk row */
+
 @keyframes sp-spin { to { transform: rotate(360deg); } }
 .spinner {
   display: inline-block;
@@ -662,7 +634,7 @@ body {
 .spinner-sm { width: 13px; height: 13px; }
 .processing-row { display: flex; align-items: center; gap: 0.6rem; }
 
-/* Per-lead progress list — the team watches each lead score one after another */
+
 .bulk-progress-head { font-weight: 500; }
 .bulk-progress-list {
   list-style: none;
@@ -695,8 +667,7 @@ body {
 .bulk-progress-item.is-failed .bulk-progress-icon,
 .bulk-progress-item.is-failed .bulk-progress-state { color: #c11855; }
 
-/* The native file input can't be styled consistently, so it's hidden and the
-   whole label acts as the control (keeps click + keyboard activation). */
+
 .file-picker {
   display: flex;
   align-items: center;
@@ -739,9 +710,7 @@ body {
 
 .lead-form-body { margin-top: 1rem; }
 
-/* ============================================================
-   Dashboard charts
-   ============================================================ */
+
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -790,9 +759,7 @@ body {
   padding: 2rem 0;
 }
 
-/* ============================================================
-   Leads table
-   ============================================================ */
+
 .table-controls {
   display: flex;
   gap: 0.75rem;
@@ -847,7 +814,7 @@ body {
 
 .leads-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
-/* Lead card */
+
 .lead-card {
   background: var(--canvas);
   border: 1px solid var(--hairline);
@@ -892,7 +859,7 @@ body {
 
 .lead-detail { display: flex; gap: 0.4rem; font-size: 0.83rem; }
 .detail-label { color: var(--ink-mute); white-space: nowrap; }
-.detail-val { color: var(--ink); min-width: 0; overflow-wrap: anywhere; } /* long emails otherwise run off the card */
+.detail-val { color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 
 .lead-section { margin-bottom: 0.75rem; }
 .lead-section-title {
@@ -922,7 +889,7 @@ body {
 }
 .btn-link:hover { color: var(--primary-deep); text-decoration: underline; }
 
-/* scoring JSON — cool data panel with tabular figures */
+
 .lead-json {
   background: var(--canvas-soft);
   border: 1px solid var(--hairline);
@@ -939,7 +906,7 @@ body {
   overflow-y: auto;
 }
 
-/* email draft — the cream interlude: the one warm, human artifact */
+
 .lead-email {
   background: var(--cream);
   border: 1px solid var(--cream-line);
@@ -994,14 +961,10 @@ body {
 .badge-neutral { background: var(--canvas-soft); color: var(--ink-mute); }
 .badge-amber { background: var(--cream); color: var(--lemon); border: 1px solid var(--cream-line); }
 
-/* ============================================================
-   Utility
-   ============================================================ */
+
 .muted { color: var(--ink-mute); font-size: 0.85rem; }
 
-/* ============================================================
-   Analysis modal
-   ============================================================ */
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1057,9 +1020,7 @@ body {
   overflow-y: auto;
 }
 
-/* ============================================================
-   Analysis metrics
-   ============================================================ */
+
 .analysis-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -1098,9 +1059,7 @@ body {
   margin-bottom: 0.4rem;
 }
 
-/* ============================================================
-   Analysis table
-   ============================================================ */
+
 .analysis-table {
   width: 100%;
   border-collapse: collapse;
@@ -1128,9 +1087,7 @@ body {
 
 .analysis-table tr:last-child td { border-bottom: none; }
 
-/* ============================================================
-   Delete confirm modal
-   ============================================================ */
+
 .modal-sm { max-width: 380px; }
 
 .delete-confirm-msg {
@@ -1162,14 +1119,12 @@ body {
 }
 .btn-danger-solid:hover { background: #c11855; border-color: #c11855; }
 
-/* ============================================================
-   Landing page
-   ============================================================ */
+
 .lp {
   background: var(--canvas);
   color: var(--ink);
   min-height: 100vh;
-  overflow-x: clip; /* the mesh backdrop extends past the viewport */
+  overflow-x: clip;
   display: flex;
   flex-direction: column;
 }
@@ -1201,7 +1156,7 @@ body {
 
 .lp-nav-actions { display: flex; gap: 0.6rem; }
 
-/* Hero — the gradient mesh is the brand's depth system */
+
 .lp-hero {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
@@ -1211,7 +1166,7 @@ body {
   margin: 0 auto;
   padding: 120px 24px 40px;
   position: relative;
-  isolation: isolate; /* keeps the z-index:-1 mesh above ancestor backgrounds */
+  isolation: isolate;
 }
 
 .lp-hero::before {
@@ -1265,7 +1220,7 @@ body {
 .lp-cta-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 .lp-cta-row .btn { text-decoration: none; }
 
-/* page-load stagger */
+
 .lp-fade {
   opacity: 0;
   transform: translateY(14px);
@@ -1277,7 +1232,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Animated product composite */
+
 .lp-composite {
   background: var(--canvas);
   border: 1px solid var(--hairline);
@@ -1355,7 +1310,7 @@ body {
   line-height: 1.5;
   opacity: 0;
   animation: lp-fade-up 0.5s ease forwards;
-  /* starts once the last agent dot (index 3 of 4) has lit up at 600+3*500=2100ms */
+
   animation-delay: calc(2300ms + var(--i) * 450ms);
 }
 
@@ -1372,7 +1327,7 @@ body {
 
 @keyframes lp-blink { 50% { opacity: 0; } }
 
-/* Sections */
+
 .lp-section {
   max-width: 1200px;
   margin: 0 auto;
@@ -1444,7 +1399,7 @@ body {
 
 .lp-feature { padding: 0.5rem 0; }
 
-/* Cream interlude */
+
 .lp-cream {
   background: var(--cream);
   border: 1px solid var(--cream-line);
@@ -1472,7 +1427,7 @@ body {
   gap: 0.75rem;
 }
 
-/* Dark CTA band — the featured-tier navy card */
+
 .lp-dark-cta {
   background: var(--brand-dark);
   border-radius: var(--r-lg);
@@ -1496,7 +1451,7 @@ body {
 }
 
 .lp-footer {
-  margin-top: auto; /* pins the footer to the bottom of the page */
+  margin-top: auto;
   border-top: 1px solid var(--hairline);
   padding: 20px 24px;
   text-align: center;
@@ -1510,7 +1465,7 @@ body {
 
 .lp-copyright { font-size: 12px; }
 
-/* Scroll reveals */
+
 .lp-reveal {
   opacity: 0;
   transform: translateY(18px);
@@ -1528,7 +1483,7 @@ body {
   .lp-reveal { opacity: 1; transform: none; }
 }
 
-/* Auth back link */
+
 .auth-back {
   background: none;
   border: none;
@@ -1541,9 +1496,7 @@ body {
 }
 .auth-back:hover { color: var(--ink); }
 
-/* ============================================================
-   Responsive
-   ============================================================ */
+
 @media (max-width: 900px) {
   .navbar { padding: 0.75rem 1rem; }
   .navbar-username { display: none; }
@@ -1564,9 +1517,7 @@ body {
   .lp-nav { padding: 12px 16px; }
 }
 
-/* Phones. 900px suits tablets, but at ~375px two detail columns squeeze
-   "Head of Sales Operations" onto three lines, and the analysis table's
-   five columns overflow the popup. */
+
 @media (max-width: 600px) {
   .lead-details-grid { grid-template-columns: 1fr; }
   .analysis-table th, .analysis-table td { padding: 0.45rem 0.3rem; }

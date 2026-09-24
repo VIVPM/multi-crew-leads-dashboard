@@ -1,3 +1,4 @@
+// Lead analytics charts and summary metrics.
 import { useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -5,7 +6,6 @@ import {
   LineChart, Line, CartesianGrid,
 } from 'recharts'
 
-// Stripe design system: chart colors come from the documented gradient stops only
 const COLORS = ['#533afd', '#ea2261', '#f96bee', '#665efd', '#1c1e54', '#9b6829', '#b9b9f9', '#4434d4']
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -34,8 +34,6 @@ function scoreHistogram(leads) {
     buckets[idx].count++
   })
 
-  // Collapse consecutive empty buckets into one wide range so the chart stays
-  // continuous (no gaps hidden) without a wall of empty 5-point bars.
   const merged = []
   for (const b of buckets) {
     const prev = merged[merged.length - 1]

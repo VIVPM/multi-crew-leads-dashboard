@@ -1,10 +1,4 @@
-// Tests for the bulk-import CSV parser. Run with `npm test` (node:test, built
-// into Node 22 — no jest/vitest dependency for what is a pure-function module).
-//
-// This is the one piece of frontend logic with real edge cases: a sales person
-// uploads whatever their CRM exported, so quoting, BOMs, missing columns and
-// bad emails all have to fail in a way that tells them which row to fix.
-
+// No-network tests for the CSV parser.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseCSV, toLeads, MAX_ROWS } from './csv.js'
@@ -44,7 +38,7 @@ test('ignores unknown columns so an exported file round-trips', () => {
 })
 
 test('strips the BOM the CSV export writes', () => {
-  // \uFEFF as an escape, not a literal — an invisible BOM in source is both
+
   // unreadable and an eslint no-irregular-whitespace error.
   const { leads, errors } = toLeads(`\uFEFF${HEADER}\nA,Co,a@co.com`)
   assert.deepEqual(errors, [])
