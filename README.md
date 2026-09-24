@@ -12,8 +12,8 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Four agents, three crews** — `company` (cacheable) → `personal_scoring` (research → score) → `email` (only if score > 70)
 - **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass
 - **Async job queue** — `POST /leads/process` → 202, worker runs crews in background, frontend polls; live per-agent progress bar
-- **Token auth** — bcrypt, 60-min access + 14-day refresh token (server-side hash), silent renewal, rate-limited login (5 fails → 15-min lockout), signup cap per IP
-- **Operator-held API keys** — Gemini + Tavily in `.env`, users never enter keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default)
+- **Token auth** — bcrypt, 60-min access + 14-day refresh token (server-side hash), silent renewal, session ends when the tab closes, rate-limited login (5 fails → 15-min lockout), signup cap per IP
+- **Operator-held API keys** — Gemini + Tavily in `.env`, users never enter keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default); failed jobs don't use credits
 - **Editable & sendable email drafts** — per-user SMTP (Gmail App Password or any provider), daily send cap
 - **Bulk CSV import** — validated per row, deduped by email, blocked if credits insufficient
 - **Borderline flagging** — scores within 65–75 badged **Borderline**; leads scoring 65–70 get a **Draft Email** button to run just the email crew on demand
@@ -365,7 +365,7 @@ All gains came from the prompts in `lead_qualification_tasks.yaml` and the user-
 
 | Symptom | Fix |
 |---|---|
-| "Missing authentication token" | Access token expired; refresh token handles renewal. Full re-login needed only after 14-day refresh expires or logout. |
+| "Missing authentication token" | Access token expired; refresh token handles renewal. Re-login is needed after closing the tab, logging out, or the 14-day refresh token expiring. |
 | Job stuck `pending` | Worker isn't running — start `python backend/worker.py` |
 | `42703` column errors | Run `migrations.sql` in Supabase SQL editor |
 | 429 on login | 5 failed attempts → 15-min lockout |
