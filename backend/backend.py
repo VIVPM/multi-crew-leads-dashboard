@@ -26,9 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------------
-# Path setup (logging_setup/security are siblings of this file)
-# ---------------------------------------------------------------------------
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
@@ -39,15 +37,11 @@ from security import (
     make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
 )
 
-# ---------------------------------------------------------------------------
-# Logging — structured JSON, correlated by request_id (see logging_setup.py)
-# ---------------------------------------------------------------------------
+
 configure_logging()
 logger = logging.getLogger("backend")
 
-# ---------------------------------------------------------------------------
-# Supabase
-# ---------------------------------------------------------------------------
+
 import httpx
 from supabase import create_client, ClientOptions, acreate_client, AsyncClientOptions
 
@@ -108,10 +102,6 @@ class _AsyncRetryStaleConnTransport(httpx.AsyncHTTPTransport):
             return await super().handle_async_request(request)
 
 
-# Async client for the hot read-only endpoints (GET /leads, GET /jobs/{id}),
-# which suspend on I/O instead of holding one of anyio's 40 threads each.
-# Only use this in a route where every blocking call is also async — a sync
-# call inside an async def blocks the whole event loop.
 supabase_async = None
 
 SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
@@ -121,9 +111,7 @@ if not os.getenv("SECRET_KEY"):
         "restarts or be shared across instances. Set SECRET_KEY in backend/.env."
     )
 
-# Leads per user per UTC day. Keys are operator-held, so this caps the
-# operator's spend. Required with no default — a forgotten deploy setting
-# should fail loudly rather than run on a guessed limit.
+
 _daily_lead_cap = os.getenv("DAILY_LEAD_CAP")
 if not _daily_lead_cap:
     raise RuntimeError(
@@ -139,14 +127,12 @@ if DAILY_LEAD_CAP < 1:
     raise RuntimeError(f"DAILY_LEAD_CAP must be at least 1, got {DAILY_LEAD_CAP}")
 
 MAX_LEADS_PER_REQUEST = DAILY_LEAD_CAP
-MAX_BULK_IMPORT = 200          # CSV rows per import; processing still hits the daily cap
+MAX_BULK_IMPORT = 200
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
-EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))  # under Gmail's ~100/day SMTP limit
+EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
 
-# Which provider powers the agents, and therefore which key is required.
-# pipeline.py owns the same setting and validates the value; this only needs to
-# know which credential to demand and hand to the worker.
+
 try:
     LLM_MODEL = os.environ["LLM_MODEL"].strip().upper()
 except KeyError:
@@ -172,11 +158,7 @@ except KeyError:
 
 TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 
-# Comma-separated list of frontend origins allowed to call this API. Required
-# with no default, same reasoning as DAILY_LEAD_CAP: the actual deployed URLs
-# aren't committed to source, so a deploy that forgets to set this fails
-# loudly at startup instead of silently shipping either a broken CORS config
-# or (worse) a wildcard someone added "temporarily" to unblock themselves.
+
 _allowed_origins_raw = os.getenv("ALLOWED_ORIGINS")
 if not _allowed_origins_raw:
     raise RuntimeError(
@@ -186,9 +168,7 @@ if not _allowed_origins_raw:
     )
 ALLOWED_ORIGINS = [o.strip() for o in _allowed_origins_raw.split(",") if o.strip()]
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
+
 app = FastAPI(title="Sales Pipeline Backend")
 
 
@@ -200,10 +180,7 @@ async def _init_async_supabase():
         options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
     )
 
-# Optional HTTP-layer tracing to Grafana Cloud. opentelemetry-instrumentation-
-# fastapi is deliberately not in requirements.txt, so the ImportError below is
-# the normal path, not a failure. Nothing blocks adding it — it is only a
-# question of whether HTTP spans are wanted alongside the LLM ones.
+
 if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
     try:
         from opentelemetry.sdk.trace import TracerProvider
@@ -244,8 +221,6 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
-# Origins come from ALLOWED_ORIGINS (required env var) rather than being
-# hardcoded, so the deployed URLs stay out of source.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -258,10 +233,6 @@ app.add_middleware(
 def health():
     return {"status": "ok", "service": "Sales Pipeline Backend"}
 
-
-# =============================================================================
-# Auth plumbing
-# =============================================================================
 
 def current_user(authorization: Optional[str] = Header(None)) -> str:
     """FastAPI dependency: validate the Bearer token, return the user_id."""
@@ -300,11 +271,8 @@ def _clear_login_failures(username: str) -> None:
     supabase.table("login_failures").delete().eq("username", username).execute()
 
 
-# Caps accounts created per IP per window, so daily lead credits can't be
-# farmed by scripting sign-ups. Supabase-backed like the login lockout, so it
-# holds across instances and restarts.
-SIGNUP_MAX_PER_IP = int(os.getenv("SIGNUP_MAX_PER_IP", "10"))  # accounts per window
-SIGNUP_WINDOW_S = int(os.getenv("SIGNUP_WINDOW_S", "3600"))    # 1 hour
+SIGNUP_MAX_PER_IP = int(os.getenv("SIGNUP_MAX_PER_IP", "10"))
+SIGNUP_WINDOW_S = int(os.getenv("SIGNUP_WINDOW_S", "3600"))
 
 
 def _client_ip(request: Request) -> str:
@@ -335,10 +303,6 @@ def _recent_signup_count(ip: str) -> int:
 def _record_signup_attempt(ip: str) -> None:
     supabase.table("signup_attempts").insert({"ip": ip}).execute()
 
-
-# =============================================================================
-# Request / Response models
-# =============================================================================
 
 class SignupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
@@ -383,7 +347,7 @@ class BulkLeadsRequest(BaseModel):
 
 class ProcessLeadsRequest(BaseModel):
     leads: List[dict]
-    force_refresh: bool = False  # bypass the company-research cache for this batch
+    force_refresh: bool = False
 
 class CompanyProfileRequest(BaseModel):
     company_context: str = Field(max_length=4000)
@@ -392,14 +356,10 @@ class EmailSettingsRequest(BaseModel):
     smtp_host: str = Field(min_length=1, max_length=255)
     smtp_port: int = Field(default=587, ge=1, le=65535)
     from_address: str = Field(min_length=3, max_length=255)
-    # Optional/blank on update: leaving it out keeps the previously saved
-    # password rather than overwriting it with an empty value.
+
+
     smtp_password: Optional[str] = Field(default=None, max_length=255)
 
-
-# =============================================================================
-# Auth endpoints
-# =============================================================================
 
 @app.post("/auth/signup", response_model=LoginResponse)
 def signup(req: SignupRequest, request: Request):
@@ -418,16 +378,16 @@ def signup(req: SignupRequest, request: Request):
             {"username": req.username, "password": hash_password(req.password)}
         ).execute()
     except Exception:
-        # unique constraint (migrations.sql) closes the check-then-insert race
+
         raise HTTPException(status_code=400, detail="Username already exists.")
     if not created.data:
         raise HTTPException(status_code=500, detail="Signup failed. Please try again.")
     row = created.data[0]
     uid = str(row["id"])
-    # Only count accounts that were actually created against the IP's window
+
     _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
-    # Sign them straight in rather than sending them to the login screen
+
     return LoginResponse(
         user_id=uid, username=req.username,
         token=make_token(uid, SECRET_KEY),
@@ -450,13 +410,13 @@ def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     row = user.data[0]
     if is_legacy_hash(row["password"]):
-        # lazy migration: we just verified the plaintext, re-hash with bcrypt
+
         supabase.table("users").update(
             {"password": hash_password(req.password)}
         ).eq("id", row["id"]).execute()
         logger.info("Migrated password hash to bcrypt for user: %s", req.username)
-    # Skip the DELETE when there's nothing to clear — saves a ~350ms round trip
-    # on the common path
+
+
     if recent_failures:
         _clear_login_failures(req.username)
     uid = str(row["id"])
@@ -488,7 +448,7 @@ def refresh_access_token(req: RefreshRequest):
         supabase.table("refresh_tokens")
         .select("user_id")
         .eq("token_hash", hash_refresh_token(req.refresh_token))
-        .gt("expires_at", now)  # Postgres does the timestamptz comparison
+        .gt("expires_at", now)
         .execute()
     )
     if not resp.data:
@@ -505,10 +465,6 @@ def logout(req: RefreshRequest):
     ).execute()
     return {"message": "Logged out."}
 
-
-# =============================================================================
-# Company profile (ICP) — free-text context injected into research/email prompts
-# =============================================================================
 
 @app.get("/account/company-context")
 def get_company_context(user_id: str = Depends(current_user)):
@@ -535,7 +491,7 @@ def get_email_settings(user_id: str = Depends(current_user)):
         "smtp_host": row.get("email_smtp_host") or "",
         "smtp_port": row.get("email_smtp_port") or 587,
         "from_address": row.get("email_from_address") or "",
-        # Never return the stored password; the frontend only shows whether one is set
+
         "configured": bool(row.get("email_from_address")),
     }
 
@@ -587,10 +543,6 @@ def get_credits(user_id: str = Depends(current_user)):
     return {"cap": DAILY_LEAD_CAP, "used": used, "remaining": max(0, DAILY_LEAD_CAP - used)}
 
 
-# =============================================================================
-# Lead CRUD endpoints (all ownership-checked)
-# =============================================================================
-
 def _get_owned_lead(lead_id: str, user_id: str) -> dict:
     resp = supabase.table("leads").select("*").eq("id", lead_id).execute()
     if not resp.data or str(resp.data[0].get("user_id")) != user_id:
@@ -598,9 +550,6 @@ def _get_owned_lead(lead_id: str, user_id: str) -> dict:
     return resp.data[0]
 
 
-# Columns the list view renders. scoring_result and email_draft are excluded —
-# they were ~78% of the payload and are only needed when a lead is expanded,
-# so they come from GET /leads/{lead_id}/detail instead.
 LEAD_LIST_COLUMNS = (
     "id,name,job_title,company,email,use_case,industry,location,source,"
     "score,created_at,email_sent_at"
@@ -614,7 +563,7 @@ async def get_leads(
     limit: int = Query(500, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    # limit/offset are accepted but unused by the frontend so far
+
     if user_id != auth_user:
         raise HTTPException(status_code=403, detail="Forbidden.")
     resp = await (
@@ -666,7 +615,7 @@ def create_leads_bulk(req: BulkLeadsRequest, user_id: str = Depends(current_user
     step, and it shouldn't silently double every lead. Duplicates *within*
     the uploaded file are collapsed the same way.
     """
-    # Compared lowercased so Bob@x.com and bob@x.com count as the same person
+
     existing = supabase.table("leads").select("email").eq("user_id", user_id).execute().data or []
     seen = {(r.get("email") or "").strip().lower() for r in existing}
 
@@ -693,7 +642,7 @@ def create_leads_bulk(req: BulkLeadsRequest, user_id: str = Depends(current_user
 @app.put("/leads/{lead_id}")
 def update_lead(lead_id: str, lead: LeadUpdate, user_id: str = Depends(current_user)):
     _get_owned_lead(lead_id, user_id)
-    payload = lead.dict(exclude_unset=True)  # explicit nulls clear a field
+    payload = lead.dict(exclude_unset=True)
     resp = supabase.table("leads").update(payload).eq("id", lead_id).execute()
     return resp.data[0] if resp.data else {}
 
@@ -770,17 +719,13 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
     return {"message": "Email sent.", "sent_at": sent_at}
 
 
-# =============================================================================
-# Draft email on demand for a borderline lead the graph skipped
-# =============================================================================
-
-BORDERLINE_LOW = 65  # matches the frontend's Borderline badge
+BORDERLINE_LOW = 65
 
 
 @app.post("/leads/{lead_id}/draft-email")
 def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
-    # Imported here, not at module level: pipeline builds provider clients on
-    # import, and the API process shouldn't pay for that until someone clicks.
+
+
     from pipeline import EMAIL_SCORE_THRESHOLD, draft_email
 
     lead = _get_owned_lead(lead_id, user_id)
@@ -788,9 +733,8 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="This lead already has an email draft.")
     if not lead.get("scoring_result"):
         raise HTTPException(status_code=400, detail="This lead has not been scored yet.")
-    # The graph drafts only above the threshold, so a 70 gets no email either —
-    # hence <=, not <. Enforced here too: the button is only a convenience, and
-    # this is an operator-paid model call.
+
+
     score = lead.get("score")
     if score is None or not BORDERLINE_LOW <= score <= EMAIL_SCORE_THRESHOLD:
         raise HTTPException(
@@ -814,10 +758,6 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
     return {"email_draft": draft}
 
 
-# =============================================================================
-# Lead processing — enqueue a job; worker.py executes it
-# =============================================================================
-
 @app.post("/leads/process", status_code=202)
 def process_leads_endpoint(
     req: ProcessLeadsRequest,
@@ -825,9 +765,8 @@ def process_leads_endpoint(
     user_id: str = Depends(current_user),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key", max_length=200),
 ):
-    # A retried submit — the phone lost the response, the user double-clicked —
-    # must not enqueue a second job and bill a second time. Scoped per user so
-    # one tenant's key can never collide with (or reveal) another's.
+
+
     if idempotency_key:
         prior = (
             supabase.table("jobs")
@@ -840,7 +779,7 @@ def process_leads_endpoint(
         if prior.data:
             job = prior.data[0]
             logger.info("Idempotent replay of job %s for user %s", job["id"], user_id)
-            response.status_code = 200  # 200, not 202: nothing new was accepted
+            response.status_code = 200
             return {"job_id": job["id"], "status": job["status"], "idempotent_replay": True}
 
     if not req.leads:
@@ -859,8 +798,7 @@ def process_leads_endpoint(
     if len(owned.data or []) != len(set(lead_ids)):
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
-    # Counts every submitted lead, including failed runs — those still spent
-    # LLM calls. Checked before enqueue so an over-limit attempt costs nothing.
+
     used_today = _leads_used_today(user_id)
     if used_today + len(req.leads) > DAILY_LEAD_CAP:
         remaining = max(0, DAILY_LEAD_CAP - used_today)
@@ -887,28 +825,23 @@ def process_leads_endpoint(
         "user_id": user_id,
         "status": "pending",
         "leads": req.leads,
-        # frozen at enqueue time so a later profile edit can't change an already-queued job
+
         "our_company_context": company_context,
         "force_refresh": req.force_refresh,
-        # operator-held keys, not per-user — worker nulls them on completion
-        # anyway. The column is still named gemini_api_key: it now carries
-        # whichever provider LLM_MODEL selected, and renaming it would mean a
-        # migration for no behavioural gain.
+
+
         "gemini_api_key": LLM_API_KEY,
         "tavily_api_key": TAVILY_API_KEY,
     }
-    # Only sent when the caller actually supplied a key, so a deploy where the
-    # migration hasn't been applied yet loses idempotency instead of losing
-    # processing entirely — PostgREST rejects the whole insert with 42703 if
-    # you name a column that isn't there.
+
+
     if idempotency_key:
         job["idempotency_key"] = idempotency_key
     try:
         resp = supabase.table("jobs").insert(job).execute()
     except Exception:
-        # Two concurrent submits with the same key: the unique index let exactly
-        # one through. Re-read rather than fail — the caller wanted one job and
-        # one job exists. Any other insert error re-raises below as a 500.
+
+
         if not idempotency_key:
             raise
         prior = (
@@ -957,10 +890,6 @@ def get_analysis(lead_id: str, user_id: str = Depends(current_user)):
     return resp.data[0]
 
 
-# =============================================================================
-# Result persistence — called by worker.py after the crews finish
-# =============================================================================
-
 def persist_results(
     leads: list, scores: list, emails: list, agent_times: dict, cache_hits: list, elapsed: float,
 ) -> list:
@@ -990,10 +919,7 @@ def _persist_one_lead(
         update_payload["email_draft"] = email_draft.raw
     supabase.table("leads").update(update_payload).eq("id", lead["id"]).execute()
 
-    # Per-agent tokens come straight off each node when the pipeline can supply
-    # them (`_AgentRef.tokens`). The even split below is the fallback for a
-    # stage that reports only a total — which is every stage under CrewAI, and
-    # none under LangGraph.
+
     score_usage = score_obj.token_usage
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
@@ -1004,7 +930,7 @@ def _persist_one_lead(
     email_compl   = getattr(email_usage, "completion_tokens", 0) or 0
 
     total_tokens = score_tokens + email_tokens
-    # gemini-2.5-flash pricing: $0.15/M input, $0.60/M output
+
     total_cost = round(
         (score_prompt + email_prompt) * 0.15 / 1_000_000
         + (score_compl + email_compl) * 0.60 / 1_000_000,
@@ -1014,7 +940,7 @@ def _persist_one_lead(
 
     email_tasks = (email_draft.tasks_output if email_draft else None) or []
 
-    # One bucket per crew, so only agents within the same crew share a split
+
     crew_buckets = []
     if score_obj.company_output is not None:
         company_out = score_obj.company_output
@@ -1044,14 +970,14 @@ def _persist_one_lead(
                 "time_seconds": agent_times.get(name),
             })
     if cache_hit:
-        # company research was served from cache — no LLM/search call made for it
+
         agents_data.append({
             "agent": "Company Research & Cultural Fit Analyst",
             "status": "Cached", "tokens": 0, "cost": 0.0, "time_seconds": 0,
         })
     if email_draft is None:
-        # score <= 70 — the email crew never ran for this lead. Shown at 0
-        # rather than omitted, so the breakdown always lists all 4 agents.
+
+
         agents_data.append({
             "agent": "Email Specialist",
             "status": "Skipped", "tokens": 0, "cost": 0.0, "time_seconds": 0,
@@ -1083,20 +1009,15 @@ def _persist_one_lead(
     }
 
 
-# ---------------------------------------------------------------------------
-# Optional in-process worker — for deploys without a separate worker service
-# (e.g. Render free tier). Set RUN_WORKER_IN_PROCESS=1 to enable; run
-# worker.py as its own process instead when you can.
-# ---------------------------------------------------------------------------
 if os.getenv("RUN_WORKER_IN_PROCESS") == "1":
     import threading
 
     @app.on_event("startup")
     def _start_worker_thread():
         import asyncio
-        from worker import main as worker_main  # lazy import: worker imports this module
-        # worker.main() is a coroutine (concurrent job processing) — needs its
-        # own event loop, since this thread isn't the one FastAPI/uvicorn runs.
+        from worker import main as worker_main
+
+
         threading.Thread(
             target=lambda: asyncio.run(worker_main()), daemon=True, name="job-worker",
         ).start()

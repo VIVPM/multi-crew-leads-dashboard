@@ -58,21 +58,16 @@ from tavily import TavilyClient
 
 from logging_setup import lead_context
 
-# Leads scoring above this get an email drafted; at or below, the email node
-# never runs.
+
 EMAIL_SCORE_THRESHOLD = 70
 
-# Super-steps one tool-using agent may take. A react loop spends two per tool
-# round-trip (model, then tools), so this is ~12 searches before the run gives
-# up with GraphRecursionError. CrewAI's equivalent was Agent(max_iter=25).
+
 TOOL_LOOP_LIMIT = 25
 
-# Longest a scraped page we hand back to an agent may be. Whole pages blow the
-# context window for no benefit — the agents want a few facts, not the site.
+
 SCRAPE_CHAR_LIMIT = 8000
 
-# Redirect hops the scrape tool will follow. Each one is re-checked against the
-# egress rules, so this bounds the work rather than the trust.
+
 SCRAPE_MAX_REDIRECTS = 5
 
 _UA = "Mozilla/5.0 (compatible; lead-coordinator/1.0)"
@@ -195,8 +190,8 @@ def _assert_public_url(url: str) -> None:
 
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        # is_global is false for loopback, link-local (169.254/16, incl. the
-        # cloud metadata endpoint), private ranges, multicast and reserved.
+
+
         if not ip.is_global:
             raise UnsafeURLError(
                 f"Refusing {parsed.hostname!r}: resolves to the non-public address {ip}."
@@ -205,9 +200,8 @@ def _assert_public_url(url: str) -> None:
 
 def _scrape_url(url: str) -> str:
     """Fetch a web page and return its visible text."""
-    # Redirects are followed by hand so every hop gets checked. requests would
-    # follow them internally, and a public URL redirecting to 127.0.0.1 is the
-    # standard way around a check that only looks at the first address.
+
+
     for _ in range(SCRAPE_MAX_REDIRECTS + 1):
         _assert_public_url(url)
         resp = requests.get(url, timeout=20, headers={"User-Agent": _UA},
@@ -220,10 +214,6 @@ def _scrape_url(url: str) -> str:
         return _as_untrusted(text[:SCRAPE_CHAR_LIMIT], url)
     raise UnsafeURLError(f"Gave up after {SCRAPE_MAX_REDIRECTS} redirects.")
 
-
-# =============================================================================
-# Pydantic schemas
-# =============================================================================
 
 class LeadPersonalInfo(BaseModel):
     name: str
@@ -268,10 +258,6 @@ class LeadScoringResult(BaseModel):
     lead_score: LeadScore
 
 
-# =============================================================================
-# YAML config loading
-# =============================================================================
-
 def _load_configs() -> Dict[str, dict]:
     """Load all four YAML config files relative to this file's directory."""
     base = os.path.dirname(os.path.abspath(__file__))
@@ -290,24 +276,16 @@ def _load_configs() -> Dict[str, dict]:
 
 _CONFIGS = _load_configs()
 
-# Role strings, read off the YAML so they can't drift from it. These are the
-# names persist_results writes into analysis_runs.agents_data and keys
-# agent_times by, and backend.py hardcodes two of them for its Cached/Skipped
-# rows — so they have to stay exactly what the YAML says. The .strip() is
-# because the YAML uses folded scalars (`role: >`), which leave a trailing
-# newline.
+
 ROLE_COMPANY = _CONFIGS["lead_agents"]["company_research_agent"]["role"].strip()
 ROLE_PERSONAL = _CONFIGS["lead_agents"]["personal_research_agent"]["role"].strip()
 ROLE_SCORING = _CONFIGS["lead_agents"]["scoring_validation_agent"]["role"].strip()
 ROLE_EMAIL = _CONFIGS["email_agents"]["email_specialist_agent"]["role"].strip()
 
-# Per-attempt pipeline timeout, scaled by lead count in process_leads()
+
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
 
-# Which provider powers the agents: "GEMINI" or "CLOUDFLARE" (Workers AI,
-# through its OpenAI-compatible endpoint). Required, with no default — this
-# picks which account gets billed, and a fallback would quietly send real
-# traffic to a provider nobody chose.
+
 try:
     LLM_MODEL = os.environ["LLM_MODEL"].strip().upper()
 except KeyError:
@@ -317,12 +295,7 @@ except KeyError:
 CLOUDFLARE_MODEL = os.getenv("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-20b")
 CLOUDFLARE_MAX_TOKENS = int(os.getenv("CLOUDFLARE_MAX_TOKENS", "4096"))
 
-# Provider to fall back to when the primary is failing, or "" for none.
-# OFF BY DEFAULT, and deliberately so: measured on the same lead, Gemini scored
-# 78 where Workers AI scored 94. Failing over is not a transparent swap — it
-# changes the answer — so it has to be something an operator turns on knowing
-# that, not something that happens quietly during an outage. Set
-# LLM_FALLBACK_MODEL=CLOUDFLARE (with its credentials) to accept that trade.
+
 LLM_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "").strip().upper()
 
 _SUPPORTED_LLM_MODELS = ("GEMINI", "CLOUDFLARE")
@@ -343,24 +316,9 @@ if LLM_FALLBACK_MODEL:
             "retry an outage against the endpoint that is already failing."
         )
 
-# How structured output gets produced. Gemini handles it natively, so
-# with_structured_output's default path is used there.
-#
-# Workers AI cannot, and it is not close: measured against gpt-oss-20b, all
-# three of LangChain's methods fail, each differently. `json_schema` returns a
-# bare -1.0 where the object should be. `function_calling` is ignored outright —
-# the model writes its answer into content instead of emitting the forced call,
-# the same behaviour that made CrewAI's instructor integration fall over.
-# `json_mode` on its own produces a markdown table, because LangChain never
-# tells the model what shape to return. Spelling the schema out in the prompt
-# and asking for a JSON object works on both schemas — which is exactly what
-# instructor was doing for CrewAI, just without the monkeypatching.
+
 STRUCTURED_VIA_PROMPT = LLM_MODEL == "CLOUDFLARE"
 
-
-# =============================================================================
-# Company research cache key + summary formatting
-# =============================================================================
 
 def normalize_company_key(company_name: str, our_company_context: str) -> str:
     """
@@ -391,14 +349,6 @@ def format_company_summary(company_dump: dict) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
-# CrewOutput-shaped result wrappers
-#
-# backend.py's persist_results was written against CrewAI's CrewOutput. Rather
-# than rewrite it, a stage's result presents the same surface: `.raw`,
-# `.pydantic`, `.token_usage`, `.tasks_output`, `.to_dict()`, `obj[key]`.
-# =============================================================================
-
 class _AgentRef:
     """Stands in for a CrewAI TaskOutput.
 
@@ -427,9 +377,8 @@ class _StageOutput:
                  per_role: Optional[List[tuple]] = None):
         self.raw = raw
         self.pydantic = pydantic
-        # per_role is (prompt, completion) for each role, in the same order.
-        # Only the scoring stage needs it — the others are single-agent, where
-        # the stage total already is the agent total.
+
+
         if per_role:
             self.tasks_output = [
                 _AgentRef(role, p + c) for role, (p, c) in zip(roles, per_role)
@@ -461,7 +410,7 @@ class _CombinedScoreOutput:
         self._scoring_output = scoring_output
         self._company_output = company_output
 
-    # Exposed separately so the analysis breakdown can attribute tokens per stage
+    # Exposes scoring output for per-stage token attribution.
     @property
     def scoring_output(self):
         return self._scoring_output
@@ -502,10 +451,6 @@ class _CombinedScoreOutput:
         return self._scoring_output[key]
 
 
-# =============================================================================
-# Prompt rendering — the same YAML the CrewAI version used, turned into messages
-# =============================================================================
-
 def _system_prompt(agent_cfg: dict, task_cfg: dict) -> str:
     """Everything about this node that never varies between leads.
 
@@ -533,23 +478,13 @@ def _human_prompt(task_cfg: dict, inputs: dict, context: str = "") -> str:
     return "\n".join(parts)
 
 
-# =============================================================================
-# Failure classification
-# =============================================================================
-
-# Substrings that mark a failure as the provider's fault rather than ours.
-# Matched against the exception text because every provider wraps its errors
-# differently and langchain re-wraps them again — there is no one exception
-# type to catch across Gemini, Workers AI and the transports underneath.
 _TRANSPORT_MARKERS = (
     "timeout", "timed out", "connection", "connectionerror", "temporarily unavailable",
     "rate limit", "resource_exhausted", "429", "500", "502", "503", "504",
     "internal error", "overloaded", "unavailable", "deadline",
 )
 
-# Failures no amount of retrying will fix — a schema the model cannot satisfy,
-# a request it will reject identically every time. Re-running these costs the
-# full pipeline again and produces the same error.
+
 _PERMANENT_MARKERS = (
     "parse failed", "validationerror", "invalid_argument", "invalid function name",
     "api key not valid", "permission denied", "unauthorized", "401", "403",
@@ -575,10 +510,6 @@ def is_retryable(exc: BaseException) -> bool:
         return True
     return True
 
-
-# =============================================================================
-# Model calls
-# =============================================================================
 
 def _text(content) -> str:
     """Flatten an AIMessage's content to a string.
@@ -644,8 +575,8 @@ class _CallMetrics(BaseCallbackHandler):
             "duration_s": duration,
             "ttft_s": (first - started) if first else None,
             "completion_tokens": completion,
-            # Only meaningful once something was generated; a zero-token reply
-            # would otherwise report an infinite rate.
+
+
             "tokens_per_s": (completion / duration) if completion and duration > 0 else None,
         })
 
@@ -687,8 +618,7 @@ def _chat(llm, messages, schema=None, via_prompt=None, cb=None):
         prompt, completion = _usage([reply])
         return text, parser.parse(text), prompt, completion
 
-    # include_raw so the underlying AIMessage — and its token counts — stay
-    # visible; with_structured_output otherwise hands back only the model.
+
     out = llm.with_structured_output(schema, include_raw=True).invoke(messages, config=cfg)
     if out.get("parsing_error"):
         raise RuntimeError(f"{schema.__name__} parse failed: {out['parsing_error']}")
@@ -771,23 +701,8 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
                 "LLM_MODEL=CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID (the account the "
                 "Workers AI endpoint belongs to). Set it in backend/.env."
             )
-        # Workers AI speaks the OpenAI wire format, so ChatOpenAI reaches it with
-        # nothing but a base_url swap.
-        #
-        # max_tokens is not optional here. gpt-oss-20b is a reasoning model: it
-        # spends completion tokens on its own reasoning before it emits any
-        # content, and Workers AI defaults the cap to 256. Left alone, the
-        # reasoning eats the whole budget and the reply comes back with
-        # finish_reason="length" and an empty content field. Measured: a
-        # lead-scoring reply needs ~550 tokens, so 4096 leaves room for the
-        # longer email task too. Unlike the CrewAI version this only has to be
-        # set once — nothing builds a second client behind our back, so the
-        # litellm.completion and instructor monkeypatches are gone with it.
-        # streaming stays OFF here. Measured 2026-08-29: with streaming=True,
-        # langchain-openai reports exactly double the real usage against Workers
-        # AI (162/126/288 where the non-streaming call returns 81/60/141), which
-        # would double every cost figure. TTFT is worth less than correct
-        # billing, so this provider reports no first-token time.
+
+
         llm = _WorkersAIChatOpenAI(
             model=CLOUDFLARE_MODEL,
             api_key=llm_key,
@@ -798,17 +713,12 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
 
     from langchain_google_genai import ChatGoogleGenerativeAI
 
-    # streaming=True purely so on_llm_new_token fires and TTFT is measurable.
-    # Verified it does not disturb Gemini's usage_metadata, unlike Workers AI.
+
     return (
         ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key, streaming=True),
         ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key, streaming=True),
     )
 
-
-# =============================================================================
-# Graph
-# =============================================================================
 
 class LeadState(TypedDict, total=False):
     lead: dict
@@ -873,7 +783,7 @@ def build_graph(
     llm_flash, llm_flash_lite = _build_llms(llm_key, provider)
     via_prompt = (provider or LLM_MODEL) == "CLOUDFLARE"
     cb = _CallMetrics(llm_stats, provider or LLM_MODEL) if llm_stats is not None else None
-    # One cache per graph build, i.e. per job, shared by both tools.
+
     tool_cache: dict = {}
     search_tools = [make_tavily_tool(tavily_key, tool_cache), make_scrape_tool(tool_cache)]
     times = agent_times if agent_times is not None else {}
@@ -883,7 +793,7 @@ def build_graph(
         if on_stage:
             on_stage(stage, state)
 
-    # --- Company research + cultural fit (skipped on a cache hit) ---
+    # Researches the company and cultural fit, using cached results when available.
     def company_node(state: LeadState) -> dict:
         started = time.time()
         lead = state["lead"]
@@ -904,10 +814,8 @@ def build_graph(
             llm_flash, search_tools,
             _system_prompt(agent_cfg, task_cfg), _human_prompt(task_cfg, inputs), cb,
         )
-        # Re-read the finished research as CompanyResearchResult. This is the
-        # same second call create_react_agent(response_format=...) would make
-        # internally — done here instead so its tokens get counted, which they
-        # are not when the prebuilt agent makes it.
+
+
         raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult, via_prompt, cb)
 
         dump = parsed.model_dump()
@@ -920,7 +828,7 @@ def build_graph(
             "cache_hit": False,
         }
 
-    # --- Personal research ---
+    # Researches the lead's professional background.
     def personal_node(state: LeadState) -> dict:
         started = time.time()
         agent_cfg = _CONFIGS["lead_agents"]["personal_research_agent"]
@@ -933,7 +841,7 @@ def build_graph(
         _done("personal_research", ROLE_PERSONAL, started)
         return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c)}
 
-    # --- Scoring + validation (no tools: aggregates context already gathered) ---
+    # Scores the lead from the gathered company and personal context.
     def scoring_node(state: LeadState) -> dict:
         started = time.time()
         agent_cfg = _CONFIGS["lead_agents"]["scoring_validation_agent"]
@@ -954,16 +862,14 @@ def build_graph(
         )
         _done("scoring", ROLE_SCORING, started)
         pp, pc = state["personal_tokens"]
-        # Personal research and scoring share one stage, matching how the
-        # CrewAI version reported them as a single crew — but each node's own
-        # usage is known here, so the two agents get their real numbers rather
-        # than half of the total each.
+
+
         return {"scoring": _StageOutput(
             [ROLE_PERSONAL, ROLE_SCORING], raw, parsed, pp + p, pc + c,
             per_role=[(pp, pc), (p, c)],
         )}
 
-    # --- Email (merged draft + optimize) ---
+    # Drafts an outreach email for qualified leads.
     def email_node(state: LeadState) -> dict:
         started = time.time()
         raw, _, p, c = _chat(
@@ -990,10 +896,6 @@ def build_graph(
     return graph.compile()
 
 
-# =============================================================================
-# Batch orchestration (sync — run inside a worker thread, see process_leads)
-# =============================================================================
-
 def _process_batch(graph, leads: list, our_company_context: str):
     """Runs entirely synchronously — called via asyncio.to_thread so it
     doesn't block the event loop. Returns (scores, emails, cache_hits)."""
@@ -1006,10 +908,6 @@ def _process_batch(graph, leads: list, our_company_context: str):
         cache_hits.append(final["cache_hit"])
     return scores, emails, cache_hits
 
-
-# =============================================================================
-# Public async entry-point (called by worker.py)
-# =============================================================================
 
 async def process_leads(
     leads: list,
@@ -1071,18 +969,15 @@ async def process_leads(
         except Exception as e:
             logger.warning("Pipeline attempt %d failed: %s", attempt, e)
             if not is_retryable(e):
-                # Retrying the reasoning re-runs every model call to reach the
-                # same error, at full price. Fail now instead.
+
+
                 logger.error("Not retryable (%s); failing immediately", type(e).__name__)
                 raise
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
 
-            # Retrying the same provider through its own outage just spends the
-            # remaining attempts. If a fallback is configured, rebuild the graph
-            # against the other one for what is left. Off unless the operator
-            # opted in — the two providers do not score a lead identically.
+
             if LLM_FALLBACK_MODEL and provider == LLM_MODEL:
                 fallback_key = _provider_key(LLM_FALLBACK_MODEL)
                 if fallback_key:
@@ -1097,8 +992,7 @@ async def process_leads(
                     logger.warning("LLM_FALLBACK_MODEL=%s but its API key is unset; "
                                    "staying on %s", LLM_FALLBACK_MODEL, provider)
 
-            # Full jitter. Without it every job that failed in the same outage
-            # retries in lockstep and re-creates the spike that caused it.
+
             wait = random.uniform(0, 2 ** attempt)
             logger.info("Retrying in %.1fs...", wait)
             await asyncio.sleep(wait)

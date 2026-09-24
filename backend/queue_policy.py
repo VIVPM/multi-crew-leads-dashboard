@@ -67,7 +67,7 @@ def next_concurrency(
     Releasing capacity is the direction worth being slow and reluctant about.
     """
     if queue_depth >= scale_up_depth and current < maximum:
-        return min(maximum, max(current * 2, minimum))  # up immediately
+        return min(maximum, max(current * 2, minimum))
     if queue_depth == 0 and current > minimum and seconds_since_change >= cooldown_s:
         return max(minimum, current // 2)
     return current

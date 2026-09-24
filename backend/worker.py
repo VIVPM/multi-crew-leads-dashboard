@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-# cp1252 consoles can't print the emoji that show up in agent output
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -28,18 +28,16 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-# Loaded here because the tracing setup below runs before backend.backend is imported
+
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 from logging_setup import configure_logging, job_context, current_correlation_ids  # noqa: E402
 
-configure_logging()  # idempotent — no-op if backend.py already configured it in-process
+configure_logging()
 logger = logging.getLogger("worker")
 
-# Optional OTLP tracing of agent/task/LLM calls, exported to Langfuse and/or
-# Grafana Cloud. Must run before pipeline.py pulls in langchain — the
-# instrumentor patches LangChain's callback manager at import time.
+
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 _have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
@@ -57,18 +55,7 @@ if _have_langfuse or _have_grafana:
             "service.namespace": "lead-coordinator",
             "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
         }))
-        # Langfuse v4 queries observations directly, so an attribute that sits
-        # only on the root span can't filter or aggregate its children. Copy the
-        # job/lead IDs onto every span. Reads the same contextvars the JSON logs
-        # use, so a span and a log line for one job carry matching IDs.
-        #
-        # Both prefixes on purpose, confirmed against a real canary trace:
-        # `langfuse.trace.metadata.*` is folded into the trace's metadata and
-        # does NOT appear on the individual observations, so on its own it
-        # gives trace-level filtering only. `langfuse.observation.metadata.*`
-        # is what lands on each observation and makes it filterable by itself,
-        # which is the v4 requirement. Plain unprefixed attributes fall into
-        # the metadata.attributes catch-all, which isn't queryable at all.
+        # Copies correlation IDs onto both Langfuse traces and observations.
         class _CorrelationSpanProcessor(SpanProcessor):
             def on_start(self, span, parent_context=None):
                 for key, value in current_correlation_ids().items():
@@ -85,8 +72,8 @@ if _have_langfuse or _have_grafana:
             _auth = base64.b64encode(_creds.encode()).decode()
             _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
                 endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-                # v4 ingestion: without this header directly-ingested OTEL data
-                # can lag the v4 data model and the v2 APIs by up to 10 minutes.
+
+
                 headers={
                     "Authorization": f"Basic {_auth}",
                     "x-langfuse-ingestion-version": "4",
@@ -101,9 +88,7 @@ if _have_langfuse or _have_grafana:
             )))
             _enabled.append("Grafana Cloud")
 
-        # One instrumentor covers both levels now: LangGraph runs on LangChain's
-        # callback manager, so the graph nodes and the model calls underneath
-        # them come out of the same hook. Under CrewAI this took two.
+
         LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
         logger.info("LLM tracing enabled via OTLP: %s", ", ".join(_enabled))
     except Exception:
@@ -111,18 +96,14 @@ if _have_langfuse or _have_grafana:
 else:
     logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
 
-# Job outcomes as a counter metric, so alerting can query it directly
+
 _jobs_processed_counter = None
-# Spend, as counters rather than a value read out of analysis_runs one lead at
-# a time. Keys are operator-held, so cost is the number that actually needs a
-# trend line and an alert on it — a run of unusually expensive leads is
-# invisible in a per-lead table until the bill arrives.
+
+
 _tokens_counter = None
 _cost_counter = None
-# Latency, as histograms rather than counters — the shape matters more than the
-# sum. TTFT only gets recorded for providers that stream (Gemini does; Workers
-# AI is deliberately excluded, see _build_llms), so an empty TTFT series for a
-# provider means "not measurable there", not "instant".
+
+
 _ttft_histogram = None
 _tokens_per_s_histogram = None
 _queue_depth_gauge = None
@@ -176,7 +157,7 @@ if _have_grafana:
     except Exception:
         logger.exception("Failed to initialize job metrics (non-fatal)")
 
-# Import path differs between uvicorn (repo root) and standalone
+
 try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
@@ -186,25 +167,14 @@ from queue_policy import choose_round_robin_job, next_concurrency  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
-# Mirrors process_leads' max_retries — bounds how long a job can legitimately run
+
 PIPELINE_MAX_ATTEMPTS = 3
 
 MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "10"))
 if MAX_CONCURRENT_JOBS < 1:
     raise RuntimeError("MAX_CONCURRENT_JOBS must be at least 1")
 
-# Round-robin fairness is applied to this oldest-first candidate window.  With
-# DAILY_LEAD_CAP=5, 100 rows is enough to see past one tenant's entire daily
-# burst while keeping each poll bounded.  Increase it only if multi-day queue
-# backlogs become normal.
-# Queue-depth autoscaling of in-worker concurrency.  There is no worker count
-# to scale on a single-instance host, so the control loop moves these slots
-# instead: start at the minimum, double toward MAX_CONCURRENT_JOBS while the
-# backlog is deep, halve back when the queue drains.  The cooldown is the
-# hysteresis — without it a queue sitting near the threshold retargets every
-# poll.  At DAILY_LEAD_CAP=5 the queue is nearly always empty, so this normally
-# rests at the minimum; it exists so a backlog is met automatically rather than
-# by editing an env var.
+
 WORKER_MIN_CONCURRENCY = int(os.getenv("WORKER_MIN_CONCURRENCY", "2"))
 SCALE_UP_QUEUE_DEPTH = int(os.getenv("SCALE_UP_QUEUE_DEPTH", "5"))
 SCALE_COOLDOWN_S = float(os.getenv("SCALE_COOLDOWN_S", "30"))
@@ -221,34 +191,13 @@ if FAIR_CLAIM_SCAN_LIMIT < 2:
     raise RuntimeError("FAIR_CLAIM_SCAN_LIMIT must be at least 2")
 _last_claimed_user_id: Optional[str] = None
 
-# Short TTL: a company can shut down or get acquired between lookups
+
 COMPANY_CACHE_TTL_DAYS = int(os.getenv("COMPANY_CACHE_TTL_DAYS", "7"))
 
-# How long a shutdown waits for in-flight jobs before giving up on them.
-#
-# The usual advice is "longer than p99 job duration", which here would be
-# minutes — a lead takes ~50s and a job can hold several. That's not
-# achievable on Render, which sends SIGTERM and then SIGKILLs about 30s
-# later, so the default sits inside that window rather than pretending to
-# outlast it. Raise it (and the platform's own termination grace period)
-# together if you ever want a whole job to survive a redeploy.
-#
-# Even at 25s this is strictly better than no drain at all: the worker stops
-# claiming immediately, so a redeploy no longer kills jobs it accepted
-# seconds earlier, and single-lead jobs already past their model calls get
-# to write their results.
+
 WORKER_SHUTDOWN_GRACE_S = int(os.getenv("WORKER_SHUTDOWN_GRACE_S", "25"))
 
-# Circuit breaker. Consecutive transport-shaped job failures before the worker
-# stops claiming, and how long it waits before trying again.
-#
-# Without this, a provider outage is worse than downtime: the worker keeps
-# claiming, each job burns its retries, and the whole backlog converts itself
-# into failed jobs that a user has to resubmit — paying for the retries on the
-# way. Pausing leaves the queue intact so the work survives the outage.
-#
-# Only transport failures count. A run of malformed leads failing validation is
-# not an outage and must not stop the queue.
+
 BREAKER_THRESHOLD = int(os.getenv("BREAKER_THRESHOLD", "5"))
 BREAKER_COOLDOWN_S = int(os.getenv("BREAKER_COOLDOWN_S", "60"))
 
@@ -260,10 +209,10 @@ def _record_job_outcome(exc: Optional[BaseException]) -> None:
     """Feed one job's result to the breaker."""
     global _consecutive_failures, _breaker_open_until
     if exc is None:
-        _consecutive_failures = 0  # one success is enough to call it recovered
+        _consecutive_failures = 0
         return
     if not is_retryable(exc):
-        return  # the job's own fault, not the provider's
+        return
     _consecutive_failures += 1
     if _consecutive_failures >= BREAKER_THRESHOLD:
         _breaker_open_until = time.monotonic() + BREAKER_COOLDOWN_S
@@ -285,7 +234,7 @@ def _request_stop(signum, _frame) -> None:
     """Stop claiming new jobs; let the ones already running finish."""
     global _stopping
     if _stopping:
-        return  # second signal — the drain is already under way
+        return
     _stopping = True
     logger.info("Signal %s received; draining, no new jobs will be claimed", signum)
 
@@ -297,7 +246,7 @@ def _cache_row(key: str) -> Optional[dict]:
         .select("company_info,cultural_fit_score,cultural_fit_notes")
         .eq("company_key", key)
         .gte("cached_at", cutoff)
-        .gte("cultural_fit_score", 0)  # excludes in-flight claim placeholders (sentinel -1)
+        .gte("cultural_fit_score", 0)
         .limit(1)
         .execute()
     )
@@ -320,21 +269,21 @@ def cache_get_company(key: str) -> Optional[dict]:
             "company_key": key,
             "company_name": key.split(":", 1)[0],
             "company_info": {},
-            "cultural_fit_score": -1,  # sentinel: claimed, research in flight
+            "cultural_fit_score": -1,
             "cached_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-        return None  # we won the claim — caller does the research
+        return None
     except Exception:
-        pass  # someone else already claimed this key — wait on them instead
+        pass
 
-    # Wait for the winner; if it crashed, fall through and research it ourselves
+
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         time.sleep(2)
         hit = _cache_row(key)
         if hit is not None:
             return hit
-    return None  # winner still not done — research it ourselves as a fallback
+    return None
 
 
 def cache_set_company(key: str, company_name: str, data: dict) -> None:
@@ -347,7 +296,7 @@ def cache_set_company(key: str, company_name: str, data: dict) -> None:
         "cached_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        # Upsert rather than select-then-write, so two writers can't create two rows
+
         supabase.table("company_research_cache").upsert(row, on_conflict="company_key").execute()
     except Exception:
         logger.exception("Failed to write company research cache (non-fatal)")
@@ -372,7 +321,7 @@ def fail_stale_running_jobs():
     for job in rows:
         started = job.get("started_at")
         if not started:
-            # No timestamp to age it against, so treat it as abandoned
+
             stale_ids.append(job["id"])
             continue
         started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
@@ -434,7 +383,7 @@ def claim_next_job():
         supabase.table("jobs")
         .update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", job["id"])
-        .eq("status", "pending")  # conditional update: loses the race harmlessly
+        .eq("status", "pending")
         .execute()
     )
     if not claimed.data:
@@ -447,7 +396,7 @@ async def run_job(job: dict) -> list:
     leads = job["leads"]
     start = time.time()
 
-    # Stage updates for the UI's progress tracker, written as each agent finishes
+
     progress: dict = {}
 
     def _on_stage(stage: str, state: str) -> None:
@@ -467,23 +416,20 @@ async def run_job(job: dict) -> list:
     elapsed = round(time.time() - start, 1)
     results = persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
 
-    # Emitted here rather than inside persist_results so pipeline/DB code stays
-    # free of metrics wiring, and so cost is counted once per job even when a
-    # lead's analysis row is later overwritten by a re-run.
+
     if _tokens_counter is not None:
         tokens = sum((getattr(s.token_usage, "total_tokens", 0) or 0) for s in scores)
         tokens += sum((getattr(e.token_usage, "total_tokens", 0) or 0) for e in emails if e)
         prompt = sum((getattr(s.token_usage, "prompt_tokens", 0) or 0) for s in scores)
         prompt += sum((getattr(e.token_usage, "prompt_tokens", 0) or 0) for e in emails if e)
         completion = tokens - prompt
-        # Same gemini-2.5-flash rates persist_results prices with.
+
         cost = round(prompt * 0.15 / 1_000_000 + completion * 0.60 / 1_000_000, 6)
         attrs = {"provider": LLM_MODEL}
         _tokens_counter.add(tokens, attrs)
         _cost_counter.add(cost, attrs)
 
-    # One observation per model call, tagged with the provider that served it —
-    # which is not always LLM_MODEL, since a job can fail over mid-run.
+
     if _ttft_histogram is not None:
         for call in llm_stats:
             call_attrs = {"provider": call["provider"]}
@@ -524,19 +470,8 @@ async def main():
         "Worker started (poll interval %ds, up to %d job(s) concurrently)",
         POLL_INTERVAL_S, MAX_CONCURRENT_JOBS,
     )
-    # pipeline.py runs each job's synchronous work through asyncio.to_thread,
-    # which hands it to the loop's default executor. That default is
-    # ThreadPoolExecutor(min(32, cpu_count + 4)) — on a 1-vCPU box, 5 threads.
-    # So MAX_CONCURRENT_JOBS=10 was a number the runtime could not honour: the
-    # loop claimed ten jobs, ran five, and left the rest sitting in `running`
-    # doing nothing while their time budget ticked down toward being reaped.
-    #
-    # Sizing the executor to the setting makes the setting mean what it says.
-    # One thread per in-flight job is exact, not an estimate — the tools inside
-    # a job (requests, tavily) run on that same thread.
-    #
-    # Scoped to this loop, so uvicorn's own threadpool is untouched when
-    # RUN_WORKER_IN_PROCESS=1 puts this loop on a worker thread.
+
+
     loop = asyncio.get_running_loop()
     loop.set_default_executor(
         ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="pipeline")
@@ -550,10 +485,8 @@ async def main():
         )
 
     try:
-        # Handlers can only be installed from the main thread. With
-        # RUN_WORKER_IN_PROCESS=1 this runs in a uvicorn worker thread, where
-        # signal.signal raises ValueError — uvicorn owns the signals there and
-        # this loop just never sees one.
+
+
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, _request_stop)
     except ValueError:
@@ -568,9 +501,8 @@ async def main():
     target = WORKER_MIN_CONCURRENCY
     last_change = time.monotonic()
     while not _stopping:
-        # Queue depth drives the target; the claim loop below then fills up to
-        # it.  Scaling in never cancels work — it only stops claiming more, so
-        # in-flight jobs keep the slots they already hold until they finish.
+
+
         try:
             depth = pending_depth()
         except Exception:
@@ -591,7 +523,7 @@ async def main():
                 _queue_depth_gauge.set(depth)
                 _concurrency_gauge.set(target)
 
-        # Only claim what we can start now, so no job sits claimed but unworked
+
         while not _stopping and not _breaker_is_open() and len(in_flight) < target:
             try:
                 job = claim_next_job()
@@ -607,7 +539,7 @@ async def main():
         if not in_flight:
             await asyncio.sleep(POLL_INTERVAL_S)
         else:
-            # Wake when a slot frees up or the poll interval elapses
+
             await asyncio.wait(in_flight, timeout=POLL_INTERVAL_S, return_when=asyncio.FIRST_COMPLETED)
 
     if in_flight:
@@ -616,9 +548,8 @@ async def main():
         )
         _, pending = await asyncio.wait(in_flight, timeout=WORKER_SHUTDOWN_GRACE_S)
         if pending:
-            # Left running rather than cancelled: a cancel mid-model-call would
-            # abandon a job we've already paid for, with nothing written back.
-            # fail_stale_running_jobs on the next boot reaps them.
+
+
             logger.warning(
                 "%d job(s) outlasted the grace period; the next worker will reap them",
                 len(pending),
