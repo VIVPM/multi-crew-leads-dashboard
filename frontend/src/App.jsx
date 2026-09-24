@@ -19,24 +19,24 @@ const JOB_DEADLINE_MS = 20 * 60 * 1000
 // Restores sessions while the server-issued refresh token remains valid.
 function loadSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    const raw = sessionStorage.getItem(SESSION_KEY)
     if (!raw) return null
     const { userId, username, token, refreshToken } = JSON.parse(raw)
-    if (!token || !refreshToken) { localStorage.removeItem(SESSION_KEY); return null }
+    if (!token || !refreshToken) { sessionStorage.removeItem(SESSION_KEY); return null }
     return { userId, username, token, refreshToken }
   } catch { return null }
 }
 
 function saveSession(userId, username, token, refreshToken) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
 }
 
 function readRefreshToken() {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
 }
 
 function clearSession() {
-  localStorage.removeItem(SESSION_KEY)
+  sessionStorage.removeItem(SESSION_KEY)
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
