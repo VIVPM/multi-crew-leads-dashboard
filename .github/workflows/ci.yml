@@ -1,21 +1,13 @@
+# CI checks backend, frontend, containers, and gated deployment.
 name: CI
 
 on:
-  # main plus the langgraph line of work. Gating on main alone meant a feature
-  # branch got no feedback until a PR was opened, which is backwards — catching
-  # a break before it reaches main is the whole point of these checks.
-  #
-  # A pattern rather than a list of branch names, so the next langgraph-* branch
-  # is covered the day it's created instead of the day someone remembers to edit
-  # this file. The deploy job below is still pinned to refs/heads/main, so this
-  # decides what gets checked, never what gets released.
   push:
     branches:
       - main
       - 'langgraph**'
   pull_request:
 
-# A second push to main should cancel the first run's deploy rather than race it.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -37,20 +29,9 @@ jobs:
       - name: Syntax check
         run: python -m py_compile backend/*.py tests/*.py
 
-      # The real requirements file, not a hand-picked subset. It used to be
-      # skipped because crewai was a multi-minute install; without it this is
-      # ~45s cold, which is worth paying because test_pipeline.py imports the
-      # graph for real, a pinned subset here would drift from requirements.txt,
-      # and a file that no longer resolves now fails here rather than in the
-      # docker job.
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
-      # All three suites run without a network or an API key. test_pipeline.py stubs
-      # the two functions that reach a model, so it exercises the graph wiring
-      # (routing, cache skip, token accounting, tool-name validity) and nothing
-      # that costs money; test_queue_policy.py covers fair scheduling without
-      # importing the configured app.
       - name: Unit tests (no network)
         run: |
           python tests/test_security.py
@@ -71,21 +52,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm test          # node:test — CSV import parsing (18 checks)
+      - run: npm test
       - run: npm run build
         env:
-          # This build's output is never deployed — Render does its own build
-          # from the same source when the deploy hook fires, with the real
-          # VITE_BACKEND_URL set there. This is only a "does it compile"
-          # check, so any well-formed value satisfies the required-env-var
-          # check in vite.config.js. Matches the docker job's frontend image
-          # build below, which already uses the same placeholder.
           VITE_BACKEND_URL: http://localhost:8000
 
   docker:
-    # Builds both images without pushing. This is where the Dockerfiles are
-    # actually verified — a broken COPY path or an unbuildable dependency shows
-    # up here rather than the first time someone runs compose.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,8 +83,6 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    # Only after every suite passes, only for real pushes to main — never for a
-    # pull request, which would otherwise deploy unreviewed code from a fork.
     needs: [backend, frontend, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -128,9 +98,6 @@ jobs:
             echo "turn it off there so deploys are gated on CI rather than racing it."
             exit 0
           fi
-          # --fail so a 4xx/5xx from Render fails the job instead of passing
-          # quietly on an error page, which is the usual way a broken deploy
-          # hook goes unnoticed for weeks.
           for hook in "$BACKEND_HOOK" "$FRONTEND_HOOK"; do
             if [ -n "$hook" ]; then
               curl --fail --silent --show-error -X POST "$hook" > /dev/null

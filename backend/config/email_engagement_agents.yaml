@@ -1,3 +1,4 @@
+# Email specialist role and behavior.
 email_specialist_agent:
   role: >
     Email Specialist

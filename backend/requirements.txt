@@ -1,10 +1,10 @@
-# --- Agent runtime: LangGraph (replaces crewai / crewai-tools / litellm) ---
+# Pinned backend runtime, provider, database, and telemetry dependencies.
 langgraph==1.2.11
 langchain-core==1.6.1
-langchain-google-genai==4.3.7   # LLM_MODEL=GEMINI
-beautifulsoup4==4.15.0     # website scrape tool (was crewai_tools.ScrapeWebsiteTool)
+langchain-google-genai==4.3.7
+beautifulsoup4==4.15.0
 requests==2.34.2
-langchain-openai==1.6.0     # LLM_MODEL=CLOUDFLARE — Workers AI via its OpenAI-compatible endpoint
+langchain-openai==1.6.0
 
 fastapi==0.139.0
 uvicorn[standard]==0.51.0
@@ -15,10 +15,6 @@ pydantic==2.12.5
 supabase==2.31.0
 bcrypt==5.0.0
 
-# Langfuse tracing: targeted instrumentors exporting straight to Langfuse's
-# OTLP endpoint (worker.py) — no `langfuse`/`openlit` packages needed.
-# One instrumentor now instead of two: LangChain's covers the LangGraph nodes
-# and the model calls underneath them.
 openinference-instrumentation-langchain==0.1.73
 opentelemetry-api==1.44.0
 opentelemetry-sdk==1.44.0

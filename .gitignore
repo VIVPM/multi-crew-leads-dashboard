@@ -1,10 +1,10 @@
+# Local secrets, generated outputs, dependencies, and tool state.
 backend/.env
 frontend/.env
 backend/.venv
 frontend/node_modules
 frontend/dist
 __pycache__/
-# Added by code-review-graph
 .code-review-graph/
 .claude
 .playwright-mcp/
@@ -15,13 +15,8 @@ company_icp.txt
 sample_leads_3.csv
 sample_leads_5.csv
 
-# transient server stderr from load_test_api.py (rewritten every run)
 load_test_results/*.log
 
-# Every eval/load run writes a timestamped report, so these pile up fast. One
-# representative result per test type is committed as evidence for the numbers
-# quoted in README.md; new runs stay local. (Files already tracked are
-# unaffected by these rules — this only stops future ones being added.)
 load_test_results/*.json
 scoring_eval_results/*.json
 adversarial_results/*.json
