@@ -1403,7 +1403,8 @@ body {
   display: grid;
   grid-template-columns: repeat(3, auto);
   justify-content: start;
-  gap: 2rem;
+  gap: 2.5rem;
+  text-align: center;
   margin: 2rem 0 0;
   padding-top: 1.5rem;
   border-top: 1px solid var(--hairline);
@@ -1415,6 +1416,7 @@ body {
   letter-spacing: -0.56px;
   line-height: 1.1;
   color: var(--primary-deep);
+  white-space: nowrap;
 }
 
 .lp-hero-stat-label {
@@ -1422,6 +1424,7 @@ body {
   font-size: 13px;
   font-weight: 300;
   color: var(--ink-secondary);
+  white-space: nowrap;
 }
 
 .lp-cream {
@@ -1547,7 +1550,7 @@ body {
   .analysis-table th, .analysis-table td { padding: 0.45rem 0.3rem; }
   .analysis-table td { font-size: 0.74rem; }
   .analysis-table th { letter-spacing: 0.02em; }
-  .lp-hero-stats { grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
-  .lp-hero-stat-n { font-size: 20px; }
-  .lp-hero-stat-label { font-size: 12px; }
+  .lp-hero-stats { gap: 1.25rem; }
+  .lp-hero-stat-n { font-size: 18px; }
+  .lp-hero-stat-label { font-size: 12px; white-space: normal; }
 }
