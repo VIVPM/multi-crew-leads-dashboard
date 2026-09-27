@@ -26,6 +26,12 @@ const STEPS = [
   },
 ]
 
+const RESULTS = [
+  { stat: '93%', label: 'of strong leads identified', hint: 'Recall on a 38-lead labelled evaluation' },
+  { stat: '~$0.03', label: 'per lead', hint: 'Measured on real runs' },
+  { stat: '~30 sec', label: 'saved on repeat companies', hint: 'Company research is skipped on a cache hit: 24s saved in a 10-run test, 38s average research time across 19 runs' },
+]
+
 function useCountUp(target, durationMs, delayMs) {
   const [value, setValue] = useState(() =>
     window.matchMedia('(prefers-reduced-motion: reduce)').matches ? target : 0,
@@ -101,6 +107,14 @@ export default function Landing({ onSignIn, onGetStarted }) {
             <button className="btn btn-primary" onClick={onGetStarted}>Get started</button>
             <a className="btn btn-outline" href="#how">See how it works</a>
           </div>
+          <dl className="lp-hero-stats lp-fade" style={{ '--d': '480ms' }}>
+            {RESULTS.map(r => (
+              <div key={r.label} className="lp-hero-stat" title={r.hint}>
+                <dt className="lp-hero-stat-n tnum">{r.stat}</dt>
+                <dd className="lp-hero-stat-label">{r.label}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
 
         <div className="lp-composite lp-fade" style={{ '--d': '480ms' }}>
