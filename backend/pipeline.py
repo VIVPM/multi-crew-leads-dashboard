@@ -284,6 +284,8 @@ ROLE_EMAIL = _CONFIGS["email_agents"]["email_specialist_agent"]["role"].strip()
 
 
 PIPELINE_TIMEOUT_S = int(os.getenv("PIPELINE_TIMEOUT_S", "600"))
+LLM_REQUEST_TIMEOUT_S = 60
+LLM_REQUEST_RETRIES = 2
 
 
 try:
@@ -708,15 +710,18 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
             api_key=llm_key,
             base_url=f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
             max_tokens=CLOUDFLARE_MAX_TOKENS,
+            timeout=LLM_REQUEST_TIMEOUT_S,
+            max_retries=LLM_REQUEST_RETRIES,
         )
         return llm, llm
 
     from langchain_google_genai import ChatGoogleGenerativeAI
 
 
+    limits = {"timeout": LLM_REQUEST_TIMEOUT_S, "max_retries": LLM_REQUEST_RETRIES}
     return (
-        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key, streaming=True),
-        ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key, streaming=True),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key, streaming=True, **limits),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key, streaming=True, **limits),
     )
 
 

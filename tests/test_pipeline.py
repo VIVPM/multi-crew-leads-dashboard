@@ -105,6 +105,10 @@ def _fake_chat(llm, messages, schema=None, via_prompt=None, cb=None):
     return "Subject: hi\n\nBody text.", None, 40, 15
 
 
+for _llm in pipeline._build_llms("fake-key", "GEMINI"):
+    assert _llm.timeout == pipeline.LLM_REQUEST_TIMEOUT_S, "a hung Gemini call must time out"
+    assert _llm.max_retries == pipeline.LLM_REQUEST_RETRIES
+
 pipeline._research = _fake_research
 pipeline._chat = _fake_chat
 pipeline._build_llms = lambda key, provider=None: (None, None)
