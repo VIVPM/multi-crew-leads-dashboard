@@ -12,14 +12,14 @@ const SESSION_KEY = "sp_session";
 
 function readSession() {
   try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY));
+    return JSON.parse(sessionStorage.getItem(SESSION_KEY));
   } catch {
     return null;
   }
 }
 
 function writeSession(s) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
 }
 
 async function doFetch(method, path, body, token) {
@@ -60,8 +60,7 @@ export async function api(method, path, body) {
     if (newToken) {
       res = await doFetch(method, path, body, newToken);
     } else {
-
-      localStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
       window.dispatchEvent(new Event("sp-auth-expired"));
     }
   }

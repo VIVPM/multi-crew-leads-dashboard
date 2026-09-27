@@ -16,28 +16,30 @@ const SESSION_KEY = 'sp_session'
 const JOB_POLL_MS = 5000
 const JOB_DEADLINE_MS = 20 * 60 * 1000
 
-// The session lasts as long as the refresh token is valid (14 days server-side),
-// not a frontend timer: the 60-min access token is refreshed silently in api.js.
+// Reads this tab's session. It lives in sessionStorage, so it survives a
+// refresh but ends when the tab or browser closes; older builds kept it in
+// localStorage indefinitely, so any copy left there is discarded.
 function loadSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    localStorage.removeItem(SESSION_KEY)
+    const raw = sessionStorage.getItem(SESSION_KEY)
     if (!raw) return null
     const { userId, username, token, refreshToken } = JSON.parse(raw)
-    if (!token || !refreshToken) { localStorage.removeItem(SESSION_KEY); return null }
+    if (!token || !refreshToken) { sessionStorage.removeItem(SESSION_KEY); return null }
     return { userId, username, token, refreshToken }
   } catch { return null }
 }
 
 function saveSession(userId, username, token, refreshToken) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ userId, username, token, refreshToken }))
 }
 
 function readRefreshToken() {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY))?.refreshToken } catch { return null }
 }
 
 function clearSession() {
-  localStorage.removeItem(SESSION_KEY)
+  sessionStorage.removeItem(SESSION_KEY)
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
