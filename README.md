@@ -8,7 +8,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 
 - **Four-node LangGraph pipeline** — company research → personal research → scoring → conditional email generation
 - **Required ICP** — processing is blocked until a company profile and ideal customer profile are saved
-- **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option
+- **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
 - **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, optional provider failover, and a circuit breaker
 - **Bounded, visible spend** — operator-held keys, required `DAILY_LEAD_CAP`, and per-agent token/cost/timing details
