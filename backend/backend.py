@@ -521,17 +521,19 @@ def _seconds_until_utc_midnight() -> int:
 
 
 def _leads_used_today(user_id: str) -> int:
-    """Leads this user has submitted for processing since UTC midnight.
+    """Leads charged to this user since UTC midnight.
 
-    This is the whole "credit" mechanism: remaining = cap - this. Reset is free —
-    at midnight the window moves and the count is 0 again, so there's no credits
-    table and no nightly restore job. The row count stays small because the cap
-    itself bounds how many jobs a user can create per day.
+    Successful jobs are charged, and so are pending or running ones, since
+    those credits are reserved until the job finishes. Otherwise a user could
+    queue far past the cap before anything completed. A failed job refunds its
+    leads, including jobs reaped as stale. Reset is free: at midnight the window
+    moves, so there's no credits table and no nightly restore job.
     """
     since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     rows = (
         supabase.table("jobs").select("leads")
-        .eq("user_id", user_id).gte("created_at", since.isoformat()).execute()
+        .eq("user_id", user_id).gte("created_at", since.isoformat())
+        .neq("status", "failed").execute()
     ).data or []
     return sum(len(r.get("leads") or []) for r in rows)
 

@@ -224,7 +224,7 @@ Keys are operator-held in `backend/.env`; users never enter them:
 5. Review the score breakdown and draft on the lead card. Use **Analysis** for each node's duration, token usage, and cost; cached and skipped nodes are shown explicitly with zero usage.
 6. Edit or send qualifying drafts, filter the lead list, or export the visible results to CSV.
 
-Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP`; sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
+Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP`: queued and successful leads use credits, and a failed job gives its credits back. Sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
 
 ## Scaling Notes
 
