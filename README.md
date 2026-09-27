@@ -10,7 +10,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **React dashboard** — add leads, charts (industry/source/score/time), per-lead analysis modal (token/cost/timing), settings (company & ICP, email SMTP)
 - **Required ICP** — processing blocks until you set your company profile & ideal customer profile; the placeholder guides explicit weak-fit and not-a-fit lines
 - **Four agents, three crews** — `company` (cacheable) → `personal_scoring` (research → score) → `email` (only if score > 70)
-- **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass
+- **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped; the lookup itself is ~0.3s)
 - **Async job queue** — `POST /leads/process` → 202, worker runs crews in background, frontend polls; live per-agent progress bar
 - **Token auth** — bcrypt, 60-min access + 14-day refresh token (server-side hash), silent renewal, session ends when the tab closes, rate-limited login (5 fails → 15-min lockout), signup cap per IP
 - **Operator-held API keys** — Gemini + Tavily in `.env`, users never enter keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default); failed jobs don't use credits
