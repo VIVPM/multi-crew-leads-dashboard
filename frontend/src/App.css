@@ -1399,6 +1399,30 @@ body {
 
 .lp-feature { padding: 0.5rem 0; }
 
+.lp-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: start;
+  gap: 2rem;
+  margin: 2rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.lp-hero-stat-n {
+  font-size: 28px;
+  font-weight: 300;
+  letter-spacing: -0.56px;
+  line-height: 1.1;
+  color: var(--primary-deep);
+}
+
+.lp-hero-stat-label {
+  margin: 0.25rem 0 0;
+  font-size: 13px;
+  font-weight: 300;
+  color: var(--ink-secondary);
+}
 
 .lp-cream {
   background: var(--cream);
@@ -1523,4 +1547,7 @@ body {
   .analysis-table th, .analysis-table td { padding: 0.45rem 0.3rem; }
   .analysis-table td { font-size: 0.74rem; }
   .analysis-table th { letter-spacing: 0.02em; }
+  .lp-hero-stats { grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+  .lp-hero-stat-n { font-size: 20px; }
+  .lp-hero-stat-label { font-size: 12px; }
 }
