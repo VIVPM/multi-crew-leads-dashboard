@@ -291,14 +291,14 @@ The ramp also drove bcrypt's work factor from 12 to 10. At factors used previous
 
 `load_test.py --calibrate 5` — five real leads through the real pipeline, cache bypassed. The only load test that spends money.
 
-| Metric | CrewAI (Jul) | LangGraph (Sep) |
-|---|---|---|
-| Cost per lead | $0.029 | **$0.0074** |
-| Total, five leads | $0.146 | **$0.037** |
-| Pipeline time, five leads | 258s | **231s** |
-| Time per lead | 51.7s | **46.2s** |
+| Metric | Result |
+|---|---|
+| Cost per lead | **~$0.03** |
+| Total, five leads | $0.146 |
+| Pipeline time, five leads | 258s |
+| Time per lead | 51.7s |
 
-Cost fell about 4x; wall clock moved much less. `analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected by any of this because they stub the LLM.
+`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected by any of this because they stub the LLM.
 
 ## Testing & CI/CD
 
