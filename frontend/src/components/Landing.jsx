@@ -134,7 +134,7 @@ export default function Landing({ onSignIn, onGetStarted }) {
           <div className="lp-mock-email">
             <div className="lp-email-label">Email draft</div>
             <p className="lp-email-line" style={{ '--i': 0 }}>Hi Jane — saw Acme is scaling its support team.</p>
-            <p className="lp-email-line" style={{ '--i': 1 }}>Teams like yours use agent orchestration to cut response times…</p>
+            <p className="lp-email-line" style={{ '--i': 1 }}>Teams at your stage use us to cut response times without adding headcount…</p>
             <p className="lp-email-line" style={{ '--i': 2 }}>Open to a 15-minute walkthrough this week?<span className="lp-caret" /></p>
           </div>
         </div>
@@ -201,10 +201,10 @@ export default function Landing({ onSignIn, onGetStarted }) {
               </p>
             </div>
             <div className="lp-cream-email">
-              <p>Hi Priya — customer support automation at Freshworks's scale is exactly
-              where agent orchestration earns its keep.</p>
-              <p>Happy to show you how teams route triage to AI crews without losing
-              the human tone. 15 minutes this week?</p>
+              <p>Hi Priya — you mentioned cutting ticket backlog at Freshworks, and
+              that's exactly the problem we solve for support teams your size.</p>
+              <p>Happy to walk you through how a similar team handled it. Would 15
+              minutes this week work?</p>
             </div>
           </div>
         </Reveal>
