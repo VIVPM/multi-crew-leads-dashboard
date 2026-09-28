@@ -35,6 +35,7 @@ from logging_setup import configure_logging, request_context, lead_context
 from security import (
     hash_password, verify_password, is_legacy_hash, make_token, verify_token,
     make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
+    encrypt_secret, decrypt_secret,
 )
 
 
@@ -361,6 +362,12 @@ class EmailSettingsRequest(BaseModel):
     smtp_password: Optional[str] = Field(default=None, max_length=255)
 
 
+class ApiKeysRequest(BaseModel):
+    """Optional per-user Gemini and Tavily credentials."""
+    gemini_api_key: Optional[str] = Field(default=None, max_length=300)
+    tavily_api_key: Optional[str] = Field(default=None, max_length=300)
+
+
 @app.post("/auth/signup", response_model=LoginResponse)
 def signup(req: SignupRequest, request: Request):
     ip = _client_ip(request)
@@ -479,38 +486,157 @@ def set_company_context(req: CompanyProfileRequest, user_id: str = Depends(curre
     return {"message": "Company profile saved."}
 
 
+def _require_credential_secret() -> None:
+    """Refuse to store recoverable credentials under a throwaway server key."""
+    if not os.getenv("SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="Server secret is not configured for saved credentials.")
+
+
+def _smtp_password(user_id: str, stored: str) -> str:
+    """Read an encrypted SMTP password, upgrading an old plaintext row on first use."""
+    _require_credential_secret()
+    if not stored.startswith("gAAAAA"):
+        supabase.table("users").update({
+            "email_smtp_password": encrypt_secret(stored, SECRET_KEY),
+        }).eq("id", user_id).execute()
+        return stored
+    try:
+        return decrypt_secret(stored, SECRET_KEY)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Your saved app password can't be read — please enter it again in Settings.",
+        ) from exc
+
+
 @app.get("/account/email-settings")
 def get_email_settings(user_id: str = Depends(current_user)):
     resp = (
         supabase.table("users")
-        .select("email_smtp_host,email_smtp_port,email_from_address")
+        .select("email_smtp_host,email_smtp_port,email_from_address,email_smtp_password")
         .eq("id", user_id).execute()
     )
     row = resp.data[0] if resp.data else {}
+    stored = row.get("email_smtp_password")
     return {
         "smtp_host": row.get("email_smtp_host") or "",
         "smtp_port": row.get("email_smtp_port") or 587,
         "from_address": row.get("email_from_address") or "",
-
         "configured": bool(row.get("email_from_address")),
+        "password_saved": bool(stored),
+        "password_last4": _smtp_password(user_id, stored)[-4:] if stored else None,
     }
 
 
 @app.put("/account/email-settings")
 def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current_user)):
+    """Save SMTP settings only after the server can actually log in with them."""
+    _require_credential_secret()
     payload = {
         "email_smtp_host": req.smtp_host,
         "email_smtp_port": req.smtp_port,
         "email_from_address": req.from_address,
     }
     if req.smtp_password:
-        payload["email_smtp_password"] = req.smtp_password
+        password = req.smtp_password
+        payload["email_smtp_password"] = encrypt_secret(password, SECRET_KEY)
     else:
         existing = supabase.table("users").select("email_smtp_password").eq("id", user_id).execute()
-        if not (existing.data and existing.data[0].get("email_smtp_password")):
+        stored = existing.data[0].get("email_smtp_password") if existing.data else None
+        if not stored:
             raise HTTPException(status_code=400, detail="App password is required for first-time setup.")
+        password = _smtp_password(user_id, stored)
+
+    try:
+        with smtplib.SMTP(req.smtp_host, req.smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(req.from_address, password)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise HTTPException(
+            status_code=400, detail="SMTP rejected this address or app password. Check that both belong to the same account.",
+        ) from exc
+    except (smtplib.SMTPException, OSError) as exc:
+        raise HTTPException(
+            status_code=502, detail="Could not verify SMTP login. Check the host, port and connection, then try again.",
+        ) from exc
+
     supabase.table("users").update(payload).eq("id", user_id).execute()
-    return {"message": "Email sending settings saved."}
+    return {"message": "Email sending settings saved.", "password_last4": password[-4:]}
+
+
+_API_KEY_COLUMNS = {"gemini": "gemini_api_key_enc", "tavily": "tavily_api_key_enc"}
+_MISSING_COLUMN_CODES = {"42703", "PGRST204"}
+
+
+def _user_api_keys(user_id: str) -> dict:
+    """Return this user's decrypted keys; a missing migration means no saved keys, not an outage."""
+    from postgrest.exceptions import APIError
+
+    try:
+        resp = supabase.table("users").select(",".join(_API_KEY_COLUMNS.values())).eq("id", user_id).execute()
+    except APIError as exc:
+        if getattr(exc, "code", None) in _MISSING_COLUMN_CODES:
+            return {name: None for name in _API_KEY_COLUMNS}
+        raise
+    row = resp.data[0] if resp.data else {}
+    keys = {}
+    for name, column in _API_KEY_COLUMNS.items():
+        keys[name] = None
+        if row.get(column) and os.getenv("SECRET_KEY"):
+            try:
+                keys[name] = decrypt_secret(row[column], SECRET_KEY)
+            except ValueError:
+                logger.warning("Stored %s key for user %s can't be decrypted; ignoring it", name, user_id)
+    return keys
+
+
+def _resolve_api_keys(user_id: str, for_job: bool = False) -> tuple:
+    """Return (llm_key, tavily_key, uses_own_keys), preferring the user's keys.
+
+    A saved Gemini key only applies while LLM_MODEL is GEMINI; on Cloudflare the
+    operator's model key is always used, so daily credits still apply. With
+    for_job, user keys are re-encrypted before they're written to the jobs row.
+    """
+    own = _user_api_keys(user_id)
+    own_llm = own["gemini"] if LLM_MODEL == "GEMINI" else None
+    llm_key, tavily_key = own_llm or LLM_API_KEY, own["tavily"] or TAVILY_API_KEY
+    if for_job:
+        if own_llm:
+            llm_key = "enc:" + encrypt_secret(own_llm, SECRET_KEY)
+        if own["tavily"]:
+            tavily_key = "enc:" + encrypt_secret(own["tavily"], SECRET_KEY)
+    return llm_key, tavily_key, bool(own_llm and own["tavily"])
+
+
+@app.get("/account/api-keys")
+def get_api_keys(user_id: str = Depends(current_user)):
+    own = _user_api_keys(user_id)
+    return {
+        **{name: {"saved": bool(key), "last4": key[-4:] if key else None} for name, key in own.items()},
+        "provider": LLM_MODEL,
+        "unlimited": LLM_MODEL == "GEMINI" and bool(own["gemini"] and own["tavily"]),
+    }
+
+
+@app.put("/account/api-keys")
+def set_api_keys(req: ApiKeysRequest, user_id: str = Depends(current_user)):
+    """Encrypt and save the supplied keys; they are never returned or logged."""
+    _require_credential_secret()
+    payload = {}
+    for name, value in (("gemini", req.gemini_api_key), ("tavily", req.tavily_api_key)):
+        if value and value.strip():
+            payload[_API_KEY_COLUMNS[name]] = encrypt_secret(value.strip(), SECRET_KEY)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Enter at least one API key.")
+    supabase.table("users").update(payload).eq("id", user_id).execute()
+    return {"message": "API keys saved."}
+
+
+@app.delete("/account/api-keys/{provider}")
+def delete_api_key(provider: str, user_id: str = Depends(current_user)):
+    if provider not in _API_KEY_COLUMNS:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    supabase.table("users").update({_API_KEY_COLUMNS[provider]: None}).eq("id", user_id).execute()
+    return {"message": f"{provider.capitalize()} key removed."}
 
 
 def _seconds_until_utc_midnight() -> int:
@@ -540,9 +666,12 @@ def _leads_used_today(user_id: str) -> int:
 
 @app.get("/account/credits")
 def get_credits(user_id: str = Depends(current_user)):
-    """Daily lead credits: 1 credit = 1 processed lead, cap per UTC day, auto-reset."""
+    """Daily lead credits for operator-paid jobs; none when the user brings both keys."""
+    if _resolve_api_keys(user_id)[2]:
+        return {"unlimited": True, "cap": None, "used": None, "remaining": None}
     used = _leads_used_today(user_id)
-    return {"cap": DAILY_LEAD_CAP, "used": used, "remaining": max(0, DAILY_LEAD_CAP - used)}
+    return {"unlimited": False, "cap": DAILY_LEAD_CAP, "used": used,
+            "remaining": max(0, DAILY_LEAD_CAP - used)}
 
 
 def _get_owned_lead(lead_id: str, user_id: str) -> dict:
@@ -686,6 +815,7 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
     )
     if not (host and from_addr and password):
         raise HTTPException(status_code=400, detail="Set up your email sending settings before sending.")
+    password = _smtp_password(user_id, password)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     sent_today = (
@@ -750,7 +880,7 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
 
     try:
-        draft = draft_email(LLM_API_KEY, lead["scoring_result"], company_context)
+        draft = draft_email(_resolve_api_keys(user_id)[0], lead["scoring_result"], company_context)
     except Exception:
         logger.exception("Failed to draft email for lead %s", lead_id)
         raise HTTPException(status_code=502, detail="Couldn't draft the email right now. Try again shortly.")
@@ -801,8 +931,9 @@ def process_leads_endpoint(
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
 
-    used_today = _leads_used_today(user_id)
-    if used_today + len(req.leads) > DAILY_LEAD_CAP:
+    llm_key, tavily_key, uses_own_keys = _resolve_api_keys(user_id, for_job=True)
+    used_today = 0 if uses_own_keys else _leads_used_today(user_id)
+    if not uses_own_keys and used_today + len(req.leads) > DAILY_LEAD_CAP:
         remaining = max(0, DAILY_LEAD_CAP - used_today)
         raise HTTPException(
             status_code=429,
@@ -832,8 +963,8 @@ def process_leads_endpoint(
         "force_refresh": req.force_refresh,
 
 
-        "gemini_api_key": LLM_API_KEY,
-        "tavily_api_key": TAVILY_API_KEY,
+        "gemini_api_key": llm_key,
+        "tavily_api_key": tavily_key,
     }
 
 
