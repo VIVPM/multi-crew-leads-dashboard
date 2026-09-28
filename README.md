@@ -7,7 +7,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 ## Features
 
 - **Landing page** — Stripe-inspired marketing page with animated product demo
-- **React dashboard** — add leads, charts (industry/source/score/time), per-lead analysis modal (token/cost/timing), settings (company & ICP, email SMTP)
+- **React dashboard** — add leads; summary boxes (leads processed, total cost, avg cost per lead, tokens used, emails drafted); charts for leads, avg cost and avg tokens per lead by month (each with its own year picker), score bands (>70 / ≤70 / borderline), score distribution, industry, source and country; per-lead analysis modal (token/cost/timing); settings (company & ICP, email SMTP, optional API keys)
 - **Required ICP** — processing blocks until you set your company profile & ideal customer profile; the placeholder guides explicit weak-fit and not-a-fit lines
 - **Four agents, three crews** — `company` (cacheable) → `personal_scoring` (research → score) → `email` (only if score > 70)
 - **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped; the lookup itself is ~0.3s)
