@@ -346,8 +346,8 @@ def _build_llms(llm_key: str):
         return llm, llm
 
     return (
-        LLM(model="gemini/gemini-2.5-flash", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
-        LLM(model="gemini/gemini-2.5-flash-lite", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
+        LLM(model="gemini/gemini-3-flash-preview", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
+        LLM(model="gemini/gemini-3-flash-preview", api_key=llm_key, timeout=LLM_CALL_TIMEOUT_S),
     )
 
 
