@@ -36,6 +36,7 @@ from logging_setup import configure_logging, request_context, lead_context
 from security import (
     hash_password, verify_password, is_legacy_hash, make_token, verify_token,
     make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
+    encrypt_secret, decrypt_secret,
 )
 
 
@@ -359,6 +360,10 @@ class EmailSettingsRequest(BaseModel):
 
     smtp_password: Optional[str] = Field(default=None, max_length=255)
 
+class ApiKeysRequest(BaseModel):
+    gemini_api_key: Optional[str] = Field(default=None, max_length=300)
+    tavily_api_key: Optional[str] = Field(default=None, max_length=300)
+
 
 @app.post("/auth/signup", response_model=LoginResponse)
 def signup(req: SignupRequest, request: Request):
@@ -507,6 +512,60 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
     return {"message": "Email sending settings saved."}
 
 
+_API_KEY_COLUMNS = {"gemini": "gemini_api_key_enc", "tavily": "tavily_api_key_enc"}
+
+
+def _user_api_keys(user_id: str) -> dict:
+    """Returns the user's own decrypted keys as {"gemini": str|None, "tavily": str|None}."""
+    resp = supabase.table("users").select(",".join(_API_KEY_COLUMNS.values())).eq("id", user_id).execute()
+    row = resp.data[0] if resp.data else {}
+    keys = {}
+    for name, col in _API_KEY_COLUMNS.items():
+        keys[name] = None
+        if row.get(col):
+            try:
+                keys[name] = decrypt_secret(row[col], SECRET_KEY)
+            except ValueError:
+                logger.warning("Stored %s key for user %s can't be decrypted; ignoring it", name, user_id)
+    return keys
+
+
+def _resolve_api_keys(user_id: str) -> tuple:
+    """Returns (llm_key, tavily_key, uses_own_keys): the user's keys where saved, ours otherwise."""
+    own = _user_api_keys(user_id)
+    own_llm = own["gemini"] if LLM_MODEL == "GEMINI" else None
+    return own_llm or LLM_API_KEY, own["tavily"] or TAVILY_API_KEY, bool(own_llm and own["tavily"])
+
+
+@app.get("/account/api-keys")
+def get_api_keys(user_id: str = Depends(current_user)):
+    own = _user_api_keys(user_id)
+    return {
+        name: {"saved": bool(key), "last4": key[-4:] if key else None}
+        for name, key in own.items()
+    }
+
+
+@app.put("/account/api-keys")
+def set_api_keys(req: ApiKeysRequest, user_id: str = Depends(current_user)):
+    payload = {}
+    for name, value in (("gemini", req.gemini_api_key), ("tavily", req.tavily_api_key)):
+        if value and value.strip():
+            payload[_API_KEY_COLUMNS[name]] = encrypt_secret(value.strip(), SECRET_KEY)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Enter at least one API key.")
+    supabase.table("users").update(payload).eq("id", user_id).execute()
+    return {"message": "API keys saved."}
+
+
+@app.delete("/account/api-keys/{provider}")
+def delete_api_key(provider: str, user_id: str = Depends(current_user)):
+    if provider not in _API_KEY_COLUMNS:
+        raise HTTPException(status_code=404, detail="Unknown provider.")
+    supabase.table("users").update({_API_KEY_COLUMNS[provider]: None}).eq("id", user_id).execute()
+    return {"message": f"{provider.capitalize()} key removed."}
+
+
 def _leads_used_today(user_id: str) -> int:
     """Leads this user has queued or processed successfully since UTC midnight; failed jobs don't count."""
     since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -520,9 +579,11 @@ def _leads_used_today(user_id: str) -> int:
 
 @app.get("/account/credits")
 def get_credits(user_id: str = Depends(current_user)):
-    """Daily lead credits: 1 credit = 1 processed lead, cap per UTC day, auto-reset."""
+    """Daily lead credits: 1 credit = 1 processed lead, cap per UTC day; none when the user brings both keys."""
+    if _resolve_api_keys(user_id)[2]:
+        return {"unlimited": True, "cap": None, "used": None, "remaining": None}
     used = _leads_used_today(user_id)
-    return {"cap": DAILY_LEAD_CAP, "used": used, "remaining": max(0, DAILY_LEAD_CAP - used)}
+    return {"unlimited": False, "cap": DAILY_LEAD_CAP, "used": used, "remaining": max(0, DAILY_LEAD_CAP - used)}
 
 
 def _get_owned_lead(lead_id: str, user_id: str) -> dict:
@@ -728,7 +789,8 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
 
     from pipeline import build_crews
-    crews = build_crews(LLM_API_KEY, TAVILY_API_KEY)
+    llm_key, tavily_key, _ = _resolve_api_keys(user_id)
+    crews = build_crews(llm_key, tavily_key)
     email_input = {
         **lead["scoring_result"],
         "our_company_context": company_context,
@@ -760,8 +822,9 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
 
-    used_today = _leads_used_today(user_id)
-    if used_today + len(req.leads) > DAILY_LEAD_CAP:
+    llm_key, tavily_key, uses_own_keys = _resolve_api_keys(user_id)
+    used_today = 0 if uses_own_keys else _leads_used_today(user_id)
+    if not uses_own_keys and used_today + len(req.leads) > DAILY_LEAD_CAP:
         remaining = max(0, DAILY_LEAD_CAP - used_today)
         raise HTTPException(
             status_code=429,
@@ -790,8 +853,8 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
         "force_refresh": req.force_refresh,
 
 
-        "gemini_api_key": LLM_API_KEY,
-        "tavily_api_key": TAVILY_API_KEY,
+        "gemini_api_key": llm_key,
+        "tavily_api_key": tavily_key,
     }
     resp = supabase.table("jobs").insert(job).execute()
     if not resp.data:
