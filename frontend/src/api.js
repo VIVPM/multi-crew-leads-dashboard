@@ -50,8 +50,22 @@ async function refreshAccessToken() {
   return token;
 }
 
+// Returns true when BACKEND answers as this app's API rather than some other server on that port.
+async function isOurBackend() {
+  try {
+    const res = await doFetch("GET", "/");
+    return (await res.json()).service === "Sales Pipeline Backend";
+  } catch {
+    return false;
+  }
+}
+
 export async function api(method, path, body) {
   let res = await doFetch(method, path, body, readSession()?.token);
+
+  if (res.status === 404 && !(await isOurBackend())) {
+    throw new Error(`The Sales Pipeline backend isn't running at ${BACKEND}. Start it and try again.`);
+  }
 
   if (res.status === 401 && path !== "/auth/refresh" && readSession()?.refreshToken) {
     const newToken = await refreshAccessToken();
