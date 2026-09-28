@@ -556,7 +556,21 @@ async def get_leads(
         .range(offset, offset + limit - 1)
         .execute()
     )
-    return resp.data or []
+    leads = resp.data or []
+    if leads:
+        runs = await (
+            supabase_async.table("analysis_runs")
+            .select("lead_id,total_tokens,total_cost,created_at")
+            .in_("lead_id", [lead["id"] for lead in leads])
+            .execute()
+        )
+        by_lead = {r["lead_id"]: r for r in runs.data or []}
+        for lead in leads:
+            run = by_lead.get(lead["id"])
+            lead["total_tokens"] = run["total_tokens"] if run else None
+            lead["total_cost"] = run["total_cost"] if run else None
+            lead["processed_at"] = run["created_at"] if run else None
+    return leads
 
 
 @app.get("/leads/{lead_id}/detail")
