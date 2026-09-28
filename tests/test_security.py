@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from security import (
     hash_password, verify_password, is_legacy_hash, make_token, verify_token,
+    encrypt_secret, decrypt_secret,
 )
 
 SECRET = "test-secret"
@@ -54,6 +55,17 @@ except ValueError:
 try:
     verify_token("not-a-token", SECRET)
     raise AssertionError("garbage token accepted")
+except ValueError:
+    pass
+
+enc = encrypt_secret("AIzaSy-test-key-1234", SECRET)
+assert "AIzaSy" not in enc
+assert decrypt_secret(enc, SECRET) == "AIzaSy-test-key-1234"
+
+
+try:
+    decrypt_secret(enc, "other-secret")
+    raise AssertionError("secret decrypted under the wrong key")
 except ValueError:
     pass
 

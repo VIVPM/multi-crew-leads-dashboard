@@ -1,7 +1,7 @@
 """
 security.py — password hashing (bcrypt, with legacy SHA-256 verify for
-lazy migration) and HMAC-signed session tokens. No third-party deps
-beyond bcrypt; no network, so it stays unit-testable.
+lazy migration), HMAC-signed session tokens, and encryption for stored
+user API keys. No network, so it stays unit-testable.
 """
 
 import base64
@@ -11,6 +11,7 @@ import secrets
 import time
 
 import bcrypt
+from cryptography.fernet import Fernet, InvalidToken
 
 
 TOKEN_TTL_S = 60 * 60
@@ -75,3 +76,20 @@ def make_refresh_token() -> tuple[str, str]:
 
 def hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _fernet(secret: str) -> Fernet:
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
+
+
+def encrypt_secret(plain: str, secret: str) -> str:
+    """Encrypt a user-supplied secret (e.g. an API key) for storage, keyed off SECRET_KEY."""
+    return _fernet(secret).encrypt(plain.encode()).decode()
+
+
+def decrypt_secret(token: str, secret: str) -> str:
+    """Decrypt a stored secret; raises ValueError if it was encrypted under a different key."""
+    try:
+        return _fernet(secret).decrypt(token.encode()).decode()
+    except InvalidToken:
+        raise ValueError("cannot decrypt secret")
