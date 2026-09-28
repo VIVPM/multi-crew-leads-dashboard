@@ -478,11 +478,24 @@ def set_company_context(req: CompanyProfileRequest, user_id: str = Depends(curre
     return {"message": "Company profile saved."}
 
 
+def _smtp_password(user_id: str, stored: str) -> str:
+    """Decrypts the stored SMTP password, encrypting a legacy plain-text one in place on first use."""
+    if not stored.startswith("gAAAAA"):
+        supabase.table("users").update(
+            {"email_smtp_password": encrypt_secret(stored, SECRET_KEY)}
+        ).eq("id", user_id).execute()
+        return stored
+    try:
+        return decrypt_secret(stored, SECRET_KEY)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Your saved app password can't be read — please enter it again in Settings.")
+
+
 @app.get("/account/email-settings")
 def get_email_settings(user_id: str = Depends(current_user)):
     resp = (
         supabase.table("users")
-        .select("email_smtp_host,email_smtp_port,email_from_address")
+        .select("email_smtp_host,email_smtp_port,email_from_address,email_smtp_password")
         .eq("id", user_id).execute()
     )
     row = resp.data[0] if resp.data else {}
@@ -490,8 +503,8 @@ def get_email_settings(user_id: str = Depends(current_user)):
         "smtp_host": row.get("email_smtp_host") or "",
         "smtp_port": row.get("email_smtp_port") or 587,
         "from_address": row.get("email_from_address") or "",
-
         "configured": bool(row.get("email_from_address")),
+        "password_saved": bool(row.get("email_smtp_password")),
     }
 
 
@@ -503,7 +516,7 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
         "email_from_address": req.from_address,
     }
     if req.smtp_password:
-        payload["email_smtp_password"] = req.smtp_password
+        payload["email_smtp_password"] = encrypt_secret(req.smtp_password, SECRET_KEY)
     else:
         existing = supabase.table("users").select("email_smtp_password").eq("id", user_id).execute()
         if not (existing.data and existing.data[0].get("email_smtp_password")):
@@ -741,6 +754,7 @@ def send_lead_email(lead_id: str, user_id: str = Depends(current_user)):
     )
     if not (host and from_addr and password):
         raise HTTPException(status_code=400, detail="Set up your email sending settings before sending.")
+    password = _smtp_password(user_id, password)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     sent_today = (
