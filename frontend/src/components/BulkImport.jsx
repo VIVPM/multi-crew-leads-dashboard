@@ -97,8 +97,8 @@ export default function BulkImport({ onImported, onMessage, processLead, canProc
       <p className="muted">
         Upload a CSV with the columns <strong>Name, Company, Email</strong> (required) and
         optionally Job Title, Use Case, Industry, Location, Source. A file exported
-        from this app imports back as-is. Up to {MAX_ROWS} rows parse, and an import
-        must fit your daily credits{cap ? ` (${cap}/day, 1 credit scores 1 lead)` : ''}.
+        from this app imports back as-is. Up to {MAX_ROWS} rows parse
+        {cap ? `, and an import must fit your daily credits (${cap}/day, 1 credit scores 1 lead)` : ''}.
       </p>
 
       <label className={`file-picker ${running ? 'is-disabled' : ''}`}>

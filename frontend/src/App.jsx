@@ -5,6 +5,7 @@ import Auth from './components/Auth'
 import Navbar from './components/Navbar'
 import CompanyProfile from './components/CompanyProfile'
 import EmailSettings from './components/EmailSettings'
+import ApiKeys from './components/ApiKeys'
 import LeadForm from './components/LeadForm'
 import BulkImport from './components/BulkImport'
 import Dashboard from './components/Dashboard'
@@ -312,6 +313,7 @@ export default function App() {
             <div id="email-settings">
               <EmailSettings onMessage={text => setGlobalMsg({ type: 'success', text })} />
             </div>
+            <ApiKeys onMessage={text => setGlobalMsg({ type: 'success', text })} onChanged={fetchCredits} />
           </>
         )}
       </main>
