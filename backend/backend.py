@@ -499,12 +499,14 @@ def get_email_settings(user_id: str = Depends(current_user)):
         .eq("id", user_id).execute()
     )
     row = resp.data[0] if resp.data else {}
+    stored = row.get("email_smtp_password")
     return {
         "smtp_host": row.get("email_smtp_host") or "",
         "smtp_port": row.get("email_smtp_port") or 587,
         "from_address": row.get("email_from_address") or "",
         "configured": bool(row.get("email_from_address")),
-        "password_saved": bool(row.get("email_smtp_password")),
+        "password_saved": bool(stored),
+        "password_last4": _smtp_password(user_id, stored)[-4:] if stored else None,
     }
 
 
@@ -535,7 +537,7 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
         raise HTTPException(status_code=502, detail="Could not verify SMTP login. Check the host, port and connection, then try again.") from None
 
     supabase.table("users").update(payload).eq("id", user_id).execute()
-    return {"message": "Email sending settings saved."}
+    return {"message": "Email sending settings saved.", "password_last4": password[-4:]}
 
 
 _API_KEY_COLUMNS = {"gemini": "gemini_api_key_enc", "tavily": "tavily_api_key_enc"}

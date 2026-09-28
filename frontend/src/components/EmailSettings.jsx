@@ -6,6 +6,8 @@ export default function EmailSettings({ onMessage }) {
   const [expanded, setExpanded] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [configured, setConfigured] = useState(false)
+  const [passwordSaved, setPasswordSaved] = useState(false)
+  const [passwordLast4, setPasswordLast4] = useState(null)
   const [fromAddress, setFromAddress] = useState('')
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com')
   const [smtpPort, setSmtpPort] = useState(587)
@@ -20,6 +22,8 @@ export default function EmailSettings({ onMessage }) {
         setSmtpHost(data.smtp_host || 'smtp.gmail.com')
         setSmtpPort(data.smtp_port || 587)
         setConfigured(!!data.configured)
+        setPasswordSaved(!!data.password_saved)
+        setPasswordLast4(data.password_last4 || null)
       })
       .catch(() => {  })
       .finally(() => setLoaded(true))
@@ -29,14 +33,16 @@ export default function EmailSettings({ onMessage }) {
     setStatus('saving')
     setError(null)
     try {
-      await api('PUT', '/account/email-settings', {
+      const result = await api('PUT', '/account/email-settings', {
         smtp_host: smtpHost,
         smtp_port: Number(smtpPort),
         from_address: fromAddress,
-        smtp_password: smtpPassword,
+        smtp_password: smtpPassword || null,
       })
       setStatus('saved')
       setConfigured(true)
+      setPasswordSaved(true)
+      setPasswordLast4(result.password_last4)
       setSmtpPassword('')
       setExpanded(false)
       onMessage?.('Email sending settings saved.')
@@ -54,7 +60,9 @@ export default function EmailSettings({ onMessage }) {
           <h3 className="card-title" style={{ marginBottom: 0 }}>Email sending <span className="required-star">*</span></h3>
           {!expanded && (
             <p className="muted company-profile-summary">
-              {configured ? `Sending as ${fromAddress}` : 'Not set up — drafts can be edited but not sent.'}
+              {configured
+                ? `Sending as ${fromAddress}${passwordSaved ? ` · app password ••••${passwordLast4 || ''}` : ''}`
+                : 'Not set up — drafts can be edited but not sent.'}
             </p>
           )}
         </div>
@@ -107,11 +115,17 @@ export default function EmailSettings({ onMessage }) {
           </div>
           <div className="form-group">
             <label>App password</label>
+            {passwordSaved && (
+              <div className="muted" style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>
+                App password saved{passwordLast4 ? ` (ending in ••••${passwordLast4})` : ''} — leave blank to keep it, or type a new one to replace it.
+              </div>
+            )}
             <input
               type="password"
+              autoComplete="new-password"
               value={smtpPassword}
               onChange={e => setSmtpPassword(e.target.value)}
-              placeholder="16-character app password"
+              placeholder={passwordSaved ? '••••••••••••••••' : '16-character app password'}
               disabled={!loaded}
             />
           </div>
@@ -120,7 +134,7 @@ export default function EmailSettings({ onMessage }) {
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={status === 'saving' || !loaded || !fromAddress.trim() || !smtpHost.trim() || !smtpPassword.trim()}
+            disabled={status === 'saving' || !loaded || !fromAddress.trim() || !smtpHost.trim() || (!passwordSaved && !smtpPassword.trim())}
           >
             {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved ✓' : 'Save email settings'}
           </button>
