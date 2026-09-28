@@ -11,9 +11,9 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
 - **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, optional provider failover, and a circuit breaker
-- **Bounded, visible spend** — operator-held keys, required `DAILY_LEAD_CAP`, and per-agent token/cost/timing details
-- **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits
-- **React dashboard** — charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending
+- **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`; users may save their own Gemini and Tavily keys in Settings. Both keys lift the cap on Gemini, but not on Cloudflare. Failed jobs refund credits.
+- **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits. The browser session ends when its tab closes.
+- **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
 - **Borderline flagging** — scores from 65–75 are marked **Borderline** because repeat scoring varies about ±3.5 points near the threshold; a lead at 65–70 gets no automatic email, so a **Draft Email** button drafts one on demand from the stored scores without re-scoring
 - **Observability and evaluation** — structured correlated logs, optional OpenTelemetry to Langfuse/Grafana, red-team tests, and a 50-lead evaluation suite
 
@@ -38,8 +38,7 @@ graph TD
     end
 
     subgraph AI ["4 · LangGraph — four nodes"]
-        A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
-        A2["🏢 Company Research + Cultural Fit"] -.->|cache hit: skip| A3
+        A2["🏢 Company Research + Cultural Fit"] --> A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
         A3 -->|score > 70| E1["✍️ Email Specialist"]
     end
 
@@ -48,7 +47,7 @@ graph TD
     end
 
     subgraph EXT ["6 · External AI"]
-        LLM["☁️ Gemini or Workers AI"]
+        LLM["☁️ Gemini 3 Flash Preview or Workers AI"]
         Tavily["🔍 Tavily web search"]
     end
 
@@ -89,7 +88,7 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── worker.py              # concurrent job processor and company cache
 │   ├── queue_policy.py        # tenant round-robin job selection
 │   ├── pipeline.py            # LangGraph graph and process_leads entry point
-│   ├── security.py            # bcrypt and access/refresh tokens
+│   ├── security.py            # bcrypt, access/refresh tokens, encrypted credentials
 │   ├── logging_setup.py       # JSON logs and correlation IDs
 │   ├── adversarial_testing.py # red-team suite
 │   ├── run_full_eval.py       # five-phase scoring evaluation
@@ -104,6 +103,8 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── Dockerfile
 │   └── nginx.conf
 ├── tests/test_security.py
+├── tests/test_settings.py
+├── tests/test_dashboard.py
 ├── tests/test_pipeline.py
 ├── tests/test_queue_policy.py
 ├── tests/test_persist_results.py
@@ -165,7 +166,7 @@ GRAFANA_OTLP_AUTH=
 EMAIL_SEND_DAILY_CAP=80
 ```
 
-Failover is intentionally off by default: the providers do not score identically (one measured lead scored 78 vs 94). When enabled, failover applies only to transport-shaped failures. The circuit breaker pauses job claims during an outage so queued work remains pending instead of becoming a wall of failures.
+Failover is intentionally off by default: the providers do not score identically (one measured lead scored 78 vs 94). When enabled, failover applies only to transport-shaped failures and never to jobs using a user's own Gemini key. The circuit breaker pauses job claims during an outage so queued work remains pending instead of becoming a wall of failures.
 
 Run the API and worker from the repository root:
 
@@ -210,21 +211,23 @@ The stack has `api`, `worker`, and `frontend` services. API and worker share an 
 
 ### 5. API keys
 
-Keys are operator-held in `backend/.env`; users never enter them:
+Operator keys in `backend/.env` work by default; users don't need to enter their own:
 
 - **Gemini** — [Google AI Studio](https://aistudio.google.com/app/apikey)
 - **Tavily** — [Tavily](https://app.tavily.com)
+
+Users can optionally save either key under **Settings → API keys**. Each saved key replaces the operator's corresponding key on a job. With both saved and `LLM_MODEL=GEMINI`, the daily lead cap is lifted; on Cloudflare the saved Gemini key isn't used, so the cap still applies. User keys are encrypted both in the users table and while queued in jobs. Keys aren't validated on save. Changing `SECRET_KEY` makes stored keys and SMTP passwords unreadable, so users must re-enter them. Rerun the local `migrations.sql` in Supabase if the key columns are missing.
 
 ## How to Use
 
 1. Sign up or log in from the landing page.
 2. Save your company profile and ICP. Processing remains blocked until this context exists because it anchors cultural-fit scoring and email personalization.
-3. Optionally configure a sender address, SMTP host/port, and an app password in the Email sending card.
+3. Optionally save your Gemini/Tavily keys under **Settings → API keys**. Configure a sender address, SMTP host/port, and app password under **Email sending**; saving checks SMTP login without sending mail. On later edits, leave the password blank to keep the saved one.
 4. Add a lead and select **Save & Process**. The API queues the job and the progress panel follows each graph node. Select **Force refresh** before submission to bypass cached company research.
 5. Review the score breakdown and draft on the lead card. Use **Analysis** for each node's duration, token usage, and cost; cached and skipped nodes are shown explicitly with zero usage.
 6. Edit or send qualifying drafts, filter the lead list, or export the visible results to CSV.
 
-Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP`: queued and successful leads use credits, and a failed job gives its credits back. Sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
+Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP` for operator-funded jobs: queued and successful leads use credits, and a failed job gives its credits back. Users supplying both keys on Gemini have no daily lead cap. Sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
 
 ## Scaling Notes
 
@@ -287,9 +290,9 @@ The comfortable ceiling is about 25 concurrent users on one free-tier instance. 
 
 The ramp also drove bcrypt's work factor from 12 to 10. At factors used previously, login p95 reached 18–29 seconds at only 10–25 concurrent users on Render's 0.1-vCPU tier because hashing serialized on the constrained CPU. Factor 10 reduced that cost by roughly four times while retaining bcrypt's adaptive password hashing.
 
-### Cost calibration
+### Historical cost calibration
 
-`load_test.py --calibrate 5` — five real leads through the real pipeline, cache bypassed. The only load test that spends money.
+`load_test.py --calibrate 5` — five real leads through the then-current pipeline, cache bypassed. This benchmark predates the Gemini 3 Flash Preview switch and is not a price estimate for new runs. It is the only load test here that spends money.
 
 | Metric | Result |
 |---|---|
@@ -298,7 +301,7 @@ The ramp also drove bcrypt's work factor from 12 to 10. At factors used previous
 | Pipeline time, five leads | 258s |
 | Time per lead | 51.7s |
 
-`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected by any of this because they stub the LLM.
+`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Current cost fields and dashboard charts still calculate from the former $0.15/M input and $0.60/M output rates; treat them as estimates, not Gemini 3 Flash Preview billing amounts.
 
 ## Testing & CI/CD
 
@@ -306,7 +309,7 @@ Run Python scripts with the backend virtual environment.
 
 | What | Command | CI |
 |---|---|---|
-| Unit tests | `python tests/test_security.py` | ✅ |
+| Unit tests | `python tests/test_security.py` · `python tests/test_settings.py` · `python tests/test_dashboard.py` | ✅ |
 | Graph wiring | `python tests/test_pipeline.py` | ✅ |
 | Claim fairness | `python tests/test_queue_policy.py` | ✅ |
 | CSV parser | `cd frontend && npm test` | ✅ |
@@ -317,9 +320,9 @@ Run Python scripts with the backend virtual environment.
 
 CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fourth job triggers Render deploy hooks only after all checks pass and only on `main`. Add `RENDER_DEPLOY_HOOK_BACKEND` and `RENDER_DEPLOY_HOOK_FRONTEND`, and disable Render auto-deploy so CI remains the deployment gate.
 
-## Evaluation Metrics (50 Leads)
+## Historical Evaluation Metrics (50 Leads)
 
-Reproducible results from `backend/run_full_eval.py` and `backend/eval_leads.json`; reports are stored in `scoring_eval_results/`.
+These results are from the 2026-08-21 run, before the model switch. Reproducible inputs are in `backend/eval_leads.json`, with reports in `scoring_eval_results/`.
 
 ### Accuracy (38 core and adversarial leads)
 
