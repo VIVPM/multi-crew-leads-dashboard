@@ -207,8 +207,8 @@ export default function Landing({ onSignIn, onGetStarted }) {
               </p>
             </div>
             <div className="lp-cream-email">
-              <p>Hi Priya — you mentioned cutting ticket backlog at Freshworks, and
-              that's exactly the problem we solve for support teams your size.</p>
+              <p>Hi Rahul — you mentioned speeding up merchant onboarding at Razorpay,
+              and that's exactly the problem we solve for operations teams your size.</p>
               <p>Happy to walk you through how a similar team handled it. Would 15
               minutes this week work?</p>
             </div>
