@@ -516,11 +516,24 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
         "email_from_address": req.from_address,
     }
     if req.smtp_password:
-        payload["email_smtp_password"] = encrypt_secret(req.smtp_password, SECRET_KEY)
+        password = req.smtp_password
+        payload["email_smtp_password"] = encrypt_secret(password, SECRET_KEY)
     else:
         existing = supabase.table("users").select("email_smtp_password").eq("id", user_id).execute()
-        if not (existing.data and existing.data[0].get("email_smtp_password")):
+        stored = existing.data[0].get("email_smtp_password") if existing.data else None
+        if not stored:
             raise HTTPException(status_code=400, detail="App password is required for first-time setup.")
+        password = _smtp_password(user_id, stored)
+
+    try:
+        with smtplib.SMTP(req.smtp_host, req.smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(req.from_address, password)
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(status_code=400, detail="SMTP rejected this address or app password. Check that both belong to the same account.") from None
+    except (smtplib.SMTPException, OSError):
+        raise HTTPException(status_code=502, detail="Could not verify SMTP login. Check the host, port and connection, then try again.") from None
+
     supabase.table("users").update(payload).eq("id", user_id).execute()
     return {"message": "Email sending settings saved."}
 
