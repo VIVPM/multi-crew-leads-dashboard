@@ -164,6 +164,7 @@ except ImportError:
     from backend import supabase, persist_results  # noqa: E402
 from pipeline import LLM_MODEL, process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
 from queue_policy import choose_round_robin_job, next_concurrency  # noqa: E402
+from security import decrypt_secret  # noqa: E402
 
 POLL_INTERVAL_S = 3
 
@@ -392,6 +393,11 @@ def claim_next_job():
     return job
 
 
+def _job_key(stored: str) -> str:
+    """Decrypt a user-supplied key queued as 'enc:…'; operator keys pass through."""
+    return decrypt_secret(stored[4:], os.environ["SECRET_KEY"]) if stored.startswith("enc:") else stored
+
+
 async def run_job(job: dict) -> list:
     leads = job["leads"]
     start = time.time()
@@ -404,14 +410,16 @@ async def run_job(job: dict) -> list:
         supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
 
     llm_stats: list = []
+    user_funded = job["gemini_api_key"].startswith("enc:")
     scores, emails, agent_times, cache_hits = await process_leads(
-        leads, job["gemini_api_key"], job["tavily_api_key"],
+        leads, _job_key(job["gemini_api_key"]), _job_key(job["tavily_api_key"]),
         our_company_context=job.get("our_company_context") or "",
         cache_get=cache_get_company,
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
         llm_stats=llm_stats,
+        allow_fallback=not user_funded,
     )
     elapsed = round(time.time() - start, 1)
     results = persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)

@@ -925,6 +925,7 @@ async def process_leads(
     max_retries: int = 3,
     on_stage: Optional[Callable[[str, str], None]] = None,
     llm_stats: Optional[list] = None,
+    allow_fallback: bool = True,
 ):
     """
     Score and email-draft all leads in `leads`.
@@ -983,7 +984,7 @@ async def process_leads(
                 raise
 
 
-            if LLM_FALLBACK_MODEL and provider == LLM_MODEL:
+            if allow_fallback and LLM_FALLBACK_MODEL and provider == LLM_MODEL:
                 fallback_key = _provider_key(LLM_FALLBACK_MODEL)
                 if fallback_key:
                     provider = LLM_FALLBACK_MODEL
