@@ -9,7 +9,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Landing page** — Stripe-inspired marketing page with animated product demo
 - **React dashboard** — add leads; summary boxes (leads processed, total cost, avg cost per lead, tokens used, emails drafted); charts for leads, avg cost and avg tokens per lead by month (each with its own year picker), score bands (>70 / ≤70 / borderline), score distribution, industry, source and country; per-lead analysis modal (token/cost/timing); settings (company & ICP, email SMTP, optional API keys)
 - **Required ICP** — processing blocks until you set your company profile & ideal customer profile; the placeholder guides explicit weak-fit and not-a-fit lines
-- **Four agents, three crews** — `company` (cacheable) → `personal_scoring` (research → score) → `email` (only if score > 70)
+- **Four agents, three crews** — `company` (cacheable) → `personal_scoring` (research → score) → `email` (automatically if score > 70; on demand for borderline leads below 70)
 - **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped; the lookup itself is ~0.3s)
 - **Async job queue** — `POST /leads/process` → 202, worker runs crews in background, frontend polls; live per-agent progress bar
 - **Token auth** — bcrypt, 60-min access + 14-day refresh token (server-side hash), silent renewal, session ends when the tab closes, rate-limited login (5 fails → 15-min lockout), signup cap per IP
@@ -55,7 +55,7 @@ graph TD
     end
 
     subgraph EXT ["6 · External AI"]
-        LLM["☁️ Google Gemini · 2.5 Flash / Flash-Lite"]
+        LLM["☁️ Google Gemini · 3 Flash (preview)"]
         Tavily["🔍 Tavily web search"]
     end
 
@@ -75,7 +75,7 @@ graph TD
 |---|---|---|
 | `company` | Company Research & Cultural Fit | unless fresh cache hit for `(company, ICP)` |
 | `personal_scoring` | Personal Research → Lead Scorer & Validator | always |
-| `email` | Email Specialist | only if score > 70 |
+| `email` | Email Specialist | automatically if score > 70; on demand for borderline scores below 70 |
 
 ## Project Structure
 
@@ -169,8 +169,6 @@ python backend/worker.py
 - Cloudflare rejects `content: null` on assistant messages → `_CloudflareLLM` rewrites to `""`.
 - `instructor` builds its own client → `OPENAI_API_KEY`/`OPENAI_BASE_URL` set at import time.
 - `gpt-oss` writes JSON in `content`, not `tool_calls` → instructor forced into JSON mode.
-
-Scoring calibration: on the same lead, Gemini scored 76 while this model returned 100 on 2/3 runs. Eval numbers are Gemini-only until re-measured.
 
 ### 3. Frontend
 
@@ -370,6 +368,7 @@ All gains came from the prompts in `lead_qualification_tasks.yaml` and the user-
 | "Missing authentication token" | Access token expired; refresh token handles renewal. Re-login is needed after closing the tab, logging out, or the 14-day refresh token expiring. |
 | Job stuck `pending` | Worker isn't running — start `python backend/worker.py` |
 | `42703` column errors | Run `migrations.sql` in Supabase SQL editor |
+| "The Sales Pipeline backend isn't running at …" | Another app is answering on that port, or this backend isn't started — start it, or point `VITE_BACKEND_URL` at the right port |
 | "Your saved app password can't be read" / saved API keys ignored | `SECRET_KEY` changed since they were saved — re-enter them in Settings, and keep `SECRET_KEY` the same locally and on Render |
 | Email settings won't save: "SMTP rejected this address or app password" | The From address must be the account that created the app password |
 | 429 on login | 5 failed attempts → 15-min lockout |
