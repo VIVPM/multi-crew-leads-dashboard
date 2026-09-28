@@ -717,6 +717,42 @@ body {
   gap: 1rem;
 }
 
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.kpi-card {
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  padding: 1rem;
+  box-shadow: var(--shadow-1);
+}
+
+.kpi-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-mute);
+}
+
+.kpi-value {
+  font-size: 26px;
+  font-weight: 300;
+  letter-spacing: -0.5px;
+  color: var(--ink);
+  margin-top: 0.35rem;
+}
+
+.kpi-sub {
+  font-size: 0.75rem;
+  color: var(--ink-secondary);
+  margin-top: 0.2rem;
+}
+
 .chart-card {
   background: var(--canvas);
   border: 1px solid var(--hairline);
