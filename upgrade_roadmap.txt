@@ -1,0 +1,306 @@
+========================================================================
+UPGRADE ROADMAP — Multi-Agent Lead Coordinator
+========================================================================
+
+========================================================================
+PART 1: V1 — WHAT WE BUILT
+========================================================================
+
+The application reuses Supabase for durable queues, caching, sessions, and
+distributed limits instead of adding Redis/Celery. The extra database round
+trip is small compared with a Tavily or Gemini call.
+
+1. Job queue
+   - `jobs` moves pending -> running -> done | failed. A conditional UPDATE is
+     the race-safe claim boundary, and credentials are wiped on completion.
+   - POST /leads/process returns 202 + job_id; the frontend polls GET
+     /jobs/{id}. LLM work never blocks the request.
+   - `RUN_WORKER_IN_PROCESS=1` supports a free-tier single service. worker.py
+     can also run separately. One worker handles `MAX_CONCURRENT_JOBS=10`.
+   - Stale recovery uses each job's `started_at` and runtime budget. This fixed
+     an earlier multi-worker bug where a newly started process treated another
+     worker's active jobs as abandoned. The load test completed 20/20 jobs with
+     no duplication or stuck rows despite contested claims.
+   - The synthetic drain test (re-run 2026-09-03 on LangGraph) processed 200
+     leads in 43.3s with peak concurrency 20. Twelve contested claims were
+     safely lost: the conditional update allowed exactly one process to own
+     each row, which is expected contention rather than an error. Worker boot
+     halved to 8.4-8.7s once crewai was no longer the import cost.
+
+2. Company-research cache
+   - Supabase rows are keyed by normalized company + ICP hash, so different
+     ICPs never share fit scores. TTL defaults to seven days; force_refresh
+     bypasses it.
+   - A repeat-company lead skips research: about one-third the tokens, and
+     55s uncached -> 31s average cached (same lead run 10 times).
+   - A unique-key sentinel lets one miss perform research while concurrent
+     misses wait, preventing duplicate model/search spend.
+   - Cache reads enforce expiry rather than relying on a deletion job. The
+     unique `company_key` closes both the claim race and final upsert race.
+
+3. Four-stage pipeline
+   - Company Research + Cultural Fit -> Personal Research -> Score & Validate
+     -> conditional Email Specialist. Company research is independently
+     cacheable; scoring and email are single model calls because they have no
+     tools.
+   - Role prompts remain because they help smaller models retain structure.
+     Repeated ICP text and verbose output were removed instead. Current task
+     prompts leave unknown details null, use company headquarters for location,
+     and put each scoring sub-component's sole (X/Y) at the end of its line.
+
+4. Required ICP
+   - Each account stores company context/ICP. Processing without it returns
+     400, and the frontend blocks submission. The value is frozen into each
+     queued job so later edits cannot change existing work.
+   - The template asks for positive, weak-fit, and disqualifying criteria.
+
+5. Authentication and security
+   - bcrypt with lazy migration from old SHA-256 hashes.
+   - HMAC access tokens last 60 minutes; hashed, revocable refresh tokens last
+     14 days. The frontend refreshes silently, and every resource has an
+     ownership check.
+   - Supabase-backed login and signup limits work across instances. Signup is
+     limited per IP to slow daily-credit farming. RLS could be added as a
+     second layer; current ownership checks are enforced in the API.
+   - The frontend keeps Bearer tokens in sessionStorage: refresh survives a
+     page reload but login ends when the tab closes. The frontend and API use
+     separate Render domains, so a same-origin cookie flow is not used.
+   - Signup returns an authenticated session immediately. Ownership checks
+     are required because the API uses an operator credential.
+
+6. Observability
+   - Structured JSON logs correlate request_id, job_id, and lead_id.
+   - Langfuse/Grafana receive worker traces and metrics. Alerts cover job
+     failures and no jobs processed for 30 minutes.
+   - Per-node LangGraph usage provides exact agent token counts and timing.
+     The cost fields use configured price constants, so they are estimates;
+     the legacy even split remains only as a fallback for old stage totals.
+   - HTTP-layer tracing is optional. The earlier CrewAI OpenTelemetry conflict
+     disappeared after migration, but worker traces cover the expensive path.
+     An unused admin overview was removed rather than maintained without users.
+
+7. Frontend and UX
+   - Responsive four-page dashboard: Add lead, Dashboard, Lead details, and
+     Settings. It supports CSV import/export, filtering, KPI cards, monthly
+     cost/token charts with year pickers, editing, and sending.
+   - Settings has optional Gemini/Tavily API keys and SMTP credentials; saved
+     secrets are encrypted and displayed only by their last four characters.
+   - Job polling renders real per-agent progress, including cached/skipped
+     stages. Borderline leads remain editable and can be reprocessed.
+
+8. CI/CD and containers
+   - CI gates backend lint/compile/tests, frontend lint/tests/build, and both
+     Docker builds. Render deploy hooks run only after successful main pushes.
+   - API and worker share one backend image but use different commands.
+     `VITE_BACKEND_URL` is a build argument because Vite inlines it.
+   - The static frontend is CDN-served. Fingerprinted assets are immutable;
+     index.html is no-cache so it always points to the current bundle.
+   - Ruff originally surfaced 26 findings. E402 remains disabled deliberately
+     because environment/telemetry setup must precede selected imports.
+   - Docker was designed as one dependency image with API/worker commands rather
+     than two near-identical images. Compose represents the separate-service
+     production shape; in-process mode remains available for free hosting.
+
+9. Email sending
+   - Per-user SMTP sends through the user's provider, preserving SPF/DKIM/DMARC
+     alignment. Third-party ESPs cannot safely send from arbitrary gmail.com
+     addresses.
+   - `EMAIL_SEND_DAILY_CAP` defaults to 80. A live message reached a real inbox.
+     Gmail's practical SMTP relay ceiling is lower than the often-quoted web UI
+     allowance, so the default intentionally leaves operational headroom.
+   - SMTP app passwords are Fernet-encrypted under SECRET_KEY; legacy plaintext
+     passwords are encrypted on first read. Settings shows only the last four
+     characters and checks SMTP login before saving, without sending an email.
+
+10. Operator API keys with optional bring-your-own
+   - Operator Gemini/Tavily keys work by default, so users don't need keys
+     for onboarding. User keys saved in Settings override the matching
+     operator key on a job; a saved Gemini key only applies on Gemini.
+   - User keys are Fernet-encrypted under SECRET_KEY in users, re-encrypted
+     in pending jobs and decrypted by the worker. Jobs using a user's Gemini
+     key do not fail over to an operator-funded provider. Rotating SECRET_KEY
+     makes saved credentials unreadable until users re-enter them.
+   - Missing key columns degrade to operator keys rather than blocking work.
+     Keys aren't validated on save; invalid ones surface when the job runs.
+
+11. Daily credits
+   - `DAILY_LEAD_CAP=5` limits operator-funded leads per account per UTC day
+     and returns 429 before enqueue. Pending/running jobs reserve credits;
+     failed jobs refund them (changed 2026-09-27). With both user keys on
+     Gemini, the cap is lifted; on Cloudflare it still applies.
+   - Bulk processing must fit the remaining allowance when capped. The
+     per-IP signup limit slows users creating many accounts; email
+     verification is the stronger future control.
+
+12. Consolidated evaluation
+   - `run_full_eval.py` evaluates 50 core, reliability, and adversarial leads in
+     one report. Prompt fixes made missing technical teams disqualifying and
+     limited build-vs-buy penalties to evidence of a competing product.
+   - Historical measured result: accuracy 71.0% -> 90.3%, F1 0.710 -> 0.903,
+     recall 1.0, MAE 22.9 -> 16.6, and Spearman 0.386 -> 0.806. These
+     figures predate the later Gemini model switch; all six adversarial checks
+     passed in that run.
+   - Reliability, sensitivity, and invariance checks pass. A lead that once
+     moved 15 points between repeats now stays within about four points.
+
+13. Explicit scoring budgets
+   - The old component descriptions did not add to their stated maxima, so the
+     model invented conversions on every run. Seven explicit bands now total
+     100: demographic 30, firmographic 30, behavioral 40.
+   - Unverifiable companies receive zero firmographic points. The evidence-based
+     rubric raised the discriminant gap from -4 to +35 and reduced reliability
+     mean standard deviation from 2.55 to 1.46.
+   - A separately preserved before/after run measured accuracy 68% -> 84%,
+     Spearman 0.236 -> 0.71, MAE 25.2 -> 11.7, and within-10 accuracy 28.1% ->
+     65.6%. It must not be mixed with the older README evaluation because the
+     underlying lead sets differ.
+
+14. Provider selection
+   - `LLM_MODEL` explicitly selects Gemini or Cloudflare Workers AI; there is no
+     billing default. Current Gemini routing uses gemini-3-flash-preview for
+     both judgment and retrieval. Historical scoring results below are from
+     the earlier configuration.
+   - Cloudflare required JSON-mode and payload compatibility handling. The old
+     CrewAI/LiteLLM/instructor patches were removed by the LangGraph migration.
+   - Provider selection remains required rather than silently defaulting because
+     it determines billing, model behavior, and evaluation comparability.
+
+15. CrewAI -> LangGraph (2026-08-28)
+   - One StateGraph runs per lead. Research nodes use tool-capable agents;
+     scoring/email use direct structured model calls. Existing YAML prompts and
+     the persist_results contract were preserved.
+   - Removed CrewAI, LiteLLM, unused packages, and blanket instrumentation.
+   - Cloudflare structured-output methods failed in testing, so it uses a schema
+     in the prompt plus JSON-object response format. Gemini uses its native path.
+   - Two live-only bugs were caught immediately: Gemini rejects tool names with
+     spaces, and Cloudflare rejects tool-call assistant messages whose content is
+     null. Both providers now use compatible names/payloads.
+   - Verified with no-network graph tests, live Gemini and Cloudflare leads, and
+     a real-database persist_results test. A fresh full evaluation after prompt
+     layout changes remains necessary before claiming new scoring gains.
+
+16. V1 reliability completion (2026-08-29)
+   - SIGTERM/SIGINT stop claims and drain in-flight work for up to 25 seconds.
+     Remaining jobs stay running for next-boot stale handling rather than being
+     cancelled after paid model work began.
+   - Static prompt text precedes lead data to improve provider prompt caching.
+     The scoring node's contiguous reusable prefix increased from 136 to 840
+     characters; because this changes layout, evaluation remains mandatory.
+   - Optional `Idempotency-Key` prevents repeat submissions and concurrent
+     duplicates. All 429 responses include Retry-After.
+   - Idempotency was verified against Supabase: same key returns the same job,
+     different/no keys create jobs normally, and two concurrent submissions
+     produce exactly one row. A missing schema column degrades to no idempotency
+     instead of breaking every request.
+   - CI covers main and all langgraph branches and installs real requirements.
+
+
+========================================================================
+PART 2: PRODUCT GAPS
+========================================================================
+
+No outstanding small-user product gaps are tracked here. Completed work is in
+Part 1, README.md, scoring_eval_results/, and load_test_results/.
+
+
+========================================================================
+PART 3: SMALL-SCALE PRODUCTION READINESS
+========================================================================
+
+Verdict: suitable for a handful of sales representatives, real leads, and
+controlled operator spend.
+
+- Bearer auth, CORS, API ownership checks, bcrypt, distributed rate limits,
+  dependency pins, and CI gates are active. Session tokens live in the tab's
+  sessionStorage; RLS would be an additional database layer.
+- CSV export neutralizes spreadsheet-formula prefixes (`=+-@`).
+- There is no cookie/CSRF lifecycle in this branch. Security tests cover
+  tokens and saved-credential encryption; SMTP login is checked at save time.
+
+
+========================================================================
+PART 4: FUTURE SCALE/PRODUCT WORK (NOT BUILT)
+========================================================================
+
+Trigger this work only with sustained traffic, paid worker capacity, or a real
+user need.
+
+1. Redis cache: replace the Supabase cache implementation without changing the
+   pipeline callables.
+2. Message queue: replace 3-second DB polling with Redis + Arq/Celery. At high
+   worker counts, use `SELECT ... FOR UPDATE SKIP LOCKED` to reduce contested
+   claims.
+3. Horizontal API and secrets: stateless auth already permits more API
+   instances when they share `SECRET_KEY`; add a secrets manager at that point.
+4. Database: Supabase PostgREST does not use an application PgBouncer path.
+   Supavisor/read replicas are later configuration options.
+5. Observability: HTTP spans and host metrics are optional additions; core
+   logs, worker traces, metrics, alerts, and dashboards already exist.
+6. CRM integration: add Salesforce/HubSpot synchronization and follow-up
+   tracking when CSV export is insufficient.
+7. Lead discovery: Apollo People Search + selective paid enrichment is the
+   plausible approach. Parked because CSV input provides most current value.
+
+The v1 boundaries—queue, cache callables, stateless auth, and pipeline
+contract—allow these backing services to change without rewriting the API.
+
+
+========================================================================
+PART 5: WHAT BREAKS FIRST AT SCALE
+========================================================================
+
+Measured baseline: 8 accounts, 36 lifetime leads, 33 jobs, cap 5, one Render
+free-tier service. Maximum current demand is roughly 40 leads/day, and the queue
+is empty about 97% of the day.
+
+A. Cost ceiling
+
+Operator-funded leads still cost the operator. The historical ~$0.03/lead
+five-lead calibration predates gemini-3-flash-preview and cannot price current
+traffic; the cost counters still use the former $0.15/M input and $0.60/M
+output rates. Lead-count quotas also cannot bound a tool loop that consumes
+ten times normal tokens. Optional BYOK now removes operator model spend and
+the lead cap for users supplying both keys on Gemini. Before serious traffic,
+update provider price accounting and consider per-tenant token budgets plus a
+hard per-job token cap. Token budgets need accurate usage accounting and a
+hard stop during a job.
+
+B. Capacity ceilings
+
+1. In-process worker: API requests and LLM work share one interpreter. Move
+   worker.py to a dedicated service first.
+2. Executor size: `asyncio.to_thread` defaults to about five threads on a 1-vCPU
+   host. worker.main now explicitly sizes it to `MAX_CONCURRENT_JOBS`, measured
+   at ten simultaneous jobs.
+3. Synchronous FastAPI routes consume AnyIO's thread pool.
+4. One provider key shares RPM across every tenant. Classification, jitter,
+   circuit breaking, or BYOK become important under sustained load.
+
+The API production ramp is a separate capacity measurement: it found one
+free-tier instance comfortable around 25 concurrent API users. It does not
+measure LLM throughput or tenant fairness, and it deliberately runs with the
+worker off, so it says nothing about the concurrency autoscaler either.
+
+Concurrency autoscaling landed 2026-09-04. There is no worker count to scale on
+a single-instance host, so queue depth drives the job slots inside the one
+worker instead: up immediately toward MAX_CONCURRENT_JOBS while a backlog
+exists, halving back after a cooldown once it clears, never cancelling a
+running job. At DAILY_LEAD_CAP=5 it rests at the minimum almost always — the
+point is an automatic response to a backlog, not extra throughput. Real
+worker-count scaling remains blocked on a multi-instance host.
+
+Ramp evidence (re-run 2026-09-03 on LangGraph): throughput rose from 27.0 req/s
+at 10 users to 39.1 at 25, then flattened around 32-34 through 100. There were
+no errors at any level, but read p95 rose from 688ms to 6.7s, so the system
+degrades through latency rather than failure. The ceiling estimate is unchanged
+at ~25 concurrent users, which is expected: this measures the sync-def
+endpoints against anyio's threadpool, with the worker switched off. Worker-saturation testing separately showed zero API errors and
+sub-second read p95 while five in-process jobs were active.
+
+C. Keep optional until demanded
+
+- Backend service-layer refactor without a behavior need.
+- More workflow states without a human-in-the-loop feature.
+- Conversation summarization for independent per-lead graphs.
+- Client prewarming, signed webhooks, or theoretical Little's Law sizing without
+  measurements. `load_test.py --calibrate` already measures real lead duration.
