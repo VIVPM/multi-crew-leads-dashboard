@@ -13,9 +13,9 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Company cache** — per `(company, ICP)` with TTL; concurrent misses deduplicated via unique constraint; **Force refresh** checkbox to bypass. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped; the lookup itself is ~0.3s)
 - **Async job queue** — `POST /leads/process` → 202, worker runs crews in background, frontend polls; live per-agent progress bar
 - **Token auth** — bcrypt, 60-min access + 14-day refresh token (server-side hash), silent renewal, session ends when the tab closes, rate-limited login (5 fails → 15-min lockout), signup cap per IP
-- **Operator-held API keys** — Gemini + Tavily in `.env`, users never enter keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default); failed jobs don't use credits
-- **Editable & sendable email drafts** — per-user SMTP (Gmail App Password or any provider), daily send cap
-- **Bulk CSV import** — validated per row, deduped by email, blocked if credits insufficient
+- **Operator-held API keys, optional bring-your-own** — Gemini + Tavily in `.env` by default, so users don't need keys; daily lead credits via `DAILY_LEAD_CAP` (required, no default); failed jobs don't use credits. Users can save their own Gemini/Tavily keys in Settings (encrypted, shown only as the last 4 characters); each overrides ours, and with both saved the credit limit goes away
+- **Editable & sendable email drafts** — per-user SMTP (Gmail App Password or any provider), daily send cap. The app password is stored encrypted, shown only as its last 4 characters, and the SMTP login is checked before settings are saved
+- **Bulk CSV import** — validated per row, deduped by email, blocked if operator-key credits are insufficient
 - **Borderline flagging** — scores within 65–75 badged **Borderline**; leads scoring 65–70 get a **Draft Email** button to run just the email crew on demand
 - **Structured JSON logging** — correlated by `request_id`/`job_id`/`lead_id`
 - **OpenTelemetry** — optional tracing to Langfuse (v4 observations-first) and/or Grafana Cloud (metrics + alerts), auto-enabled by env vars
@@ -129,7 +129,7 @@ Create `backend/.env`:
 ```
 SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_service_key
-SECRET_KEY=any_long_random_string
+SECRET_KEY=any_long_random_string           # also encrypts saved user keys/app passwords — keep it stable and identical everywhere
 
 # Provider: GEMINI or CLOUDFLARE (required, no default)
 LLM_MODEL=GEMINI
@@ -193,10 +193,12 @@ Three services: `api`, `worker`, `frontend`. API and worker share one image, dif
 
 ### 5. API keys
 
-Operator-held in `backend/.env` — users never enter keys:
+Operator-held in `backend/.env`, used by default so users don't need keys:
 
 - **Gemini** — [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 - **Tavily** — [app.tavily.com](https://app.tavily.com)
+
+Users may add their own in **Settings → API keys (optional)**. Each overrides the operator's key; with both saved, that user has no daily credit limit. Keys are encrypted with `SECRET_KEY` — if it changes, saved keys and app passwords can't be read and must be re-entered.
 
 ---
 
@@ -368,6 +370,8 @@ All gains came from the prompts in `lead_qualification_tasks.yaml` and the user-
 | "Missing authentication token" | Access token expired; refresh token handles renewal. Re-login is needed after closing the tab, logging out, or the 14-day refresh token expiring. |
 | Job stuck `pending` | Worker isn't running — start `python backend/worker.py` |
 | `42703` column errors | Run `migrations.sql` in Supabase SQL editor |
+| "Your saved app password can't be read" / saved API keys ignored | `SECRET_KEY` changed since they were saved — re-enter them in Settings, and keep `SECRET_KEY` the same locally and on Render |
+| Email settings won't save: "SMTP rejected this address or app password" | The From address must be the account that created the app password |
 | 429 on login | 5 failed attempts → 15-min lockout |
 | 429 on signup | IP hit signup cap (default 10/hr); wait or tune `SIGNUP_MAX_PER_IP` |
 | "Cannot reach backend" but backend logged the request | CORS: check `ALLOWED_ORIGINS` includes the frontend's actual origin, and `VITE_BACKEND_URL` was set at build time |
