@@ -31,7 +31,11 @@ export default function CompanyProfile({ value, loaded, expanded, onToggleExpand
 
   return (
     <div className="card company-profile-card" id="company-profile-card">
-      <div className="company-profile-header" onClick={() => onToggleExpanded(!expanded)}>
+      <div className="company-profile-header" role="button" tabIndex={0} aria-expanded={expanded}
+        onClick={() => onToggleExpanded(!expanded)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpanded(!expanded) }
+        }}>
         <div>
           <h3 className="card-title" style={{ marginBottom: 0 }}>
             Your company &amp; ICP <span className="required-star">*</span>

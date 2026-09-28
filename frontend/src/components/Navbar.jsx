@@ -56,7 +56,7 @@ export default function Navbar({ username, page, onNavigate, onLogout, credits }
       </div>
 
       <div className="navbar-right">
-        {credits && <CreditsBadge credits={credits} />}
+        {credits && !credits.unlimited && <CreditsBadge credits={credits} />}
 
         <div className="navbar-menu" ref={menuRef}>
           <button
