@@ -274,9 +274,23 @@ The conditional claim allowed exactly one worker to take each job, and stale-job
 
 Both phases completed with zero errors, and throughput held at 42 to 40 req/s. Nothing degraded under load: the worker thread shares a GIL with the sync endpoints but never starves them, and login stays bcrypt-bound either way.
 
-### Production ramp
+### Local concurrency ramp (2026-09-29)
 
-Read-only traffic against the deployed Render instance:
+`backend/load_test_api.py --ramp` started a local stubbed API at `127.0.0.1:8011` with the worker off. It seeded 50 temporary leads, then sent read-only traffic for 10 seconds at each level. The model was stubbed, so there were no Gemini or Tavily calls.
+
+| Concurrent | req/s | p50 | p95 | Errors |
+|---|---|---|---|---|
+| 10 | 28.0 | 282ms | 812ms | 0 |
+| 25 | 29.0 | 594ms | 1672ms | 0 |
+| 50 | 74.4 | 516ms | 1515ms | 0 |
+| 75 | 70.0 | 922ms | 2625ms | 0 |
+| 100 | 49.1 | 1313ms | 5125ms | 0 |
+
+The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. It does not predict Render's capacity. The report is `load_test_results/ramp_2026-09-29_10-05-31.json`; test rows were cleaned up.
+
+### Production ramp (Render, 2026-09-03)
+
+Earlier read-only traffic against the deployed Render instance:
 
 | Concurrent | req/s | p50 | p95 | Errors |
 |---|---|---|---|---|
@@ -286,7 +300,7 @@ Read-only traffic against the deployed Render instance:
 | 75 | 34.3 | 1609ms | 4656ms | 0 |
 | 100 | 33.0 | 2375ms | 6719ms | 0 |
 
-The comfortable ceiling is about 25 concurrent users on one free-tier instance. Throughput plateaus near 35 req/s, then flattens; the system slows without producing errors. The ceiling held across the CrewAI and LangGraph runs, which is expected — this measures the sync-`def` endpoints against anyio's threadpool, and the framework behind the worker is idle throughout.
+The Render run indicated a comfortable ceiling of about 25 concurrent users on its free-tier instance. That is a separate capacity measurement from the local ~50-user estimate above; the hardware and network paths differ. It slowed without producing errors, with throughput flattening near 35 req/s.
 
 The ramp also drove bcrypt's work factor from 12 to 10. At factors used previously, login p95 reached 18–29 seconds at only 10–25 concurrent users on Render's 0.1-vCPU tier because hashing serialized on the constrained CPU. Factor 10 reduced that cost by roughly four times while retaining bcrypt's adaptive password hashing.
 
