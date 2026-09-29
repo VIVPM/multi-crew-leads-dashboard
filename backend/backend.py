@@ -211,13 +211,68 @@ if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
         logger.exception("Failed to initialize HTTP tracing (non-fatal)")
 
 
+_AUDITED_ROUTES = {
+    ("POST", "/auth/signup"): ("auth.signup", "user"),
+    ("POST", "/auth/login"): ("auth.login", "user"),
+    ("PUT", "/account/company-context"): ("account.company_context.updated", "user"),
+    ("PUT", "/account/email-settings"): ("account.email_settings.updated", "user"),
+    ("PUT", "/account/api-keys"): ("account.api_keys.updated", "user"),
+    ("DELETE", "/account/api-keys/{provider}"): ("account.api_key.removed", "user"),
+    ("POST", "/leads"): ("lead.created", "lead"),
+    ("POST", "/leads/bulk"): ("leads.imported", "leads"),
+    ("PUT", "/leads/{lead_id}"): ("lead.updated", "lead"),
+    ("DELETE", "/leads/{lead_id}"): ("lead.deleted", "lead"),
+    ("POST", "/leads/process"): ("job.submitted", "job"),
+    ("POST", "/leads/{lead_id}/draft-email"): ("email.drafted", "lead"),
+    ("POST", "/leads/{lead_id}/send-email"): ("email.sent", "lead"),
+}
+
+
+async def _record_audit_event(request: Request, request_id: str, status_code: int) -> None:
+    """Write one audit_events row for an audited route with a token-verified actor.
+
+    Only ids, action names and outcomes are stored — never request bodies, so
+    settings text, passwords and API keys can't leak into the audit table.
+    """
+    route = request.scope.get("route")
+    if route is None:
+        return
+    event = _AUDITED_ROUTES.get((request.method, route.path))
+    actor = getattr(request.state, "actor_user_id", None)
+    if not event or actor is None:
+        return
+    action, target_type = event
+    if action == "account.api_key.removed" and request.path_params.get("provider") in ("gemini", "tavily"):
+        action = f"account.api_key.{request.path_params['provider']}.removed"
+    target_id = getattr(request.state, "audit_target_id", None) or request.path_params.get("lead_id")
+    if target_type == "user":
+        target_id = actor
+    outcome = "success" if status_code < 400 else "rejected" if status_code < 500 else "error"
+    try:
+        await supabase_async.table("audit_events").insert({
+            "actor_user_id": int(actor),
+            "action": action,
+            "target_type": target_type,
+            "target_id": str(target_id) if target_id is not None else None,
+            "outcome": outcome,
+            "status_code": status_code,
+            "request_id": request_id,
+        }).execute()
+    except Exception:
+        logger.exception("Failed to record audit event %s for user %s", action, actor)
+
+
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    """Every log line emitted while handling this request carries the same
-    request_id, so `grep request_id=<x>` shows the full story for one call."""
+    """Correlates requests with logs and records authenticated user actions."""
     request_id = uuid.uuid4().hex[:12]
     with request_context(request_id):
-        response = await call_next(request)
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+        finally:
+            await _record_audit_event(request, request_id, status_code)
     response.headers["X-Request-ID"] = request_id
     return response
 
