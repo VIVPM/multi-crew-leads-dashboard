@@ -286,23 +286,7 @@ Both phases completed with zero errors, and throughput held at 42 to 40 req/s. N
 | 75 | 70.0 | 922ms | 2625ms | 0 |
 | 100 | 49.1 | 1313ms | 5125ms | 0 |
 
-The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. It does not predict Render's capacity. The report is `load_test_results/ramp_2026-09-29_10-05-31.json`; test rows were cleaned up.
-
-### Production ramp (Render, 2026-09-03)
-
-Earlier read-only traffic against the deployed Render instance:
-
-| Concurrent | req/s | p50 | p95 | Errors |
-|---|---|---|---|---|
-| 10 | 27.0 | 328ms | 688ms | 0 |
-| 25 | 39.1 | 594ms | 1078ms | 0 |
-| 50 | 32.0 | 1203ms | 3593ms | 0 |
-| 75 | 34.3 | 1609ms | 4656ms | 0 |
-| 100 | 33.0 | 2375ms | 6719ms | 0 |
-
-The Render run indicated a comfortable ceiling of about 25 concurrent users on its free-tier instance. That is a separate capacity measurement from the local ~50-user estimate above; the hardware and network paths differ. It slowed without producing errors, with throughput flattening near 35 req/s.
-
-The ramp also drove bcrypt's work factor from 12 to 10. At factors used previously, login p95 reached 18–29 seconds at only 10–25 concurrent users on Render's 0.1-vCPU tier because hashing serialized on the constrained CPU. Factor 10 reduced that cost by roughly four times while retaining bcrypt's adaptive password hashing.
+The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `load_test_results/ramp_2026-09-29_10-05-31.json`; test rows were cleaned up.
 
 ### Historical cost calibration
 
