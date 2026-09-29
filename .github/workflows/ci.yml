@@ -39,6 +39,7 @@ jobs:
           python tests/test_queue_policy.py
           python tests/test_dashboard.py
           python tests/test_settings.py
+          python tests/test_audit.py
 
   frontend:
     runs-on: ubuntu-latest
