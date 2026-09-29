@@ -33,6 +33,7 @@ import uuid
 import asyncio
 import argparse
 import subprocess
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -220,9 +221,8 @@ def ramp_report(rows: list, args, tag: str) -> None:
     ceiling = healthy[-1]["concurrency"] if healthy else 0
     print(f"\n  Estimated healthy ceiling: ~{ceiling} concurrent users")
     print(f"  SLO: <1% errors AND fast-path p95 < 3x the {rows[0]['concurrency'] if rows else '?'}-user baseline")
-    print("  This measured the sync-def-endpoint / anyio-threadpool ceiling on this")
-    print("  machine — a different box (more CPU/cores) or Render's actual instance")
-    print("  size will shift the number; re-run there before trusting it as final.")
+    print("  This is the local API ceiling with the worker off; another machine")
+    print("  can produce a different result, so treat these as local measurements.")
 
     out_dir = os.path.join(ROOT_DIR, "load_test_results")
     os.makedirs(out_dir, exist_ok=True)
@@ -237,14 +237,7 @@ def ramp_report(rows: list, args, tag: str) -> None:
 
 
 def wait_for_health(base: str, timeout: float = 120) -> bool:
-    """Wait for the target to answer.
-
-    The per-request timeout is generous on purpose: a Render free-tier service
-    spins down after 15 minutes idle, and on the next request Render holds the
-    connection open while the instance cold-starts (tens of seconds). A short
-    per-request timeout kills each attempt before that can ever complete, so
-    the whole wait fails against a server that is in fact coming up fine.
-    """
+    """Wait for the local API to finish loading before sending test traffic."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -270,14 +263,10 @@ def ensure_user(base: str) -> tuple:
 
 
 def seed_leads(user_id: str, n: int) -> list:
-    """Give the test account realistic lead rows before measuring.
+    """Give the local ramp a nonempty lead list and clean it up afterward.
 
-    Without this the account has zero leads and GET /leads/{user_id} — the
-    endpoint browsing traffic hits hardest — returns an empty list, so the
-    measurement is of an empty result set rather than of real work. A real row
-    carries a ~850-char scoring_result and a ~900-char email_draft, and the
-    endpoint does select("*") with a limit of 500, so payload size is a large
-    part of what that endpoint actually costs.
+    GET /leads selects only the lightweight list columns, so these rows make
+    the read-path measurement realistic without triggering any model calls.
     """
     scoring = {
         "personal_info": {"name": "Load Test", "job_title": "VP Engineering",
@@ -312,10 +301,7 @@ def cleanup_seeded_leads(user_id: str) -> int:
 
 
 def insert_done_probe(tag: str, user_id: str) -> str:
-    """A GET /jobs/{id} target for a --base-url run, safe against a real
-    deployment: inserted directly as already-'done', never 'pending', so no
-    worker anywhere (local or on the deployment, since they share one
-    Supabase project) can ever pick it up and spend real money on it."""
+    """Give local read-only ramp traffic a job that no worker can claim."""
     row = {"user_id": user_id, "status": "done", "leads": [],
            "our_company_context": tag, "force_refresh": False}
     return supabase.table("jobs").insert(row).execute().data[0]["id"]
@@ -422,14 +408,10 @@ def main() -> None:
                          "real user logs in once and then browses. 'all' logs in every cycle, "
                          "which is deliberately harsh and distorts throughput.")
     ap.add_argument("--ramp-stop-pct", type=float, default=25,
-                    help="stop the ramp once a level's error rate exceeds this percent. "
-                         "Lower this for a live deployment you want to stop hammering at the "
-                         "first real sign of trouble rather than riding it out to 500.")
+                    help="stop the local ramp when this error percentage is exceeded")
     ap.add_argument("--base-url", default=None,
-                    help="hit an already-running server (e.g. a Render deployment) instead of "
-                         "spawning a local stub. Only valid with --ramp: the idle/saturated test's "
-                         "Phase 2 seeds a real 'pending' job, which a real worker on a live "
-                         "deployment could pick up and actually spend money on.")
+                    help="use an already-running local HTTP API rather than spawning the local stub; "
+                         "only valid with --ramp")
     args = ap.parse_args()
     if args.ramp:
 
@@ -440,8 +422,11 @@ def main() -> None:
         return serve_mode(args.port, args.lead_seconds, args.in_process_worker)
 
     if args.base_url and not args.ramp:
-        sys.exit("--base-url only supports --ramp — the idle/saturated test's Phase 2 seeds a "
-                 "real 'pending' job, unsafe against a live deployment with a real worker.")
+        sys.exit("--base-url only supports --ramp; the idle/saturated test seeds pending jobs.")
+    if args.base_url:
+        url = urlsplit(args.base_url)
+        if url.scheme != "http" or url.hostname not in {"127.0.0.1", "localhost", "::1"} or url.username or url.password:
+            sys.exit("--base-url must point at a local HTTP API (127.0.0.1, localhost or [::1]).")
 
     preflight()
     tag = f"{TAG_PREFIX}-api-{uuid.uuid4().hex[:8]}"
