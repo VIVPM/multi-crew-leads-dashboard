@@ -236,12 +236,14 @@ def health():
     return {"status": "ok", "service": "Sales Pipeline Backend"}
 
 
-def current_user(authorization: Optional[str] = Header(None)) -> str:
+def current_user(request: Request, authorization: Optional[str] = Header(None)) -> str:
     """FastAPI dependency: validate the Bearer token, return the user_id."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authentication token.")
     try:
-        return verify_token(authorization[len("Bearer "):], SECRET_KEY)
+        user_id = verify_token(authorization[len("Bearer "):], SECRET_KEY)
+        request.state.actor_user_id = user_id
+        return user_id
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid or expired token. Please log in again.")
 
@@ -391,15 +393,17 @@ def signup(req: SignupRequest, request: Request):
     _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
 
-    return LoginResponse(
+    response = LoginResponse(
         user_id=uid, username=req.username,
         token=make_token(uid, SECRET_KEY),
         refresh_token=_issue_refresh_token(row["id"]),
     )
+    request.state.actor_user_id = uid
+    return response
 
 
 @app.post("/auth/login", response_model=LoginResponse)
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
     recent_failures = _recent_failure_count(req.username)
     if recent_failures >= LOGIN_MAX_FAILURES:
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in a few minutes.")
@@ -420,11 +424,13 @@ def login(req: LoginRequest):
         _clear_login_failures(req.username)
     uid = str(row["id"])
     logger.info("User logged in: %s", req.username)
-    return LoginResponse(
+    response = LoginResponse(
         user_id=uid, username=req.username,
         token=make_token(uid, SECRET_KEY),
         refresh_token=_issue_refresh_token(row["id"]),
     )
+    request.state.actor_user_id = uid
+    return response
 
 
 def _issue_refresh_token(user_id) -> str:
@@ -683,10 +689,12 @@ async def get_lead_detail(lead_id: str, user_id: str = Depends(current_user)):
 
 
 @app.post("/leads")
-def create_lead(lead: LeadCreate, user_id: str = Depends(current_user)):
+def create_lead(lead: LeadCreate, request: Request, user_id: str = Depends(current_user)):
     payload = lead.dict()
     payload["user_id"] = user_id
     resp = supabase.table("leads").insert(payload).execute()
+    if resp.data:
+        request.state.audit_target_id = resp.data[0]["id"]
     return resp.data[0] if resp.data else {}
 
 
@@ -833,7 +841,7 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
 
 
 @app.post("/leads/process", status_code=202)
-def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(current_user)):
+def process_leads_endpoint(req: ProcessLeadsRequest, request: Request, user_id: str = Depends(current_user)):
     if not req.leads:
         raise HTTPException(status_code=400, detail="No leads provided.")
     if len(req.leads) > MAX_LEADS_PER_REQUEST:
@@ -889,6 +897,7 @@ def process_leads_endpoint(req: ProcessLeadsRequest, user_id: str = Depends(curr
     if not resp.data:
         raise HTTPException(status_code=500, detail="Failed to enqueue processing job.")
     job_id = resp.data[0]["id"]
+    request.state.audit_target_id = job_id
     logger.info("Enqueued job %s (%d lead(s)) for user %s", job_id, len(req.leads), user_id)
     return {"job_id": job_id, "status": "pending"}
 
