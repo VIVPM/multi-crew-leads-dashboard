@@ -18,6 +18,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Bulk CSV import** — validated per row, deduped by email, blocked if operator-key credits are insufficient
 - **Borderline flagging** — scores within 65–75 badged **Borderline**; leads scoring 65–70 get a **Draft Email** button to run just the email crew on demand
 - **Structured JSON logging** — correlated by `request_id`/`job_id`/`lead_id`
+- **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and agent steps aren't recorded (Langfuse covers agents)
 - **OpenTelemetry** — optional tracing to Langfuse (v4 observations-first) and/or Grafana Cloud (metrics + alerts), auto-enabled by env vars
 - **YAML-driven agents** — roles, prompts, workflow in `backend/config/`
 - **Red-team + eval harness** — adversarial inputs with saved reports; reliability + accuracy evaluation across 50 leads
