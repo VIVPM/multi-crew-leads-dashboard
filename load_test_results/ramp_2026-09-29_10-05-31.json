@@ -1,0 +1,79 @@
+{
+  "timestamp": "2026-09-29T04:35:31.167776+00:00",
+  "tag": "LOADTEST-api-22f3a18d",
+  "config": {
+    "port": 8011,
+    "concurrency": 20,
+    "duration": 20,
+    "jobs": 10,
+    "leads_per_job": 10,
+    "lead_seconds": 6.0,
+    "in_process_worker": false,
+    "serve": false,
+    "ramp": true,
+    "ramp_levels": "10,25,50,75,100",
+    "ramp_duration": 10.0,
+    "seed_leads": 50,
+    "mix": "read",
+    "ramp_stop_pct": 5.0,
+    "base_url": null
+  },
+  "levels": [
+    {
+      "concurrency": 10,
+      "requests": 298,
+      "errors": 0,
+      "error_pct": 0.0,
+      "fast_p50_ms": 282.00000000651926,
+      "fast_p95_ms": 811.9999999762513,
+      "login_p95_ms": null,
+      "req_per_s": 28.0,
+      "elapsed_s": 10.6
+    },
+    {
+      "concurrency": 25,
+      "requests": 306,
+      "errors": 0,
+      "error_pct": 0.0,
+      "fast_p50_ms": 593.9999999827705,
+      "fast_p95_ms": 1672.000000020489,
+      "login_p95_ms": null,
+      "req_per_s": 29.0,
+      "elapsed_s": 10.5
+    },
+    {
+      "concurrency": 50,
+      "requests": 830,
+      "errors": 0,
+      "error_pct": 0.0,
+      "fast_p50_ms": 516.0000000032596,
+      "fast_p95_ms": 1515.0000000139698,
+      "login_p95_ms": null,
+      "req_per_s": 74.4,
+      "elapsed_s": 11.2
+    },
+    {
+      "concurrency": 75,
+      "requests": 791,
+      "errors": 0,
+      "error_pct": 0.0,
+      "fast_p50_ms": 922.0000000204891,
+      "fast_p95_ms": 2625.0,
+      "login_p95_ms": null,
+      "req_per_s": 70.0,
+      "elapsed_s": 11.3
+    },
+    {
+      "concurrency": 100,
+      "requests": 619,
+      "errors": 0,
+      "error_pct": 0.0,
+      "fast_p50_ms": 1313.0000000237487,
+      "fast_p95_ms": 5125.0,
+      "login_p95_ms": null,
+      "req_per_s": 49.1,
+      "elapsed_s": 12.6
+    }
+  ],
+  "estimated_ceiling": 50
+}

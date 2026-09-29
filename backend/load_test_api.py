@@ -188,13 +188,13 @@ def run_ramp(base: str, token: str, user_id: str, job_id: str,
         n_total = n_ok + n_err
         err_pct = (n_err / n_total * 100) if n_total else 0.0
         p50, p95 = pctl(fast, 50), pctl(fast, 95)
-        lp95 = pctl(login, 95)
+        lp95 = pctl(login, 95) if login else None
         rps = n_total / res["elapsed"] if res.get("elapsed") else 0.0
         if baseline_p95 is None and fast:
             baseline_p95 = p95
         degraded = bool(baseline_p95) and p95 > 3 * baseline_p95
         flag = "  <-- ERRORS" if err_pct > 1 else ("  <-- latency degrading" if degraded else "")
-        login_col = f"   login p95 {lp95:6.0f}ms" if mix == "all" else ""
+        login_col = f"   login p95 {lp95:6.0f}ms" if lp95 is not None else ""
         print(f"\r  {level:4} users   {n_total:5} req   {rps:5.1f} req/s   {err_pct:5.1f}% err   "
               f"fast p50 {p50:6.0f}ms p95 {p95:6.0f}ms{login_col}{flag}")
         rows.append({
@@ -478,9 +478,7 @@ def main() -> None:
               + ("" if args.base_url else f" (worker {'in-process' if args.in_process_worker else 'separate'})"))
 
         token, user_id = ensure_user(base)
-        if args.base_url:
-
-
+        if args.ramp:
             probe = insert_done_probe(tag, user_id)
         else:
             seed_jobs(tag, user_id, 1, 1)
