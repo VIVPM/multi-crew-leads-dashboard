@@ -6,7 +6,11 @@ personal_research:
     - Name: Obtain the full name of the lead.
     - Job Title: Determine the lead's current job title.
     - Role Relevance: Assess how relevant the lead's role is to the
-      decision-making process on a scale from 0 to 10.
+      decision-making process on a scale from 0 to 10. Judge it from the
+      job title in the lead data plus anything you find. If you cannot find
+      the person online, still score it from the submitted job title. Role
+      relevance is the one field you never leave null or 0 just because the
+      person could not be verified.
     - Professional Background: Optionally, gather a brief description of the
       lead's professional background, years of experience, LinkedIn URL,
       and location.
@@ -38,7 +42,12 @@ company_research:
       leave it null rather than guessing.
     - Cultural Fit: how well the company's stated values and strategic goals
       align with the company described above — a qualitative score (0-10)
-      with supporting notes.
+      with supporting notes. Score it on its merits; do not set it to 0
+      because of a disqualifier. Then end the notes with exactly one line,
+      "Disqualifier: yes" or "Disqualifier: no". Say yes only if the company
+      clearly matches the "Not a fit" or disqualifier description in the
+      profile above, judged by what the company actually sells or operates;
+      having related features or using similar technology is not a match.
 
     Lead Data:
     {lead_data}
@@ -62,7 +71,9 @@ lead_scoring_and_validation:
       not invent a scale or a weighting of your own.
       - demographic_score (0-30) = role relevance + seniority:
         - role relevance (0-20): the 0-10 role relevance from the
-          personal research, doubled.
+          personal research, doubled. If the personal research left it
+          empty or could not verify the person, judge the 0-10 value
+          yourself from the submitted job title and use case, then double it.
         - seniority (0-10): 10 = founder, owner or C-level; 7 = VP, SVP,
           Head of or Director; 5 = manager or team lead; 3 = individual
           contributor; 0 = job title missing or unreadable.
@@ -96,6 +107,13 @@ lead_scoring_and_validation:
           from a list; 0 = source unknown.
       Each component equals the sum of its own sub-components, and the
       three components sum to the final score.
+    - Disqualifier Penalty: If the company research's cultural fit notes
+      end with "Disqualifier: yes", halve the summed score and round down;
+      that is the final score. Keep the three components at their unhalved
+      values, and add this as the last scoring criteria line:
+      "Disqualifier: matches the 'Not a fit' profile in your company
+      settings, score halved from <sum> to <final>". Otherwise the final
+      score is the sum.
     - Scoring Criteria Documentation: Write one line per sub-component.
       Format: "Label: plain-English evidence (X/Y)" where (X/Y) is the
       only numeric score in the line and appears at the very end inside
@@ -121,7 +139,8 @@ lead_scoring_and_validation:
   expected_output: >
     A validated lead score report including:
     - Final lead score (0-100), equal to demographic_score +
-      firmographic_score + behavioral_score, with scoring criteria.
+      firmographic_score + behavioral_score, halved (rounded down) when the
+      company research marks a disqualifier, with scoring criteria.
     - A component breakdown: demographic_score (0-30), firmographic_score
       (0-30), and behavioral_score (0-40).
     - A summary report detailing the scoring process, criteria used, and
