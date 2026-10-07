@@ -39,9 +39,8 @@ logger = logging.getLogger("worker")
 
 
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
-_have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
-if _have_langfuse or _have_grafana:
+if _have_langfuse:
     try:
         import base64
         from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
@@ -64,105 +63,29 @@ if _have_langfuse or _have_grafana:
                         span.set_attribute(f"langfuse.observation.metadata.{key}", value)
 
         _tracer_provider.add_span_processor(_CorrelationSpanProcessor())
-        _enabled = []
-
-        if _have_langfuse:
-            _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-            _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
-            _auth = base64.b64encode(_creds.encode()).decode()
-            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-
-
-                headers={
-                    "Authorization": f"Basic {_auth}",
-                    "x-langfuse-ingestion-version": "4",
-                },
-            )))
-            _enabled.append(f"Langfuse ({_lf_host})")
-
-        if _have_grafana:
-            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/traces",
-                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
-            )))
-            _enabled.append("Grafana Cloud")
-
-
+        _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+        _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
+        _auth = base64.b64encode(_creds.encode()).decode()
+        _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=f"{_lf_host}/api/public/otel/v1/traces",
+            headers={
+                "Authorization": f"Basic {_auth}",
+                "x-langfuse-ingestion-version": "4",
+            },
+        )))
         LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
-        logger.info("LLM tracing enabled via OTLP: %s", ", ".join(_enabled))
+        logger.info("LLM tracing enabled via OTLP: Langfuse (%s)", _lf_host)
     except Exception:
         logger.exception("Failed to initialize LLM tracing (non-fatal)")
 else:
-    logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
-
-
-_jobs_processed_counter = None
-
-
-_tokens_counter = None
-_cost_counter = None
-
-
-_ttft_histogram = None
-_tokens_per_s_histogram = None
-_queue_depth_gauge = None
-_concurrency_gauge = None
-if _have_grafana:
-    try:
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-        _metric_reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(
-                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/metrics",
-                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
-            ),
-            export_interval_millis=15000,
-        )
-        _meter_provider = MeterProvider(
-            resource=Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend")}),
-            metric_readers=[_metric_reader],
-        )
-        _meter = _meter_provider.get_meter("worker")
-        _jobs_processed_counter = _meter.create_counter(
-            "jobs_processed_total", description="Jobs finished, by status (done/failed)",
-        )
-        _tokens_counter = _meter.create_counter(
-            "llm_tokens_total", unit="token",
-            description="LLM tokens spent, by provider",
-        )
-        _cost_counter = _meter.create_counter(
-            "llm_cost_usd_total", unit="USD",
-            description="Estimated LLM spend, by provider",
-        )
-        _ttft_histogram = _meter.create_histogram(
-            "llm_ttft_seconds", unit="s",
-            description="Time to first token, by provider (streaming providers only)",
-        )
-        _tokens_per_s_histogram = _meter.create_histogram(
-            "llm_tokens_per_second", unit="token/s",
-            description="Generation throughput per model call, by provider",
-        )
-        _queue_depth_gauge = _meter.create_gauge(
-            "queue_pending_jobs",
-            description="Jobs waiting to be claimed — the autoscaling signal",
-        )
-        _concurrency_gauge = _meter.create_gauge(
-            "worker_target_concurrency",
-            description="Job slots the worker is currently willing to fill",
-        )
-        logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
-    except Exception:
-        logger.exception("Failed to initialize job metrics (non-fatal)")
+    logger.info("Langfuse not configured — LLM tracing disabled")
 
 
 try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
-from pipeline import LLM_MODEL, process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
+from pipeline import process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
 from queue_policy import choose_round_robin_job, next_concurrency  # noqa: E402
 from security import decrypt_secret  # noqa: E402
 
@@ -409,7 +332,6 @@ async def run_job(job: dict) -> list:
         progress[stage] = state
         supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
 
-    llm_stats: list = []
     user_funded = job["gemini_api_key"].startswith("enc:")
     scores, emails, agent_times, cache_hits = await process_leads(
         leads, _job_key(job["gemini_api_key"]), _job_key(job["tavily_api_key"]),
@@ -418,34 +340,10 @@ async def run_job(job: dict) -> list:
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
-        llm_stats=llm_stats,
         allow_fallback=not user_funded,
     )
     elapsed = round(time.time() - start, 1)
-    results = persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
-
-
-    if _tokens_counter is not None:
-        tokens = sum((getattr(s.token_usage, "total_tokens", 0) or 0) for s in scores)
-        tokens += sum((getattr(e.token_usage, "total_tokens", 0) or 0) for e in emails if e)
-        prompt = sum((getattr(s.token_usage, "prompt_tokens", 0) or 0) for s in scores)
-        prompt += sum((getattr(e.token_usage, "prompt_tokens", 0) or 0) for e in emails if e)
-        completion = tokens - prompt
-
-        cost = round(prompt * 0.15 / 1_000_000 + completion * 0.60 / 1_000_000, 6)
-        attrs = {"provider": LLM_MODEL}
-        _tokens_counter.add(tokens, attrs)
-        _cost_counter.add(cost, attrs)
-
-
-    if _ttft_histogram is not None:
-        for call in llm_stats:
-            call_attrs = {"provider": call["provider"]}
-            if call["ttft_s"] is not None:
-                _ttft_histogram.record(call["ttft_s"], call_attrs)
-            if call["tokens_per_s"] is not None:
-                _tokens_per_s_histogram.record(call["tokens_per_s"], call_attrs)
-    return results
+    return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
 
 
 def finish_job(job_id: str, **fields):
@@ -463,14 +361,10 @@ async def process_one_job(job: dict) -> None:
             finish_job(job["id"], status="done", results=results)
             logger.info("Job done")
             _record_job_outcome(None)
-            if _jobs_processed_counter:
-                _jobs_processed_counter.add(1, {"status": "done"})
         except Exception as exc:
             logger.exception("Job failed")
             finish_job(job["id"], status="failed", error=str(exc)[:500])
             _record_job_outcome(exc)
-            if _jobs_processed_counter:
-                _jobs_processed_counter.add(1, {"status": "failed"})
 
 
 async def main():
@@ -527,10 +421,6 @@ async def main():
                     "Scaling concurrency %d -> %d (queue depth %d)", target, new_target, depth,
                 )
                 target, last_change = new_target, time.monotonic()
-            if _queue_depth_gauge is not None:
-                _queue_depth_gauge.set(depth)
-                _concurrency_gauge.set(target)
-
 
         while not _stopping and not _breaker_is_open() and len(in_flight) < target:
             try:
