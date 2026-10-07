@@ -16,7 +16,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and graph steps aren't recorded (Langfuse covers agents)
 - **Borderline flagging** — scores from 65–75 are marked **Borderline** because repeat scoring varies about ±3.5 points near the threshold; a lead at 65–70 gets no automatic email, so a **Draft Email** button drafts one on demand from the stored scores without re-scoring
-- **Observability and evaluation** — structured correlated logs, optional OpenTelemetry to Langfuse/Grafana, red-team tests, and a 50-lead evaluation suite
+- **Observability and evaluation** — structured correlated logs, optional OpenTelemetry traces to Langfuse, red-team tests, and a 50-lead evaluation suite
 
 ## Architecture
 
@@ -52,7 +52,7 @@ graph TD
         Tavily["🔍 Tavily web search"]
     end
 
-    OBS["📈 Langfuse + Grafana · traces · metrics · alerts"]
+    OBS["Langfuse · LLM traces"]
 
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
@@ -162,8 +162,6 @@ WORKER_SHUTDOWN_GRACE_S=25
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=
-GRAFANA_OTLP_ENDPOINT=
-GRAFANA_OTLP_AUTH=
 EMAIL_SEND_DAILY_CAP=80
 ```
 
