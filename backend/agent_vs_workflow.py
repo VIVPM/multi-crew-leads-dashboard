@@ -54,7 +54,7 @@ LEAD_INPUT_FIELDS = ("id", "name", "job_title", "company", "email", "use_case",
                      "industry", "location", "source")
 
 
-def _workflow_company_research(llm, tools, system, human, cb=None):
+def _workflow_company_research(llm, tools, system, human):
     """Stand-in for the company agent: code picks the searches, the model only reads.
 
     The two queries are the ones the agent actually wrote across the Langfuse
@@ -65,7 +65,7 @@ def _workflow_company_research(llm, tools, system, human, cb=None):
     structuring _chat call in company_node is still counted.
     """
     if _company_role not in system:
-        return _real_research(llm, tools, system, human, cb)
+        return _real_research(llm, tools, system, human)
 
     search = next(t for t in tools if t.name == "tavily_web_search")
     queries = [

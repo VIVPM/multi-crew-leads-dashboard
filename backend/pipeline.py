@@ -49,7 +49,6 @@ import requests
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
@@ -529,64 +528,6 @@ def _text(content) -> str:
     )
 
 
-class _CallMetrics(BaseCallbackHandler):
-    """Times every model call, including the ones inside a react agent.
-
-    Callbacks propagate down through create_react_agent, so this sees calls
-    _chat never touches. Each finished call appends one record.
-
-    time_to_first_token is only populated when the model streams. Gemini does
-    (see _build_llms); Workers AI deliberately does not, so its records carry
-    None rather than a number invented from a non-streaming call.
-    """
-
-    def __init__(self, sink: list, provider: str):
-        self.sink = sink
-        self.provider = provider
-        self._started: Dict[str, float] = {}
-        self._first_token: Dict[str, float] = {}
-
-    @staticmethod
-    def _key(run_id, **kwargs) -> str:
-        return str(run_id)
-
-    def on_llm_start(self, serialized, prompts, *, run_id=None, **kwargs):
-        self._started[self._key(run_id)] = time.monotonic()
-
-    def on_chat_model_start(self, serialized, messages, *, run_id=None, **kwargs):
-        self._started[self._key(run_id)] = time.monotonic()
-
-    def on_llm_new_token(self, token, *, run_id=None, **kwargs):
-        key = self._key(run_id)
-        self._first_token.setdefault(key, time.monotonic())
-
-    def on_llm_end(self, response, *, run_id=None, **kwargs):
-        key = self._key(run_id)
-        started = self._started.pop(key, None)
-        first = self._first_token.pop(key, None)
-        if started is None:
-            return
-        duration = time.monotonic() - started
-        completion = 0
-        for gen_list in getattr(response, "generations", []) or []:
-            for gen in gen_list:
-                meta = getattr(getattr(gen, "message", None), "usage_metadata", None) or {}
-                completion += meta.get("output_tokens") or 0
-        self.sink.append({
-            "provider": self.provider,
-            "duration_s": duration,
-            "ttft_s": (first - started) if first else None,
-            "completion_tokens": completion,
-
-
-            "tokens_per_s": (completion / duration) if completion and duration > 0 else None,
-        })
-
-    def on_llm_error(self, error, *, run_id=None, **kwargs):
-        self._started.pop(self._key(run_id), None)
-        self._first_token.pop(self._key(run_id), None)
-
-
 def _usage(messages) -> tuple:
     """Sum (prompt, completion) tokens over the AIMessages in `messages`."""
     prompt = completion = 0
@@ -597,7 +538,7 @@ def _usage(messages) -> tuple:
     return prompt, completion
 
 
-def _chat(llm, messages, schema=None, via_prompt=None, cb=None):
+def _chat(llm, messages, schema=None, via_prompt=None):
     """One model call. Returns (text, parsed_or_None, prompt_tokens, completion_tokens).
 
     `via_prompt` says whether structured output has to be coaxed through the
@@ -605,30 +546,29 @@ def _chat(llm, messages, schema=None, via_prompt=None, cb=None):
     setting for the configured provider, and the graph overrides it when it has
     failed over to the other one.
     """
-    cfg = {"callbacks": [cb]} if cb else {}
     if schema is None:
-        reply = llm.invoke(messages, config=cfg)
+        reply = llm.invoke(messages)
         prompt, completion = _usage([reply])
         return _text(reply.content), None, prompt, completion
 
     if STRUCTURED_VIA_PROMPT if via_prompt is None else via_prompt:
         parser = PydanticOutputParser(pydantic_object=schema)
         reply = llm.bind(response_format={"type": "json_object"}).invoke(
-            [*messages, HumanMessage(parser.get_format_instructions())], config=cfg,
+            [*messages, HumanMessage(parser.get_format_instructions())],
         )
         text = _text(reply.content)
         prompt, completion = _usage([reply])
         return text, parser.parse(text), prompt, completion
 
 
-    out = llm.with_structured_output(schema, include_raw=True).invoke(messages, config=cfg)
+    out = llm.with_structured_output(schema, include_raw=True).invoke(messages)
     if out.get("parsing_error"):
         raise RuntimeError(f"{schema.__name__} parse failed: {out['parsing_error']}")
     prompt, completion = _usage([out["raw"]])
     return _text(out["raw"].content), out["parsed"], prompt, completion
 
 
-def _research(llm, tools, system: str, human: str, cb=None):
+def _research(llm, tools, system: str, human: str):
     """Run a tool-using agent to a final answer.
 
     Returns (messages, prompt_tokens, completion_tokens). The whole message list
@@ -636,7 +576,7 @@ def _research(llm, tools, system: str, human: str, cb=None):
     same transcript instead of paying for the research twice.
     """
     agent = create_react_agent(llm, tools, prompt=system)
-    config: dict = {"recursion_limit": TOOL_LOOP_LIMIT, "callbacks": [cb] if cb else []}
+    config = {"recursion_limit": TOOL_LOOP_LIMIT}
     messages = agent.invoke({"messages": [HumanMessage(human)]}, config)["messages"]
     prompt, completion = _usage(messages)
     return messages, prompt, completion
@@ -775,7 +715,6 @@ def build_graph(
     on_stage: Optional[Callable[[str, str], None]] = None,
     agent_times: Optional[Dict[str, float]] = None,
     provider: Optional[str] = None,
-    llm_stats: Optional[list] = None,
 ):
     """Compile the per-lead graph.
 
@@ -786,7 +725,6 @@ def build_graph(
     """
     llm_flash, llm_flash_lite = _build_llms(llm_key, provider)
     via_prompt = (provider or LLM_MODEL) == "CLOUDFLARE"
-    cb = _CallMetrics(llm_stats, provider or LLM_MODEL) if llm_stats is not None else None
 
     tool_cache: dict = {}
     search_tools = [make_tavily_tool(tavily_key, tool_cache), make_scrape_tool(tool_cache)]
@@ -816,11 +754,11 @@ def build_graph(
         inputs = {"lead_data": lead, "our_company_context": state["icp"]}
         messages, p, c = _research(
             llm_flash, search_tools,
-            _system_prompt(agent_cfg, task_cfg), _human_prompt(task_cfg, inputs), cb,
+            _system_prompt(agent_cfg, task_cfg), _human_prompt(task_cfg, inputs),
         )
 
 
-        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult, via_prompt, cb)
+        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult, via_prompt)
 
         dump = parsed.model_dump()
         if cache_set:
@@ -840,7 +778,7 @@ def build_graph(
         messages, p, c = _research(
             llm_flash_lite, search_tools,
             _system_prompt(agent_cfg, task_cfg),
-            _human_prompt(task_cfg, {"lead_data": state["lead"]}), cb,
+            _human_prompt(task_cfg, {"lead_data": state["lead"]}),
         )
         _done("personal_research", ROLE_PERSONAL, started)
         return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c)}
@@ -862,7 +800,6 @@ def build_graph(
             ],
             LeadScoringResult,
             via_prompt,
-            cb,
         )
         _done("scoring", ROLE_SCORING, started)
         pp, pc = state["personal_tokens"]
@@ -878,7 +815,7 @@ def build_graph(
         started = time.time()
         raw, _, p, c = _chat(
             llm_flash, _email_messages(state["scoring"].pydantic.model_dump(), state["icp"]),
-            via_prompt=via_prompt, cb=cb,
+            via_prompt=via_prompt,
         )
         _done("email", ROLE_EMAIL, started)
         return {"email": _StageOutput([ROLE_EMAIL], raw, None, p, c)}
@@ -923,7 +860,6 @@ async def process_leads(
     force_refresh: bool = False,
     max_retries: int = 3,
     on_stage: Optional[Callable[[str, str], None]] = None,
-    llm_stats: Optional[list] = None,
     allow_fallback: bool = True,
 ):
     """
@@ -944,11 +880,6 @@ async def process_leads(
     `cache_get`/`cache_set` are optional storage-backed callables supplied
     by the caller (pipeline.py itself has no Supabase dependency); omit them
     to disable company-research caching entirely.
-
-    `llm_stats`, if given, is appended to with one record per model call —
-    duration, tokens/second, and time-to-first-token where the provider
-    streams. Kept as a plain list so pipeline.py owes nothing to OpenTelemetry;
-    worker.py turns the records into metrics.
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
@@ -957,7 +888,7 @@ async def process_leads(
     provider = LLM_MODEL
     graph = build_graph(
         llm_key, tavily_key, cache_get, cache_set, force_refresh, on_stage, agent_times,
-        provider, llm_stats,
+        provider,
     )
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
 
@@ -991,7 +922,7 @@ async def process_leads(
                                    LLM_MODEL, provider)
                     graph = build_graph(
                         fallback_key, tavily_key, cache_get, cache_set, force_refresh,
-                        on_stage, agent_times, provider, llm_stats,
+                        on_stage, agent_times, provider,
                     )
                 else:
                     logger.warning("LLM_FALLBACK_MODEL=%s but its API key is unset; "

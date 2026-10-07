@@ -73,11 +73,11 @@ class _FakeMessage:
         self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
 
 
-def _fake_research(llm, tools, system, human, cb=None):
+def _fake_research(llm, tools, system, human):
     return [_FakeMessage("research findings")], 100, 20
 
 
-def _fake_chat(llm, messages, schema=None, via_prompt=None, cb=None):
+def _fake_chat(llm, messages, schema=None, via_prompt=None):
     if schema is CompanyResearchResult:
         parsed = CompanyResearchResult(
             company_info={
