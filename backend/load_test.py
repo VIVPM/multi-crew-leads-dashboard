@@ -143,8 +143,7 @@ def spawn_workers(n: int, lead_seconds: float, max_concurrent: int, stagger: flo
     env["MAX_CONCURRENT_JOBS"] = str(max_concurrent)
 
 
-    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-              "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         env.pop(k, None)
 
     procs = []
