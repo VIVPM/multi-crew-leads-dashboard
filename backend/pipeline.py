@@ -67,7 +67,7 @@ class LeadPersonalInfo(BaseModel):
 class CompanyInfo(BaseModel):
     company_name: str
     industry: str
-    company_size: int
+    company_size: Optional[int] = None
     revenue: Optional[float] = None
     market_presence: int
     company_location: Optional[str] = None
