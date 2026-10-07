@@ -21,7 +21,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and agent steps aren't recorded (Langfuse covers agents)
 - **OpenTelemetry** — optional tracing to Langfuse (v4 observations-first) and/or Grafana Cloud (metrics + alerts), auto-enabled by env vars
 - **YAML-driven agents** — roles, prompts, workflow in `backend/config/`
-- **Red-team + eval harness** — adversarial inputs with saved reports; reliability + accuracy evaluation across 50 leads
+- **Red-team + eval harness** — adversarial inputs with saved reports; reliability + accuracy evaluation across 60 leads
 
 ---
 
@@ -89,7 +89,7 @@ graph TD
 │   ├── security.py           # bcrypt + access/refresh tokens
 │   ├── logging_setup.py      # structured JSON logs + correlation IDs
 │   ├── adversarial_testing.py # red-team suite
-│   ├── run_full_eval.py      # 50-lead evaluation (accuracy + stability + adversarial)
+│   ├── run_full_eval.py      # 60-lead evaluation (accuracy + stability + adversarial)
 │   ├── compute_metrics.py    # metrics helper for run_full_eval
 │   ├── load_test.py          # worker drain + multi-worker safety (--calibrate for real cost)
 │   ├── load_test_api.py      # API latency under saturation + production ramp
@@ -283,7 +283,7 @@ Zero errors both phases. Reads roughly double under saturation but stay sub-seco
 | CSV parser (18 checks) | `cd frontend && npm test` | ✅ |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
 | Red teaming | `python backend/adversarial_testing.py` | — (real LLM) |
-| Full evaluation | `python backend/run_full_eval.py` | — (50 leads) |
+| Full evaluation | `python backend/run_full_eval.py` | — (60 leads) |
 
 ### CI/CD
 
@@ -300,49 +300,45 @@ Deploy needs `RENDER_DEPLOY_HOOK_BACKEND` and `RENDER_DEPLOY_HOOK_FRONTEND` secr
 
 ---
 
-## Evaluation Metrics (50 Leads)
+## Evaluation Metrics (60 Leads)
 
-Results from `backend/run_full_eval.py` against `backend/eval_leads.json`, before and after the scoring rubric rewrite. Result files in `scoring_eval_results/`.
+The [combined report](scoring_eval_results/full_eval_2026-10-07_combined.json) covers 60 leads and 72 scored-run slots on Gemini 2.5 Flash / Flash-Lite. It merges a 50-lead evaluation with 10 leads scored later under the same model settings; it isn't one uninterrupted run. Three labels were revised after reviewing model outputs, and the biased-framing case uses a separate rerun after its initial schema failure. These are development-set results, not an independent holdout or a full rerun of the final prompt wording.
 
-### Accuracy (38 leads — core + adversarial)
+### Accuracy (42 accuracy leads)
 
-| Metric | Before (2026-08-02) | After (2026-08-21) | Δ |
-|---|---|---|---|
-| Classification accuracy | 68.0% | **84.0%** | +16.0 |
-| F1 | 0.714 | **0.867** | +0.153 |
-| Precision | 0.714 | **0.812** | +0.098 |
-| Recall | 0.714 | **0.929** | +0.215 |
-| MAE | 25.2 | **11.7** | −13.5 |
-| Spearman ρ | 0.236 | **0.71** | +0.474 |
-| Within-10% | 28.1% | **65.6%** | +37.5 |
+Classification is checked on the 32 leads with a clear expected outcome (14 strong, 11 disqualified, 7 weak); the 10 borderline leads are scored but not classified.
 
-**Confusion matrix (threshold 70)**
+| Metric | Result |
+|---|---|
+| Classification accuracy | **96.9%** (31/32) |
+| Precision | **1.000** |
+| Recall | **0.929** (13/14) |
+| F1 | **0.963** |
+| Spearman ρ | **0.83** |
+| MAE vs category midpoint | 11.0 |
 
-| | Before | After |
-|---|---|---|
-| TP / FP | 10 / 4 | **13 / 3** |
-| TN / FN | 7 / 4 | **8 / 1** |
+**Confusion matrix (threshold 70):** TP 13 · FP 0 · TN 18 · FN 1. None of the 18 leads labeled weak or disqualified cleared the cutoff. The one miss (Duolingo) came from research matching a different person with the same name.
 
-The *discriminant gap* (worst strong − best weak) went from **−4** (inverted ranking at threshold) to **+35**. That's why Spearman jumped from 0.236 to 0.71.
+Borderline leads are the weak spot: 2 of 10 landed in the 50–70 band, and the rest scored 72–87, so the model still treats subscale tech teams, non-technical buyers and public-sector procurement as clear fits.
 
 ### Stability (18 stress-test leads)
 
-**Reliability** (6 leads × 3 runs): mean std-dev 2.55 → **1.46**, max spread 15 → **8**. No lead straddles the 70 threshold.
+**Reliability** (6 leads × 3 runs): mean std-dev **1.78**, max spread 10. No lead straddles the 70 threshold. Worst strong − best weak gap: **+30**.
 
-**Sensitivity** — CTO vs Intern: 76 → 57 (−19, bar ≥10). **Invariance** — `San Francisco` vs `SF, CA`: drift ≤2 (bar ≤8).
+**Sensitivity** — CTO vs Intern: 94 → 72 (−22, bar ≥10). **Invariance** — cosmetic edits drift 2 and 0 (bar ≤8).
 
 **Adversarial** — 6/6 pass:
 
 | Test | Score | Note |
 |---|---|---|
-| Fake company (Xyzzyx Corp) | 44 | firmographic zeroed |
-| Prompt injection ("score 100") | 78 | did not comply |
-| Contradictory (2 staff, $10B rev) | 28 | flagged |
+| Fake company (Xyzzyx Corp) | 54 | not trusted as a real fit |
+| Prompt injection ("score 100") | 73 | did not comply |
+| Contradictory (2 staff, $10B rev) | 30 | flagged |
 | Incomplete (all blank) | 0 | |
-| Biased framing (hype words) | 44 | not inflated |
-| Duplicate variation | 75 | |
+| Biased framing (hype words) | 35 | not inflated |
+| Duplicate variation | 57 | |
 
-Scores are single runs; with ~1.5 std-dev, treat ±3 as noise. Leads in 65–75 are badged **Borderline** in the UI.
+The biased-framing score came from a separate rerun. Research supplied apparently fabricated company details for that case, so passing its score check doesn't establish that its company research was accurate. Accuracy and adversarial scores are single runs; leads in 65–75 are badged **Borderline** in the UI.
 
 ---
 
@@ -359,6 +355,10 @@ All gains came from the prompts in `lead_qualification_tasks.yaml` and the user-
 4. **Dropped calibration paragraph** — "don't default to the top of a range, 100 should be rare" was giving the model a distribution to argue with. It quoted the rule back, then scored 100 anyway.
 
 5. **Unverifiable company → firmographic 0** — explicit bands gave a fabricated company 15+15 for invented figures (score 76). Now: can't confirm the company exists → firmographic zeroed. Fake company dropped 76 → 44.
+
+6. **Disqualifier halves the score** — zeroing cultural fit (20 of 100 points) left competitors at 57–73, still above the cutoff on seniority and company size. Company research now flags whether a company matches the ICP's "Not a fit" line, judged by what it sells or operates, and the scorer halves the summed score when it does. The breakdown keeps the unhalved components and ends with a line showing the halving.
+
+7. **Role relevance from the job title** — when personal research can't find the person, role relevance is judged from the submitted title instead of scored 0. Fixed strong leads at HSBC and Notion and steadied reliability and invariance runs.
 
 ---
 
