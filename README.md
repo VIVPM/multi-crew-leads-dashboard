@@ -24,44 +24,44 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 graph TD
     User(["👤 Sales rep"])
 
-    subgraph CLIENT ["1 · Client — React / Vite"]
-        UI["📋 Dashboard · add · edit · search · export · CSV"]
+    subgraph CLIENT ["1 · Client layer — React / Vite"]
+        UI["📋 Leads dashboard<br>add · edit · search · export · bulk CSV"]
         ICP["📝 Company profile / ICP"]
     end
 
-    subgraph APP ["2 · API — FastAPI"]
-        Auth["🔐 Auth · access/refresh · rate limits"]
+    subgraph APP ["2 · Application layer — FastAPI"]
+        Auth["🔐 Auth · bcrypt · access/refresh tokens · rate-limit"]
         REST["🗂️ Lead CRUD · POST /leads/process → 202 · GET /jobs/:id"]
     end
 
-    subgraph CTRL ["3 · Worker"]
-        Claim["claim jobs · race-safe · concurrent · company cache"]
+    subgraph CTRL ["3 · Control layer — worker.py"]
+        Claim["claims pending jobs · race-safe · concurrent<br>owns the company-research cache"]
     end
 
-    subgraph AI ["4 · LangGraph — four nodes"]
-        A2["🏢 Company Research + Cultural Fit"] --> A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
-        A3 -->|score > 70| E1["✍️ Email Specialist"]
+    subgraph AI ["4 · Reasoning layer — LangGraph · 4 nodes"]
+        A2["🏢 Company Research + Cultural Fit"] --> A1["🔎 Personal Research"] --> A3["🏆 Score &amp; Validate"]
+        A3 -->|score &gt; 70| E1["✍️ Email Specialist"]
     end
 
-    subgraph DATA ["5 · Supabase / Postgres"]
-        Tbls[("users · leads · jobs · analysis_runs<br>company_research_cache · refresh_tokens · login_failures")]
+    subgraph DATA ["5 · Data layer — Supabase / Postgres"]
+        Tbls[("users · leads · jobs · analysis_runs · audit_events<br>company_research_cache · refresh_tokens · login_failures")]
     end
 
-    subgraph EXT ["6 · External AI"]
+    subgraph EXT ["6 · External services layer — AI + search"]
         LLM["☁️ Gemini 3 Flash Preview or Workers AI"]
         Tavily["🔍 Tavily web search"]
     end
 
-    OBS["Langfuse · LLM traces"]
+    OBS["📈 Observability layer · cross-cutting<br>Langfuse · LLM traces"]
 
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
-    APP --> DATA
-    APP -->|enqueue| CTRL
-    CTRL -->|invoke per lead| AI
-    AI --> EXT
-    CTRL --> DATA
-    CTRL -.-> OBS
+    APP -->|auth · CRUD · job status · audit| DATA
+    APP -->|enqueue job| CTRL
+    CTRL -->|invoke graph per lead| AI
+    AI -->|research + reasoning| EXT
+    CTRL -->|read cache · write results| DATA
+    CTRL -.->|traces| OBS
 ```
 
 The graph is compiled once per batch and invoked once per lead:
