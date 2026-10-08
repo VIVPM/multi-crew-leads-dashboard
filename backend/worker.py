@@ -38,9 +38,8 @@ logger = logging.getLogger("worker")
 
 
 _have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
-_have_grafana = bool(os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"))
 
-if _have_langfuse or _have_grafana:
+if _have_langfuse:
     try:
         import base64
         from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
@@ -65,63 +64,24 @@ if _have_langfuse or _have_grafana:
                         span.set_attribute(f"langfuse.observation.metadata.{key}", value)
 
         _tracer_provider.add_span_processor(_CorrelationSpanProcessor())
-        _enabled = []
-
-        if _have_langfuse:
-            _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-            _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
-            _auth = base64.b64encode(_creds.encode()).decode()
-            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-
-
-                headers={
-                    "Authorization": f"Basic {_auth}",
-                    "x-langfuse-ingestion-version": "4",
-                },
-            )))
-            _enabled.append(f"Langfuse ({_lf_host})")
-
-        if _have_grafana:
-            _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/traces",
-                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
-            )))
-            _enabled.append("Grafana Cloud")
+        _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+        _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
+        _auth = base64.b64encode(_creds.encode()).decode()
+        _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+            endpoint=f"{_lf_host}/api/public/otel/v1/traces",
+            headers={
+                "Authorization": f"Basic {_auth}",
+                "x-langfuse-ingestion-version": "4",
+            },
+        )))
 
         CrewAIInstrumentor().instrument(tracer_provider=_tracer_provider)
         LiteLLMInstrumentor().instrument(tracer_provider=_tracer_provider)
-        logger.info("LLM tracing enabled via OTLP: %s", ", ".join(_enabled))
+        logger.info("LLM tracing enabled via OTLP: Langfuse (%s)", _lf_host)
     except Exception:
         logger.exception("Failed to initialize LLM tracing (non-fatal)")
 else:
-    logger.info("No tracing backend configured (Langfuse/Grafana) — LLM tracing disabled")
-
-
-_jobs_processed_counter = None
-if _have_grafana:
-    try:
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-        _metric_reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(
-                endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/metrics",
-                headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
-            ),
-            export_interval_millis=15000,
-        )
-        _meter_provider = MeterProvider(
-            resource=Resource.create({"service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend")}),
-            metric_readers=[_metric_reader],
-        )
-        _jobs_processed_counter = _meter_provider.get_meter("worker").create_counter(
-            "jobs_processed_total", description="Jobs finished, by status (done/failed)",
-        )
-        logger.info("Job metrics enabled via OTLP (Grafana Cloud)")
-    except Exception:
-        logger.exception("Failed to initialize job metrics (non-fatal)")
+    logger.info("No Langfuse keys configured — LLM tracing disabled")
 
 
 try:
@@ -305,13 +265,9 @@ async def process_one_job(job: dict) -> None:
             results = await run_job(job)
             finish_job(job["id"], status="done", results=results)
             logger.info("Job done")
-            if _jobs_processed_counter:
-                _jobs_processed_counter.add(1, {"status": "done"})
         except Exception as exc:
             logger.exception("Job failed")
             finish_job(job["id"], status="failed", error=str(exc)[:500])
-            if _jobs_processed_counter:
-                _jobs_processed_counter.add(1, {"status": "failed"})
 
 
 async def main():

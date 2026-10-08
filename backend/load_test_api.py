@@ -453,8 +453,7 @@ def main() -> None:
     else:
         base = f"http://127.0.0.1:{args.port}"
         env = dict(os.environ)
-        for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-                  "GRAFANA_OTLP_ENDPOINT", "GRAFANA_OTLP_AUTH"):
+        for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
             env.pop(k, None)
         cmd = [sys.executable, os.path.abspath(__file__), "--serve",
                "--port", str(args.port), "--lead-seconds", str(args.lead_seconds)]
