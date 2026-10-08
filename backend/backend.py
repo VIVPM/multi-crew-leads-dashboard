@@ -183,35 +183,6 @@ async def _init_async_supabase():
     )
 
 
-if os.getenv("GRAFANA_OTLP_ENDPOINT") and os.getenv("GRAFANA_OTLP_AUTH"):
-    try:
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        _http_tracer_provider = TracerProvider(resource=Resource.create({
-            "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
-            "service.namespace": "lead-coordinator",
-            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
-        }))
-        _http_tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-            endpoint=f"{os.environ['GRAFANA_OTLP_ENDPOINT'].rstrip('/')}/v1/traces",
-            headers={"Authorization": os.environ["GRAFANA_OTLP_AUTH"]},
-        )))
-        FastAPIInstrumentor.instrument_app(app, tracer_provider=_http_tracer_provider)
-        logger.info("HTTP-layer tracing enabled via OTLP (Grafana Cloud)")
-    except ImportError:
-        logger.info(
-            "HTTP-layer tracing skipped: opentelemetry-instrumentation-fastapi "
-            "not installed (expected — it conflicts with crewai's otel pins). "
-            "CrewAI/LLM tracing in worker.py is unaffected."
-        )
-    except Exception:
-        logger.exception("Failed to initialize HTTP tracing (non-fatal)")
-
-
 _AUDITED_ROUTES = {
     ("POST", "/auth/signup"): ("auth.signup", "user"),
     ("POST", "/auth/login"): ("auth.login", "user"),
