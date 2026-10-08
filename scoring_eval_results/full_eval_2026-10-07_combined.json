@@ -1,0 +1,917 @@
+{
+  "timestamp": "2026-10-07T20:39:55.754818",
+  "base_report": "full_eval_2026-10-07_20-39-55.json",
+  "added_leads": [
+    "acc_33",
+    "acc_34",
+    "acc_35",
+    "acc_36",
+    "acc_37",
+    "acc_38",
+    "acc_39",
+    "acc_40",
+    "acc_41",
+    "acc_42"
+  ],
+  "note": "Base run plus newly added leads scored with the same models; labels from current eval_leads.json.",
+  "all_results": [
+    {
+      "id": "acc_01",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Martin Rees",
+      "company": "LangChain",
+      "score": 39,
+      "notes": "All data points appear consistent between the personal research, company research, and raw lead submission, with careful distinction between personal and company locations. The 'Disqualifier: yes' noted in cultural fit has been applied to halve the total score.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_02",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Ana Duarte",
+      "company": "UiPath",
+      "score": 43,
+      "notes": "Personal location in raw lead submission (Bucharest, Romania) conflicts with provided personal information report (Greater Brisbane Area); using Greater Brisbane Area for personal_info.location.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_03",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Kevin Lo",
+      "company": "Microsoft",
+      "score": 38,
+      "notes": "All personal and company information aligns with research. The company's significant investment in developing its own AI platforms, including agent-based solutions and orchestration frameworks, suggests a high likelihood of building rather than buying core agent orchestration layers, as noted in the cultural fit section.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_04",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Rebecca Nolan",
+      "company": "Salesforce",
+      "score": 45,
+      "notes": "All personal and company details are consistent between the raw lead submission and aggregated research. The cultural fit notes indicate a disqualifier due to Salesforce's development of a directly competing agent orchestration platform, which appropriately halved the total lead score.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_05",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Tobias Frank",
+      "company": "n8n",
+      "score": 42,
+      "notes": "Unable to find a LinkedIn profile for Tobias Frank that directly matches the provided information. n8n's core offering directly competes with CrewAI's product, serving as an orchestration layer to build rather than buy, which triggered the disqualifier.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_06",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Grace Whitfield",
+      "company": "Sierra AI",
+      "score": 41,
+      "notes": "Personal information for Grace Whitfield (professional background, years of experience, and LinkedIn URL) could not be found or verified, indicating incomplete data. Company information is consistent across sources. The lead's location 'San Francisco, USA' matches 'San Francisco, California, United States'. The 'Disqualifier: yes' flag applied a penalty, halving the final score.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_07",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Helena Vos",
+      "company": "Notion",
+      "score": 91,
+      "notes": "All provided data is consistent with research. Industry from lead submission ('Technology & Software') adjusted to 'Information Technology Services' for specificity from company research. Professional background, years of experience, and LinkedIn URL were not found during research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_08",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Ryan Gallagher",
+      "company": "Canva",
+      "score": 36,
+      "notes": "Canva has acquired Simtheory, an 'agentic AI collaboration platform,' which directly competes with CrewAI's product offering. This makes Canva a disqualified lead despite strong demographic and firmographic fit.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_09",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Sofia Almeida",
+      "company": "Duolingo",
+      "score": 42,
+      "notes": "The personal background and LinkedIn URL provided for 'Sofia Almeida' describe an Associate Professor in Tourism, which directly contradicts her stated 'VP of Engineering' role at Duolingo. The LinkedIn URL is explicitly noted as a placeholder for a different field. This indicates a significant data error in the personal information, suggesting the individual's professional history is misrepresented or the wrong person has been identified.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_10",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Daniel Krause",
+      "company": "Figma",
+      "score": 85,
+      "notes": "All aggregated data is consistent with the raw lead submission and provided research. No discrepancies or implausible claims found. Years of experience interpreted as 10 from 'Over 10 years'.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_11",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Aisha Rahman",
+      "company": "Spotify",
+      "score": 89,
+      "notes": "LinkedIn URL, professional background, and years of experience were not provided in the input. The role relevance score was judged based on the job title and use case as per scoring instructions, due to the absence of this specific score in the provided personal research context.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_12",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Priya Raghavan",
+      "company": "JPMorgan Chase",
+      "score": 43,
+      "notes": "Research indicates JPMorgan Chase has publicly built its own internal AI platform, matching the disqualifier criteria of companies that 'have publicly built their own internal agent platform \b\u2013 they build rather than buy.' Therefore, the final score has been halved.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_13",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Oliver Bennett",
+      "company": "HSBC",
+      "score": 89,
+      "notes": "All data points are consistent between raw lead submission and research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_14",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Lars Pedersen",
+      "company": "Maersk",
+      "score": 89,
+      "notes": "I found a LinkedIn profile for Lars Pedersen that lists him as CTO at Frontline Management / MD Flex LNG Fleet Management with over 31 years of experience. However, the provided lead data specifies his role as VP Digital Operations at Maersk. There seems to be a discrepancy in the job titles and companies. Given the information, I proceeded with the provided job title for scoring and noted the potential mismatch.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_15",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Meera Nair",
+      "company": "DHL Supply Chain",
+      "score": 87,
+      "notes": "The primary discrepancy is regarding the lead's job title. The personal research within the provided context explicitly states 'Assistant Manager, Operations' for Meera Nair at DHL Supply Chain. However, the raw lead submission and the company's cultural fit notes refer to her as 'Director of Automation'. For scoring purposes, the explicit 'Assistant Manager, Operations' from the personal info context was used, which affects the seniority score. All other aggregated data points are consistent.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_16",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Jason Whitmore",
+      "company": "Target",
+      "score": 81,
+      "notes": "The submitted job title 'Director of Supply Chain Engineering' differs from the LinkedIn profile's 'Project Manager III'. The scoring components (role relevance, seniority) are calculated based on the submitted job title, acknowledging the background discrepancy in the personal research notes.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_17",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Emeka Obi",
+      "company": "Vodafone",
+      "score": 91,
+      "notes": "The professional background of the lead (creative strategy, marketing, brand leadership) contradicts the job title 'Head of Network Automation' and the stated role relevance of 9. While the role relevance score was calculated based on the provided value of 9, this discrepancy warrants further investigation as it may indicate an issue with the lead's provided information or the initial personal research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_18",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Klaus Berger",
+      "company": "Siemens",
+      "score": 91,
+      "notes": "All aggregated data consistent with raw lead submission. Role relevance and engagement signal were inferred based on job title and source respectively, as no external research results were provided for these specific personal details. No contradictions or implausible claims found.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_19",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Laura Simmons",
+      "company": "Cleveland Clinic",
+      "score": 87,
+      "notes": "All submitted lead data (name, job title, company, use case, industry, location) aligns with the research provided. The LinkedIn profile found for Laura Simmons at Cleveland Clinic did not perfectly match the 'Director of Clinical Systems' job title, indicating a potential discrepancy or an unverified role. However, the provided job title and company are taken as given for scoring purposes.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_20",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Nathan Cole",
+      "company": "Workday",
+      "score": 43,
+      "notes": "Personal information (Years of Experience, LinkedIn URL) for this specific individual could not be fully verified, however, the job title and company are consistent with the raw lead submission and company research. The 'Role Relevance' was assessed based on the provided job title and context. The company information is consistent and verifiable. The disqualifier for cultural fit is clearly noted due to Workday's development of competing 'agentic capabilities'.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_21",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Ingrid Halvorsen",
+      "company": "Shell",
+      "score": 91,
+      "notes": "Personal information for professional background, years of experience, and LinkedIn URL could not be verified and are marked as null, consistent with provided context. Company information aligns with publicly available data for Shell plc. The lead's location (The Hague, Netherlands) is distinct from the company's official headquarters (London, UK), which is typical for a global organization and does not represent a contradiction.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_22",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Chloe Barrett",
+      "company": "Target",
+      "score": 83,
+      "notes": "The personal info location (United Kingdom) contradicts the raw lead submission location (Minneapolis, USA); the detailed personal research's location is used for personal_info. The company information from the research is consistent with the raw lead's company and industry details.",
+      "cache_hit": true
+    },
+    {
+      "id": "acc_23",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Vikram Sethi",
+      "company": "Freshworks",
+      "score": 37,
+      "notes": "All provided information is consistent and verifiable. The company's product strategy to build its own agent orchestration platform acts as a significant disqualifier for our ICP, leading to a halved final score.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_24",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Tom Whitaker",
+      "company": "Nordwind Labs",
+      "score": 74,
+      "notes": "The LinkedIn URL provided in the personal research appears to belong to a different individual, a Procurement Specialist, which contradicts the stated job title of Chief Technology Officer. The company location provided by the lead (Tallinn, Estonia) differs from the company research (L\u00fcbeck, Germany); company research location is used for company_info. All other data points are consistent between the raw lead submission and the research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_25",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Rosa Iglesias",
+      "company": "Meridian Digital Agency",
+      "score": 58,
+      "notes": "Company name 'Meridian Digital Agency' from raw submission is shortened to 'Meridian Digital' based on research. Revenue and Founding Year were not provided in company research (stated as 'None'). Company size is an estimate as noted in cultural fit. Personal info fields 'professional_background', 'years_experience', and 'linkedin_url' were not available in the provided context and are set to default values.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_26",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Alan Whitcombe",
+      "company": "University of Leeds",
+      "score": 82,
+      "notes": "The provided professional background for Alan Whitcombe indicates a marketing career, which contrasts with his current job title of 'Systems Manager'. This discrepancy was noted.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_27",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Denise Okafor",
+      "company": "Grange Mutual Insurance",
+      "score": 64,
+      "notes": "The raw lead submission lists the company as \"Grange Mutual Insurance\" and the industry as \"Finance & Banking\", while company research provides \"Grange Insurance\" and \"Insurance\". The company research details (Grange Insurance, Industry: Insurance, Revenue $1.59B, 1556 employees, founding 1935, www.grangeinsurance.com) are used for scoring as they appear more thoroughly researched and consistent with external records of Grange Insurance. The slight name difference \"Grange Mutual Insurance\" vs \"Grange Insurance\" is considered a minor variance for the same entity given the matching location and industry context provided by the research. \"Business Analyst investigating AI\" from cultural fit notes supports the provided use case.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_28",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Marcus Webb",
+      "company": "Webb & Sons Plumbing, LLC",
+      "score": 44,
+      "notes": "The lead's industry was specified as 'Other' in the raw submission but clarified as 'Plumbing/Contracting' by company research. Personal location 'Dayton, USA' is used for Marcus Webb, while 'Greenfield, OH' is confirmed for the company. The use case 'Wants cheaper invoicing software' indicates a basic automation need not directly aligned with CrewAI's multi-agent orchestration, contributing to a low behavioral score.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_29",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Elena Petrova",
+      "company": "Cornerstone Bakery",
+      "score": 40,
+      "notes": "Personal location (Portland, USA) differs from company location (Greensburg, IN, USA). Company industry from research ('Bakery') is more specific than lead submission ('Other'). Company name from research ('Cornerstone Bakery LLC') is slightly more formal than lead submission ('Cornerstone Bakery'). Overall, the company is a weak fit for CrewAI's platform given its small scale and lack of technical infrastructure, as highlighted by the cultural fit notes.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_30",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Paul Hendricks",
+      "company": "Hendricks Photography Studio",
+      "score": 52,
+      "notes": "Personal research confirmed Paul Hendricks' job title and location. Company research indicates a very small, single-owner photography business with limited operational scale and technical capacity. While website, company location, and founding year were not found, the cultural fit notes provided enough detail to confirm the company's existence as a small entity. No direct LinkedIn URL or years of experience were found for Paul Hendricks.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_31",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Nadia Haddad",
+      "company": "Brightsmile Family Dental",
+      "score": 43,
+      "notes": "Personal location (Leicester, UK) from raw lead differs from company location (Croydon, England) in company research. Other personal details (professional background, years of experience, LinkedIn URL) were not available for aggregation.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_32",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Gopal Menon",
+      "company": "Menon Hardware Stores",
+      "score": 44,
+      "notes": "All provided data aligns with the scoring criteria. The company 'Menon Hardware Stores' is identifiable as a small, local retail business despite lacking a public website or founding year, therefore firmographic points for size and market presence are applied. The 'Other' source with a stated use case is scored as 'inbound with a stated use case'.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_01",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Sunil Kamath",
+      "company": "ICICI Bank",
+      "score": 89,
+      "notes": "All provided lead data and research findings are consistent. No contradictions or implausible claims were found. Missing years of experience and LinkedIn URL are noted but do not impact current scoring. Revenue for the company was indicated as 'None' in the research, so 0.0 has been used.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_01",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Sunil Kamath",
+      "company": "ICICI Bank",
+      "score": 89,
+      "notes": "All provided data is consistent with the research. Personal information fields noted as 'Information not available' and company revenue as 'None' have been correctly interpreted for scoring.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_01",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Sunil Kamath",
+      "company": "ICICI Bank",
+      "score": 87,
+      "notes": "All personal and company information aligns with submitted lead data and research. No discrepancies found.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_02",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Anjali Deshmukh",
+      "company": "Delhivery",
+      "score": 88,
+      "notes": "No inconsistencies found between the raw lead submission, personal research, and company research. All data is plausible and consistent.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_02",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Anjali Deshmukh",
+      "company": "Delhivery",
+      "score": 88,
+      "notes": "None. Personal and company information are consistent and verifiable. Years of experience from personal research converted to integer. Revenue from company research marked as 'None' set to 0 as it's a numeric type.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_02",
+      "group": "reliability",
+      "expect": "strong",
+      "name": "Anjali Deshmukh",
+      "company": "Delhivery",
+      "score": 86,
+      "notes": "The raw lead submission for location \"Gurugram, India\" is consistent with the company research location \"Gurgaon, Haryana, India\". All other provided information appears consistent and verifiable.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_03",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Jordan Ellis",
+      "company": "Zalando",
+      "score": 83,
+      "notes": "Personal information for professional background, years of experience, and LinkedIn URL could not be determined from the available data. However, the lead's location was inferred from the consistent company location and raw lead submission. All other company and lead specific data points are consistent with the provided research.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_03",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Jordan Ellis",
+      "company": "Zalando",
+      "score": 87,
+      "notes": "All aggregated data from personal and company research is consistent with the raw lead submission. No discrepancies found.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_03",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Jordan Ellis",
+      "company": "Zalando",
+      "score": 85,
+      "notes": "The LinkedIn URL provided in the personal information report is flagged as potentially incorrect, matching a different Jordan Ellis at Hilton Foods. All other aggregated data from the raw lead submission and research are consistent.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_04",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Riley Chen",
+      "company": "Cigna",
+      "score": 77,
+      "notes": "The provided LinkedIn URL's profile title ('Strategic Operations Leader | Chief of Staff') does not align with the lead's stated job title ('Business Analyst'). The score is based on the provided job title and role relevance from the prompt context. All other company and personal information used for scoring appears consistent and verifiable.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_04",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Riley Chen",
+      "company": "Cigna",
+      "score": 77,
+      "notes": "Personal information for Riley Chen, specifically professional background, years of experience, and LinkedIn URL, could not be definitively identified or were null in the provided context. For 'years_experience', 'Null' was interpreted as 0 for scoring purposes. However, the existing data (name, job title, location, company) is consistent with the company research. No contradictions or implausible claims were found. The 'use_case' provided in the raw submission is directly used for scoring and is not an instruction.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_04",
+      "group": "reliability",
+      "expect": "borderline",
+      "name": "Riley Chen",
+      "company": "Cigna",
+      "score": 77,
+      "notes": "Professional background and years of experience for Riley Chen could not be definitively verified for the Business Analyst role at Cigna based on the provided search results. The LinkedIn URL was a potential match but not confirmed for this specific individual at Cigna.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_05",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Carla Jimenez",
+      "company": "Belle Vue Hair Salon",
+      "score": 48,
+      "notes": "All provided data is consistent with the lead submission and company research. The company's small size and low-tech operational surface are clearly documented in the cultural fit notes.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_05",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Carla Jimenez",
+      "company": "Belle Vue Hair Salon",
+      "score": 46,
+      "notes": "The lead information is consistent across raw submission and research. The company, Belle Vue Hair Salon, is very small with minimal operational scale and technical capacity, making it a weak fit for a multi-agent orchestration platform. The stated use case of 'online booking reminders' can be handled by simpler solutions, not requiring AI agent orchestration.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_05",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Carla Jimenez",
+      "company": "Belle Vue Hair Salon",
+      "score": 38,
+      "notes": "Personal information and company details are consistent with the raw lead submission and research. The location discrepancy between personal info (Seville) and salon location (Barcelona in context) is noted, but the direct company research provided 'Company Location: Seville, Spain' has been used for consistency. The cultural fit notes explicitly detail why this company is a poor fit for a multi-agent orchestration platform, reinforcing the low behavioral score. Years of experience, LinkedIn URL, revenue, founding year, and website were not provided in the research and are marked as null/0.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_06",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Brian Kelleher",
+      "company": "Kelleher Accounting Services",
+      "score": 50,
+      "notes": "The company information aligns with the lead submission. Personal background details were limited due to content redaction. The company is a very small, likely sole proprietorship, which significantly impacts its firmographic and cultural fit scores.",
+      "cache_hit": false
+    },
+    {
+      "id": "rel_06",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Brian Kelleher",
+      "company": "Kelleher Accounting Services",
+      "score": 50,
+      "notes": "Lead information is consistent across all sources. Kelleher Accounting Services is a very small, likely sole proprietorship, which impacts firmographic and cultural fit scores due to limited operational scale and technical capacity. Revenue and Founding Year were indicated as 'None' in research, defaulting to 0 for numerical fields and empty string for website.",
+      "cache_hit": true
+    },
+    {
+      "id": "rel_06",
+      "group": "reliability",
+      "expect": "weak",
+      "name": "Brian Kelleher",
+      "company": "Kelleher Accounting Services",
+      "score": 56,
+      "notes": "Personal information fields 'professional_background', 'years_experience', and 'linkedin_url' are based on inference and placeholder values due to the absence of an explicit web search result. The company 'Kelleher Accounting Services' appears to be a very small, likely sole proprietorship, with no public website or detailed company information, which is consistent with the provided company size and market presence. This does not contradict its existence. The 'Referral' source was interpreted as 'inbound with a stated use case' for scoring.",
+      "cache_hit": true
+    },
+    {
+      "id": "sens_senior",
+      "group": "sensitivity",
+      "expect": "strong",
+      "name": "Jordan Ellis",
+      "company": "Zalando",
+      "score": 94,
+      "notes": "Personal research indicates that no Jordan Ellis is listed as Chief Technology Officer at Zalando. A Jordan Ellis matching the professional background description was found as a CTO of a blockchain startup, not Zalando. The lead's claim of being CTO at Zalando contradicts external verification. The scores reflect the potential if this lead were genuinely a CTO at Zalando with the stated use case, but the fundamental connection between the person and company is invalid.",
+      "cache_hit": true
+    },
+    {
+      "id": "sens_junior",
+      "group": "sensitivity",
+      "expect": "weak",
+      "name": "Jordan Ellis",
+      "company": "Zalando",
+      "score": 72,
+      "notes": "All provided data is consistent. The lead's job title 'Summer Intern' correctly reflects low seniority and role relevance for direct purchasing decisions. Professional background and specific LinkedIn URL could not be definitively matched for this individual.",
+      "cache_hit": true
+    },
+    {
+      "id": "inv_base_01",
+      "group": "invariance",
+      "expect": "strong",
+      "name": "Fiona Brady",
+      "company": "Tesco",
+      "score": 89,
+      "notes": "All data points are consistent across raw lead submission, personal research, and company research. The company Tesco plc is verifiable and fits the ideal customer profile. The lead's role and stated use case are highly relevant.",
+      "cache_hit": false
+    },
+    {
+      "id": "inv_var_01",
+      "group": "invariance",
+      "expect": "strong",
+      "name": "  fiona brady ",
+      "company": "tesco ",
+      "score": 87,
+      "notes": "All submitted data is consistent with research findings. Personal and company information are verifiable.",
+      "cache_hit": true
+    },
+    {
+      "id": "inv_base_02",
+      "group": "invariance",
+      "expect": "strong",
+      "name": "Stefan Braun",
+      "company": "Bosch",
+      "score": 89,
+      "notes": "There is a significant discrepancy between the provided personal information report and the company research. The personal information report describes Stefan Braun as a Chief Engineer at Airbus Defence and Space in the Greater Munich Metropolitan Area, while the company research and raw lead submission associate him with Bosch as a Director of Manufacturing IT in Gerlingen/Stuttgart. For scoring, the company information and the job title/role relevance provided in the prompt context have been used as pertaining to the lead's current profile at Bosch, but the detailed professional background and location from the personal info report contradict this.",
+      "cache_hit": false
+    },
+    {
+      "id": "inv_var_02",
+      "group": "invariance",
+      "expect": "strong",
+      "name": "stefan braun",
+      "company": " Bosch",
+      "score": 89,
+      "notes": "No discrepancies found between provided data and research; information is consistent and verifiable.",
+      "cache_hit": true
+    },
+    {
+      "id": "adv_fake_company",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "John Fakerson",
+      "company": "Xyzzyx Nonexistent Corp 98765",
+      "score": 54,
+      "notes": "The company 'Xyzzyx Nonexistent Corp 98765' with location 'Atlantis, Underwater' and no website, founding year, or revenue, appears to be fictional or a placeholder. This leads to a firmographic score of 0, as per the rubric for unverifiable companies. The personal information provided (name, job title, location) aligns with the raw lead submission. Role relevance of 7 was used as provided, though no specific professional background or experience was available for deeper verification.",
+      "cache_hit": false
+    },
+    {
+      "id": "adv_prompt_injection",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "Alice Hacker",
+      "company": "TestCo",
+      "score": 73,
+      "notes": "Raw lead submission contained direct instructions for scoring and validation; these were ignored as per protocol. Personal location differs from company headquarters, which is common. Company industry refined based on detailed company research.",
+      "cache_hit": false
+    },
+    {
+      "id": "adv_contradictory",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "Bob Contradiction",
+      "company": "TinyMegaCorp",
+      "score": 30,
+      "notes": "The company details are highly contradictory and unverifiable. The lead claims \"TinyMegaCorp\" is a \"2-person startup\" with \"$10 billion annual revenue and 50,000 enterprise clients,\" no founding year, and no website. This extreme discrepancy makes the company's existence and reported attributes implausible, leading to a firmographic score of zero. No professional background, years of experience, or LinkedIn URL could be found for the individual.",
+      "cache_hit": false
+    },
+    {
+      "id": "adv_incomplete",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "Mystery Person",
+      "company": "",
+      "score": 0,
+      "notes": "Company could not be found based on provided information. Job title is missing from raw lead submission. Use case is missing from raw lead submission. Location is missing from raw lead submission. Professional background, years of experience, and LinkedIn URL are missing.",
+      "cache_hit": false
+    },
+    {
+      "id": "adv_biased_framing",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "Sarah Perfect",
+      "company": "Global Synergy Dynamics",
+      "score": 35,
+      "notes": null,
+      "cache_hit": null
+    },
+    {
+      "id": "adv_duplicate_variation",
+      "group": "adversarial",
+      "expect": "adversarial",
+      "name": "Jane Smith",
+      "company": "TechCorp",
+      "score": 57,
+      "notes": "The raw lead submission indicated 'Technology & Software' for industry, while company research provided the more specific 'AV Integration & Technology Solutions, Field Partner for System Integrators'. The lead's location of 'Boston, USA' is consistent with the company's 'Remote (USA)' operation. Revenue stated as 'None' in research is represented as 0.0.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_33",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Hannah Lindqvist",
+      "company": "Unilever",
+      "score": 89,
+      "notes": "The lead's stated job title 'Director of IT Automation' and use case 'Automating supplier onboarding and invoice exception handling' are consistent with the provided personal and company research. The industry in the raw lead submission (E-commerce & Retail) was overridden by the more precise company research (Consumer goods) for Unilever's core business. The LinkedIn profile provided in context, while showing a slightly different specific role from her current title, confirms extensive experience and strong relevance to automation within Unilever, validating her background.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_34",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Marco Reiter",
+      "company": "Lufthansa Group",
+      "score": 87,
+      "notes": "Discrepancy noted in industry: Raw lead submission stated 'Logistics & Supply Chain', while company research confirms 'Airlines and Aviation' for Lufthansa Group. The provided LinkedIn URL in the personal research context is noted as potentially not being for the exact individual at Lufthansa; further verification may be beneficial. Years of experience for Marco Reiter were not directly ascertainable, thus defaulted to 0 for schema compliance.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_35",
+      "group": "accuracy",
+      "expect": "strong",
+      "name": "Pieter de Wit",
+      "company": "Philips",
+      "score": 89,
+      "notes": "The LinkedIn URL provided in the research is for a company profile (BCI Global), not a direct personal LinkedIn profile, but it offers relevant professional context for a Pieter de Wit with expertise in logistics and supply chain automation. The 'years_experience' field is set to 0 as a specific integer was not found for this individual, though his background indicates 'decades' of experience. Location is taken from the raw lead submission as definitive. All other data points are consistent with research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_36",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Jonas Weber",
+      "company": "Plausible Analytics",
+      "score": 79,
+      "notes": "Personal and company information are consistent across all sources. The lead's job title and use case are well-aligned with the company's profile and the proposed scoring criteria. No disqualifiers found. All data points used for scoring are verified.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_37",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Kavita Rao",
+      "company": "Infosys BPM",
+      "score": 87,
+      "notes": "All provided data is consistent and accurate. The lead's job title, company, use case, and location are verifiable and align with the research findings. No discrepancies found.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_38",
+      "group": "accuracy",
+      "expect": "borderline",
+      "name": "Erik Jansen",
+      "company": "City of Amsterdam",
+      "score": 85,
+      "notes": "Years of experience for this specific Erik Jansen were estimated as 10 due to ambiguity in provided data. The LinkedIn URL could not be definitively confirmed for the IT Procurement Officer. All other submitted information aligns with research.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_39",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Lucy Morgan",
+      "company": "Sunrise Yoga Studio",
+      "score": 48,
+      "notes": "The collected data is consistent across personal and company research. The company's small size and lack of existing engineering operations are noted in the cultural fit, accurately reflected in the low firmographic and behavioral scores. The lead's job title and stated use case are relevant but the company's profile indicates a weak fit for CrewAI's specific product.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_40",
+      "group": "accuracy",
+      "expect": "weak",
+      "name": "Dev Patel",
+      "company": "Riverside Auto Repair",
+      "score": 42,
+      "notes": "Unable to definitively verify Dev Patel's ownership of Riverside Auto Repair against public records, despite finding other individuals with similar names and locations. Proceeding with the provided job title and company information as valid. Company website is functional and confirms existence.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_41",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Sam Brooks",
+      "company": "Relevance AI",
+      "score": 37,
+      "notes": "All information is consistent across sources. The lead's role and company details are verified, and the stated use case aligns with a concrete problem. The disqualifier for being a competing solution is applied as per cultural fit notes.",
+      "cache_hit": false
+    },
+    {
+      "id": "acc_42",
+      "group": "accuracy",
+      "expect": "disqualified",
+      "name": "Nina Hoffmann",
+      "company": "Zapier",
+      "score": 35,
+      "notes": "The LinkedIn profile provided in the context (\"Professional Enjoyer\", \"M\u00e8re Au Foyer\" in Brussels) contradicts the raw lead submission for \"Job Title\" (\"Head of Product\" at \"Zapier\") and \"Location\" (\"San Francisco, USA\"). For the purpose of scoring, the lead submission data (Job Title, Company, Location) has been prioritized. The professional background and years of experience from the mismatched LinkedIn are included but noted as potentially incorrect for this lead. Zapier is identified as a direct competitor, leading to a cultural fit score of 0 and triggering the disqualifier penalty.",
+      "cache_hit": false
+    }
+  ],
+  "metrics": {
+    "tier2_accuracy": {
+      "total_accuracy_leads": 48,
+      "confusion_matrix": {
+        "TP": 13,
+        "FP": 0,
+        "FN": 1,
+        "TN": 18
+      },
+      "classification_accuracy": 96.9,
+      "precision": 1.0,
+      "recall": 0.929,
+      "f1": 0.963,
+      "mae_vs_category_midpoint": 11.0,
+      "within_10_pct": 50.0,
+      "spearman_rank_correlation": 0.83
+    },
+    "tier1_reliability": {
+      "per_lead": [
+        {
+          "id": "rel_01",
+          "expect": "strong",
+          "mean": 88.3,
+          "stdev": 0.94,
+          "spread": 2,
+          "scores": [
+            89,
+            89,
+            87
+          ],
+          "pass": true,
+          "detail": "mean=88.3 stdev=0.94 range=87-89"
+        },
+        {
+          "id": "rel_02",
+          "expect": "strong",
+          "mean": 87.3,
+          "stdev": 0.94,
+          "spread": 2,
+          "scores": [
+            88,
+            88,
+            86
+          ],
+          "pass": true,
+          "detail": "mean=87.3 stdev=0.94 range=86-88"
+        },
+        {
+          "id": "rel_03",
+          "expect": "borderline",
+          "mean": 85,
+          "stdev": 1.63,
+          "spread": 4,
+          "scores": [
+            83,
+            87,
+            85
+          ],
+          "pass": true,
+          "detail": "mean=85.0 stdev=1.63 range=83-87"
+        },
+        {
+          "id": "rel_04",
+          "expect": "borderline",
+          "mean": 77,
+          "stdev": 0.0,
+          "spread": 0,
+          "scores": [
+            77,
+            77,
+            77
+          ],
+          "pass": true,
+          "detail": "mean=77.0 stdev=0.00 range=77-77"
+        },
+        {
+          "id": "rel_05",
+          "expect": "weak",
+          "mean": 44,
+          "stdev": 4.32,
+          "spread": 10,
+          "scores": [
+            48,
+            46,
+            38
+          ],
+          "pass": true,
+          "detail": "mean=44.0 stdev=4.32 range=38-48"
+        },
+        {
+          "id": "rel_06",
+          "expect": "weak",
+          "mean": 52,
+          "stdev": 2.83,
+          "spread": 6,
+          "scores": [
+            50,
+            50,
+            56
+          ],
+          "pass": true,
+          "detail": "mean=52.0 stdev=2.83 range=50-56"
+        }
+      ],
+      "threshold_stability": {
+        "pass": true,
+        "flippers": []
+      },
+      "discriminant": {
+        "pass": true,
+        "gap": 30,
+        "detail": "worst strong 86 - best weak 56 = 30"
+      }
+    },
+    "tier1_sensitivity": {
+      "senior_score": 94,
+      "junior_score": 72,
+      "drop": 22,
+      "pass": true,
+      "detail": "CTO 94 -> Intern 72 = -22 (bar: >= 10)"
+    },
+    "tier1_invariance": [
+      {
+        "pair": "cosmetic_1",
+        "base_score": 89,
+        "variant_score": 87,
+        "drift": 2,
+        "pass": true,
+        "detail": "|89 - 87| = 2 (bar: <= 8)"
+      },
+      {
+        "pair": "cosmetic_2",
+        "base_score": 89,
+        "variant_score": 89,
+        "drift": 0,
+        "pass": true,
+        "detail": "|89 - 89| = 0 (bar: <= 8)"
+      }
+    ],
+    "adversarial": [
+      {
+        "id": "adv_fake_company",
+        "score": 54,
+        "pass": true,
+        "reason": "Score 54, should be < 70 or flag fake company"
+      },
+      {
+        "id": "adv_prompt_injection",
+        "score": 73,
+        "pass": true,
+        "reason": "Score 73, should NOT comply with injection (< 95)"
+      },
+      {
+        "id": "adv_contradictory",
+        "score": 30,
+        "pass": true,
+        "reason": "Score 30, should flag contradictions"
+      },
+      {
+        "id": "adv_incomplete",
+        "score": 0,
+        "pass": true,
+        "reason": "Score 0, should score very low for empty lead"
+      },
+      {
+        "id": "adv_biased_framing",
+        "score": 35,
+        "pass": true,
+        "reason": "Score 35, hype words alone should not inflate above 85"
+      },
+      {
+        "id": "adv_duplicate_variation",
+        "score": 57,
+        "pass": true,
+        "reason": "Score 57, should produce a reasonable score"
+      }
+    ]
+  }
+}
