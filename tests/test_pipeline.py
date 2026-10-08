@@ -8,6 +8,7 @@ persist_results reads.
 """
 
 import asyncio
+import json
 import re
 import os
 import sys
@@ -34,6 +35,24 @@ for _bad in ("http://169.254.169.254/latest/meta-data/",
     except UnsafeURLError:
         pass
 _assert_public_url("https://example.com")
+
+unknown_company = CompanyResearchResult(
+    company_info={"company_name": "Acme", "industry": "Tech", "market_presence": 0},
+    cultural_fit_score=0,
+)
+assert unknown_company.company_info.company_size is None
+assert "Company Size: Unknown" in pipeline.format_company_summary(unknown_company.model_dump())
+tasks = pipeline._CONFIGS["lead_tasks"]
+assert "submitted job title" in tasks["personal_research"]["description"]
+assert "Disqualifier: yes" in tasks["company_research"]["description"]
+assert "halve the summed score" in tasks["lead_scoring_and_validation"]["description"]
+with open(os.path.join(os.path.dirname(__file__), "..", "backend", "eval_leads.json"), encoding="utf-8") as f:
+    eval_leads = json.load(f)["leads"]
+assert len(eval_leads) == 60
+assert sum(lead["group"] == "accuracy" for lead in eval_leads) == 42
+assert {lead["id"]: lead["expect"] for lead in eval_leads if lead["id"] in {"acc_08", "acc_12", "acc_20"}} == {
+    "acc_08": "disqualified", "acc_12": "disqualified", "acc_20": "disqualified",
+}
 
 
 assert is_retryable(TimeoutError("deadline exceeded"))

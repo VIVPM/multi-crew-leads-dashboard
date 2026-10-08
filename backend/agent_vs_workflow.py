@@ -8,9 +8,7 @@ Runs one real, already-scored lead through the pipeline twice:
 
 Only the company step differs. Everything else — prompts from the YAML, the
 scoring and email calls, models, the ICP — is the real pipeline, so a gap in
-tokens or score comes from removing that agent and not from rewritten prompts
-(the CrewAI-era direct_vs_agent.py rewrote every prompt by hand, so its score
-gap measured the prompts as much as the agents).
+tokens or score comes from removing that agent and not from rewritten prompts.
 
 The company cache is bypassed on both sides; otherwise the current run would
 skip company research entirely and there would be nothing to compare.

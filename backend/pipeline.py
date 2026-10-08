@@ -20,14 +20,12 @@ One graph runs per lead:
   3. Email drafting (+ optimization, merged into one prompt) runs only for
      qualified leads, off a conditional edge.
 
-The prompts still come from the same four YAML files the CrewAI version used,
-rendered here into system/human messages. That is deliberate: the prompts are
-what moves eval scores, so they did not change along with the framework.
+The four YAML prompt files define roles and task contracts. They are rendered
+into system and human messages without changing the scoring rubric here.
 
-Outputs are wrapped in `_StageOutput` / `_CombinedScoreOutput`, which present
-the same attribute surface CrewAI's CrewOutput did (`.pydantic`, `.raw`,
-`.token_usage`, `.tasks_output`, `.to_dict()`, `[key]`). backend.py's
-persist_results reads that surface, so it needed no changes.
+Outputs use `_StageOutput` / `_CombinedScoreOutput`, which present the
+`.pydantic`, `.raw`, `.token_usage`, `.tasks_output`, `.to_dict()` and `[key]`
+surface that backend.py's `persist_results` expects.
 """
 
 import asyncio
@@ -109,9 +107,6 @@ def make_tavily_tool(tavily_key: str, cache: Optional[dict] = None):
 
     memoized = _memoize_tool(_search, call_cache, "tavily_web_search")
 
-    # Name must be a bare identifier: Gemini rejects a function declaration
-    # whose name has spaces in it with a 400. CrewAI accepted "Tavily Web
-    # Search"; the schema underneath never did.
     @tool("tavily_web_search")
     def tavily_search_tool(query: str) -> str:
         """Search the web for information using Tavily."""
@@ -227,7 +222,7 @@ class LeadPersonalInfo(BaseModel):
 class CompanyInfo(BaseModel):
     company_name: str
     industry: str
-    company_size: int
+    company_size: Optional[int] = None
     revenue: Optional[float] = None
     market_presence: int
     company_location: Optional[str] = None
@@ -335,10 +330,11 @@ def normalize_company_key(company_name: str, our_company_context: str) -> str:
 def format_company_summary(company_dump: dict) -> str:
     """Render a CompanyResearchResult dict (cached or fresh) as prompt text."""
     info = company_dump.get("company_info", {}) or {}
+    size = info.get("company_size")
     lines = [
         f"Company Name: {info.get('company_name', 'Unknown')}",
         f"Industry: {info.get('industry', 'Unknown')}",
-        f"Company Size: {info.get('company_size', 'Unknown')}",
+        f"Company Size: {size if size is not None else 'Unknown'}",
         f"Revenue: {info.get('revenue', 'Unknown')}",
         f"Market Presence (0-10): {info.get('market_presence', 'Unknown')}",
         f"Company Location: {info.get('company_location', 'Unknown')}",
@@ -351,14 +347,10 @@ def format_company_summary(company_dump: dict) -> str:
 
 
 class _AgentRef:
-    """Stands in for a CrewAI TaskOutput.
+    """One analysis-row role with its exact token count when available.
 
-    `.tokens` is what CrewAI could never provide: it reported usage per crew,
-    not per task, so persist_results had to split a stage's total evenly across
-    its agents. LangGraph gives usage_metadata per node, so the real number is
-    available and gets carried here. None means "no per-agent figure", and
-    persist_results falls back to the even split — which is also what a real
-    CrewAI TaskOutput does, since it has no such attribute at all.
+    None leaves the legacy even-split fallback for stages without per-role
+    usage, while fresh graph nodes carry their own counts.
     """
 
     def __init__(self, role: str, tokens: Optional[int] = None):
@@ -367,7 +359,7 @@ class _AgentRef:
 
 
 class _StageOutput:
-    """One pipeline stage's result, shaped like a CrewOutput.
+    """One pipeline stage's result shaped for persist_results.
 
     `roles` lists the agents that ran in this stage, in order, because
     persist_results turns each into one analysis row.
@@ -455,8 +447,8 @@ class _CombinedScoreOutput:
 def _system_prompt(agent_cfg: dict, task_cfg: dict) -> str:
     """Everything about this node that never varies between leads.
 
-    expected_output lives here rather than after the task description, which is
-    where CrewAI put it. Prompt caching keys on a shared prefix and that prefix
+    expected_output belongs here rather than after the task description.
+    Prompt caching keys on a shared prefix and that prefix
     ends at the first byte which differs, so a static block sitting *after* the
     lead data bought nothing — it truncated the cacheable run at whatever came
     before the first placeholder. Role, backstory, goal and the output criteria
@@ -617,8 +609,7 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
             flattening block lists is enough — the tool_calls field still carries
             the real payload.
 
-            The CrewAI version needed this identical fix one layer down, on
-            litellm's params. Defined here rather than at module scope to keep
+            Defined here rather than at module scope to keep
             langchain_openai a Cloudflare-only import.
             """
 

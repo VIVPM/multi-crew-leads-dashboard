@@ -43,7 +43,7 @@ except ModuleNotFoundError as e:
 
 
 DEFAULT_COMPANY_CONTEXT = (
-    "Company Name: CrewAI\n"
+    "Company Name: Agent Orchestration Platform\n"
     "Product: Multi-Agent Orchestration Platform\n"
     "ICP: Enterprise companies looking into Agentic automation.\n"
     "Pitch: We are a platform that allows you to orchestrate AI Agents for "

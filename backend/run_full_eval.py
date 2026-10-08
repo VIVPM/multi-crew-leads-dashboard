@@ -1,7 +1,7 @@
 """
 Comprehensive Evaluation Runner for eval_leads.json
 
-Scores all 50 leads from eval_leads.json in batches of 10, then computes
+Scores all 60 leads from eval_leads.json in batches of 10, then computes
 all Tier 1 and Tier 2 metrics:
 
   Tier 1 (Reliability):
