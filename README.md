@@ -19,7 +19,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **CrewAI** a
 - **Borderline flagging** — scores within 65–75 badged **Borderline**; leads scoring 65–70 get a **Draft Email** button to run just the email crew on demand
 - **Structured JSON logging** — correlated by `request_id`/`job_id`/`lead_id`
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and agent steps aren't recorded (Langfuse covers agents)
-- **OpenTelemetry** — optional tracing to Langfuse (v4 observations-first) and/or Grafana Cloud (metrics + alerts), auto-enabled by env vars
+- **OpenTelemetry** — optional CrewAI and LLM tracing to Langfuse, auto-enabled by its keys
 - **YAML-driven agents** — roles, prompts, workflow in `backend/config/`
 - **Red-team + eval harness** — adversarial inputs with saved reports; reliability + accuracy evaluation across 60 leads
 
@@ -60,7 +60,7 @@ graph TD
         Tavily["🔍 Tavily web search"]
     end
 
-    OBS["📈 Observability · Langfuse + Grafana · traces · metrics · alerts"]
+    OBS["📈 Observability · Langfuse · agent traces"]
 
     User --> CLIENT
     CLIENT -->|HTTP + JWT| APP
@@ -69,7 +69,7 @@ graph TD
     CTRL -->|run crews| AI
     AI -->|research + reasoning| EXT
     CTRL -->|read cache · write results| DATA
-    CTRL -.->|traces · metrics| OBS
+    CTRL -.->|agent traces| OBS
 ```
 
 | Crew | Agents | Runs when |
@@ -149,8 +149,6 @@ RUN_WORKER_IN_PROCESS=1                     # worker as API thread (single-servi
 LANGFUSE_PUBLIC_KEY=                        # OpenTelemetry → Langfuse
 LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=
-GRAFANA_OTLP_ENDPOINT=                     # OpenTelemetry → Grafana Cloud
-GRAFANA_OTLP_AUTH=
 EMAIL_SEND_DAILY_CAP=80
 ```
 
