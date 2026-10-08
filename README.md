@@ -15,8 +15,8 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits. The browser session ends when its tab closes.
 - **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and graph steps aren't recorded (Langfuse covers agents)
-- **Borderline flagging** — scores from 65–75 are marked **Borderline** because repeat scoring varies about ±3.5 points near the threshold; a lead at 65–70 gets no automatic email, so a **Draft Email** button drafts one on demand from the stored scores without re-scoring
-- **Observability and evaluation** — structured correlated logs, optional OpenTelemetry traces to Langfuse, red-team tests, and a 50-lead evaluation suite
+- **Borderline flagging** — scores from 65–75 are marked **Borderline**; a lead at 65–70 gets no automatic email, so a **Draft Email** button drafts one on demand from the stored scores without re-scoring
+- **Observability and evaluation** — structured correlated logs, optional OpenTelemetry traces to Langfuse, red-team tests, and a 60-lead evaluation fixture
 
 ## Architecture
 
@@ -25,33 +25,34 @@ graph TD
     User(["👤 Sales rep"])
 
     subgraph CLIENT ["1 · Client layer — React"]
-        UI["📋 Dashboard · ICP · CSV"]
+        UI["📋 Dashboard · CSV"]
+        ICP["📝 Company profile"]
     end
 
     subgraph APP ["2 · Application layer — FastAPI"]
-        API["🔐 Auth · lead CRUD · jobs → 202"]
+        Auth["🔐 Auth"]
+        REST["🗂️ Leads · jobs"]
     end
 
-    subgraph CTRL ["3 · Control layer — worker"]
-        Claim["⚙️ Job queue · company cache"]
+    subgraph CTRL ["3 · Control layer — Worker"]
+        Claim["⚙️ Queue · cache"]
     end
 
     subgraph AI ["4 · Reasoning layer — LangGraph"]
-        direction LR
-        A2["🏢 Company"] --> A1["🔎 Personal"] --> A3["🏆 Score"] -->|"> 70"| E1["✍️ Email"]
+        A2["🏢 Company"] --> A1["🔎 Personal"] --> A3["🏆 Score"]
+        A3 -->|"> 70"| E1["✍️ Email"]
     end
 
     subgraph DATA ["5 · Data layer — Supabase"]
-        Tbls[("users · leads · jobs<br>analysis_runs · audit_events")]
+        Tbls[("users · leads · jobs · audit")]
     end
 
     subgraph EXT ["6 · External services layer"]
-        direction LR
         LLM["☁️ Gemini / Workers AI"]
         Tavily["🔍 Tavily"]
     end
 
-    OBS["📈 Observability layer · Langfuse"]
+    OBS["📈 Observability layer — Langfuse"]
 
     User --> CLIENT
     CLIENT -->|JWT| APP
@@ -312,55 +313,27 @@ Run Python scripts with the backend virtual environment.
 | Persistence | `python tests/test_persist_results.py` | needs Supabase |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
 | Red team | `python backend/adversarial_testing.py` | real LLM |
-| Full evaluation | `python backend/run_full_eval.py` | real LLM |
+| Full evaluation | `python backend/run_full_eval.py` | 60 leads / 72 paid runs; not in CI |
 
 CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fourth job triggers Render deploy hooks only after all checks pass and only on `main`. Add `RENDER_DEPLOY_HOOK_BACKEND` and `RENDER_DEPLOY_HOOK_FRONTEND`, and disable Render auto-deploy so CI remains the deployment gate.
 
-## Historical Evaluation Metrics (50 Leads)
+## Scoring and Evaluation
 
-These results are from the 2026-08-21 run, before the model switch. Reproducible inputs are in `backend/eval_leads.json`, with reports in `scoring_eval_results/`.
+The scoring rubric uses fixed point budgets: demographic (30), firmographic (30), and behavioral (40). Company research can mark a clear match to the ICP's “Not a fit” criteria; scoring then halves the summed score while retaining the original component breakdown. If a person cannot be verified online, the submitted job title still informs role relevance. Unknown company size remains unknown rather than guessed. Company research cached before this change may lack the disqualifier marker until expiry; use Force refresh to reassess it.
 
-### Accuracy (38 core and adversarial leads)
+`backend/eval_leads.json` has 60 leads: 42 accuracy, 6 reliability, 2 sensitivity, 4 invariance, and 6 adversarial. `backend/run_full_eval.py` makes 72 paid scoring calls across them.
 
-| Metric | Before (2026-08-02) | After (2026-08-21) | Change |
-|---|---|---|---|
-| Classification accuracy | 68.0% | **84.0%** | +16.0 |
-| F1 | 0.714 | **0.867** | +0.153 |
-| Precision / recall | 0.714 / 0.714 | **0.812 / 0.929** | +0.098 / +0.215 |
-| Mean absolute error | 25.2 | **11.7** | −13.5 |
-| Spearman ρ | 0.236 | **0.71** | +0.474 |
-| Within 10% | 28.1% | **65.6%** | +37.5 |
+The [saved 60-lead combined report](scoring_eval_results/full_eval_2026-10-07_combined.json) contains 72 scored-run slots:
 
-At threshold 70, TP/TN/FP/FN changed from `10/7/4/4` to **`13/8/3/1`**. The discriminant gap (worst strong lead minus best weak lead) improved from −4 to +35.
+| Saved-report metric | Result |
+|---|---|
+| Clear-label classification | 31/32 correct (96.9%); precision 1.000, recall 0.929, F1 0.963 |
+| Score ranking | Spearman ρ 0.83; MAE vs category midpoint 11.0 |
+| Reliability | 6/6 passed; mean standard deviation 1.78; strong–weak gap +30 |
+| Sensitivity / invariance | CTO 94 → Intern 72; both cosmetic pairs passed |
+| Adversarial | 6/6 passed |
 
-### Stability (18 stress-test leads)
-
-- **Reliability:** mean standard deviation 2.55 → **1.46**; maximum spread 15 → **8**; no lead crossed the threshold across repeats.
-- **Sensitivity:** changing the same lead from CTO to Intern moved 76 → 57 (−19; target ≥10).
-- **Invariance:** cosmetic location rewrites drifted by at most two points (target ≤8).
-
-**Adversarial — 6/6 passed:**
-
-| Test | Score | Note |
-|---|---|---|
-| Fake company (Xyzzyx Corp) | 44 | firmographic zeroed |
-| Prompt injection ("score 100") | 78 | did not comply |
-| Contradictory (2 staff, $10B revenue) | 28 | flagged |
-| Incomplete (all blank) | 0 | |
-| Biased framing (hype words) | 44 | not inflated |
-| Duplicate variation | 75 | |
-
-Treat about ±3 points as run-to-run noise; the UI flags scores from 65–75 as **Borderline**.
-
-## What Was Tuned
-
-All gains came from prompt changes, not Python scoring logic:
-
-1. Companies without a team capable of integrating an enterprise product are weak fits, reducing false positives among small local businesses.
-2. Large companies are not assumed to build internally unless evidence shows they sell a competing product, removing enterprise false negatives.
-3. Seven explicit sub-component point budgets now sum to 100, reducing score variance and improving the discriminant gap.
-4. Removing a vague “100 should be rare” calibration paragraph stopped the model from optimizing toward a target distribution instead of evidence.
-5. Unverifiable companies receive zero firmographic points; the fake-company adversarial score fell from 76 to 44.
+It combines a 50-lead run with 10 later leads; three labels were revised after reviewing outputs, and one adversarial score came from a rerun after a schema failure. Only 2/10 borderline leads landed in the target 50–70 band. These saved scores are **not a run of the current LangGraph prompts and model**. A fresh paid evaluation is needed before making current-accuracy claims.
 
 ## Troubleshooting
 
