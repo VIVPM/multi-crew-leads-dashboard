@@ -33,7 +33,7 @@ load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 from logging_setup import configure_logging, request_context, lead_context
 from security import (
-    hash_password, verify_password, is_legacy_hash, make_token, verify_token,
+    hash_password, verify_password, make_token, verify_token,
     make_refresh_token, hash_refresh_token, REFRESH_TTL_S,
     encrypt_secret, decrypt_secret,
 )
@@ -446,14 +446,6 @@ def login(req: LoginRequest, request: Request):
         _record_login_failure(req.username)
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     row = user.data[0]
-    if is_legacy_hash(row["password"]):
-
-        supabase.table("users").update(
-            {"password": hash_password(req.password)}
-        ).eq("id", row["id"]).execute()
-        logger.info("Migrated password hash to bcrypt for user: %s", req.username)
-
-
     if recent_failures:
         _clear_login_failures(req.username)
     uid = str(row["id"])

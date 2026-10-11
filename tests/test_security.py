@@ -1,13 +1,12 @@
 """Self-contained checks for backend/security.py. Run: python tests/test_security.py"""
 
-import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
 
 from security import (
-    hash_password, verify_password, is_legacy_hash, make_token, verify_token,
+    hash_password, verify_password, make_token, verify_token,
     encrypt_secret, decrypt_secret,
 )
 
@@ -15,15 +14,11 @@ SECRET = "test-secret"
 
 
 h = hash_password("hunter2!")
-assert not is_legacy_hash(h)
 assert verify_password("hunter2!", h)
 assert not verify_password("wrong", h)
 
 
-legacy = hashlib.sha256(b"oldpassword").hexdigest()
-assert is_legacy_hash(legacy)
-assert verify_password("oldpassword", legacy)
-assert not verify_password("wrong", legacy)
+
 
 
 tok = make_token("user-123", SECRET)

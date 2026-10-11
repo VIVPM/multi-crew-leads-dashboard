@@ -26,17 +26,7 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt(_BCRYPT_ROUNDS)).decode()
 
 
-def is_legacy_hash(hashed: str) -> bool:
-    """True for pre-migration unsalted SHA-256 hex digests."""
-    return not hashed.startswith("$2")
-
-
 def verify_password(password: str, hashed: str) -> bool:
-    if is_legacy_hash(hashed):
-
-
-        digest = hashlib.sha256(password.encode()).hexdigest()
-        return hmac.compare_digest(digest, hashed)
     try:
         return bcrypt.checkpw(password.encode(), hashed.encode())
     except ValueError:
