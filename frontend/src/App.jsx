@@ -18,8 +18,8 @@ const JOB_POLL_MS = 5000
 const JOB_DEADLINE_MS = 20 * 60 * 1000
 
 // Reads this tab's session. It lives in sessionStorage, so it survives a
-// refresh but ends when the tab or browser closes; older builds kept it in
-// localStorage indefinitely, so any copy left there is discarded.
+// refresh but ends when the tab or browser closes. Any copy in localStorage is
+// discarded so a login never outlives the tab.
 function loadSession() {
   try {
     localStorage.removeItem(SESSION_KEY)
