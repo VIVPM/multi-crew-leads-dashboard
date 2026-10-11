@@ -1,11 +1,11 @@
 // Authenticated backend requests and user-facing API errors.
-if (!import.meta.env.DEV && !import.meta.env.VITE_BACKEND_URL) {
+if (!import.meta.env.VITE_BACKEND_URL) {
   throw new Error(
-    "VITE_BACKEND_URL is not set. It must be set at build time (Vite inlines " +
-    "env vars into the bundle) — check the build environment's config."
+    "VITE_BACKEND_URL is not set. Set it in frontend/.env (Vite inlines env " +
+    "vars at build time)."
   );
 }
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+const BACKEND = import.meta.env.VITE_BACKEND_URL;
 
 const FETCH_TIMEOUT_MS = 60_000;
 const SESSION_KEY = "sp_session";
