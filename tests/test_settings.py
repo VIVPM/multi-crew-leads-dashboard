@@ -97,12 +97,8 @@ try:
     assert backend._resolve_api_keys("7") == ("operator-gemini", "operator-tavily", False), \
         "a missing key migration must not break processing"
 
-    fake = FakeSupabase({"email_smtp_password": "legacy-plain-9999"})
-    backend.supabase = fake
-    assert backend._smtp_password("7", "legacy-plain-9999") == "legacy-plain-9999"
-    upgraded = fake.db["updates"][-1]["email_smtp_password"]
-    assert upgraded.startswith("gAAAAA") and "legacy-plain" not in upgraded
-    assert backend._smtp_password("7", upgraded) == "legacy-plain-9999"
+    saved = backend.encrypt_secret("app-pass-9999", backend.SECRET_KEY)
+    assert backend._smtp_password("7", saved) == "app-pass-9999"
 finally:
     backend.supabase, backend.LLM_MODEL = original_supabase, original_model
 

@@ -517,13 +517,8 @@ def _require_credential_secret() -> None:
 
 
 def _smtp_password(user_id: str, stored: str) -> str:
-    """Read an encrypted SMTP password, upgrading an old plaintext row on first use."""
+    """Decrypt a saved SMTP password."""
     _require_credential_secret()
-    if not stored.startswith("gAAAAA"):
-        supabase.table("users").update({
-            "email_smtp_password": encrypt_secret(stored, SECRET_KEY),
-        }).eq("id", user_id).execute()
-        return stored
     try:
         return decrypt_secret(stored, SECRET_KEY)
     except ValueError as exc:
