@@ -39,8 +39,9 @@ graph TD
     end
 
     subgraph AI ["4 · Agents — LangGraph · StateGraph per lead"]
-        A2["🏢 Company Research + Cultural Fit"] --> A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
-        A3 -->|score > 70| E1["✍️ Email Specialist"]
+        direction LR
+        A2["🏢 Company + Fit"] --> A1["🔎 Personal"] --> A3["🏆 Score"]
+        A3 -->|score > 70| E1["✍️ Email"]
     end
 
     subgraph DATA ["5 · Data — Supabase / Postgres"]
