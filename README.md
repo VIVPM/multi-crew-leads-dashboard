@@ -51,7 +51,7 @@ company_research_cache · refresh_tokens · login_failures")]
     end
 
     subgraph EXT ["6 · External AI"]
-        LLM["☁️ Google Gemini / Cloudflare Workers AI"]
+        LLM["☁️ Gemini 2.5 Flash / Flash-Lite · Workers AI"]
         Tavily["🔍 Tavily web search"]
     end
 
@@ -292,7 +292,7 @@ The estimated healthy ceiling is **about 50 concurrent users on this machine**, 
 
 ### Historical cost calibration
 
-`load_test.py --calibrate 5` — five real leads through the then-current pipeline, cache bypassed. This benchmark predates the Gemini 3 Flash Preview switch and is not a price estimate for new runs. It is the only load test here that spends money.
+`load_test.py --calibrate 5` — five real leads through the then-current pipeline, cache bypassed. It is not a price estimate for new runs. It is the only load test here that spends money.
 
 | Metric | Result |
 |---|---|
@@ -301,7 +301,7 @@ The estimated healthy ceiling is **about 50 concurrent users on this machine**, 
 | Pipeline time, five leads | 258s |
 | Time per lead | 51.7s |
 
-`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Current cost fields and dashboard charts still calculate from the former $0.15/M input and $0.60/M output rates; treat them as estimates, not Gemini 3 Flash Preview billing amounts.
+`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Current cost fields and dashboard charts still calculate from the former $0.15/M input and $0.60/M output rates; treat them as estimates, not Gemini billing amounts.
 
 ## Testing & CI/CD
 

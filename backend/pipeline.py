@@ -588,10 +588,9 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
 
     `provider` defaults to LLM_MODEL; the fallback path passes the other one.
 
-    Returns (judgment_llm, retrieval_llm). Both tiers currently use
-    gemini-3-flash-preview on Gemini and the one Workers AI model on Cloudflare;
-    the split is kept so a cheaper retrieval model can come back without
-    rewiring the pipeline.
+    Returns (judgment_llm, retrieval_llm). On Gemini that's 2.5 Flash for
+    judgment and 2.5 Flash-Lite for retrieval, the models the 60-lead
+    evaluation was scored on; Cloudflare has one Workers AI model for both.
     """
     if (provider or LLM_MODEL) == "CLOUDFLARE":
         from langchain_openai import ChatOpenAI
@@ -650,8 +649,8 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
 
     limits = {"timeout": LLM_REQUEST_TIMEOUT_S, "max_retries": LLM_REQUEST_RETRIES}
     return (
-        ChatGoogleGenerativeAI(model="gemini-3-flash-preview", google_api_key=llm_key, streaming=True, **limits),
-        ChatGoogleGenerativeAI(model="gemini-3-flash-preview", google_api_key=llm_key, streaming=True, **limits),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key, streaming=True, **limits),
+        ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key, streaming=True, **limits),
     )
 
 
