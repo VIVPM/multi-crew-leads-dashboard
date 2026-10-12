@@ -24,44 +24,45 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 graph TD
     User(["👤 Sales rep"])
 
-    subgraph CLIENT ["1 · Client layer — React"]
-        UI["📋 Dashboard · CSV"]
-        ICP["📝 Company profile"]
+    subgraph CLIENT ["1 · Client — React / Vite"]
+        UI["📋 Dashboard · add · edit · search · export · CSV"]
+        ICP["📝 Company profile / ICP"]
     end
 
-    subgraph APP ["2 · Application layer — FastAPI"]
-        Auth["🔐 Auth"]
-        REST["🗂️ Leads · jobs"]
+    subgraph APP ["2 · API — FastAPI"]
+        Auth["🔐 Auth · bcrypt · access/refresh · rate-limit"]
+        REST["🗂️ Lead CRUD · POST /leads/process → 202 · GET /jobs/:id"]
     end
 
-    subgraph CTRL ["3 · Control layer — Worker"]
-        Claim["⚙️ Queue · cache"]
+    subgraph CTRL ["3 · Worker — worker.py"]
+        Claim["claim jobs · round-robin · autoscaled slots · company cache"]
     end
 
-    subgraph AI ["4 · Reasoning layer — LangGraph"]
-        A2["🏢 Company"] --> A1["🔎 Personal"] --> A3["🏆 Score"]
-        A3 -->|"> 70"| E1["✍️ Email"]
+    subgraph AI ["4 · Agents — LangGraph · StateGraph per lead"]
+        A2["🏢 Company Research + Cultural Fit"] --> A1["🔎 Personal Research"] --> A3["🏆 Score and Validate"]
+        A3 -->|score > 70| E1["✍️ Email Specialist"]
     end
 
-    subgraph DATA ["5 · Data layer — Supabase"]
-        Tbls[("users · leads · jobs · audit")]
+    subgraph DATA ["5 · Data — Supabase / Postgres"]
+        Tbls[("users · leads · jobs · analysis_runs · audit_events
+company_research_cache · refresh_tokens · login_failures")]
     end
 
-    subgraph EXT ["6 · External services layer"]
-        LLM["☁️ Gemini / Workers AI"]
-        Tavily["🔍 Tavily"]
+    subgraph EXT ["6 · External AI"]
+        LLM["☁️ Google Gemini / Cloudflare Workers AI"]
+        Tavily["🔍 Tavily web search"]
     end
 
-    OBS["📈 Observability layer — Langfuse"]
+    OBS["📈 Observability · Langfuse · agent traces"]
 
     User --> CLIENT
-    CLIENT -->|JWT| APP
-    APP --> DATA
-    APP -->|enqueue| CTRL
-    CTRL --> AI
-    AI --> EXT
-    CTRL --> DATA
-    CTRL -.-> OBS
+    CLIENT -->|HTTP + JWT| APP
+    APP -->|auth · CRUD · job status| DATA
+    APP -->|enqueue job| CTRL
+    CTRL -->|run graph| AI
+    AI -->|research + reasoning| EXT
+    CTRL -->|read cache · write results| DATA
+    CTRL -.->|agent traces| OBS
 ```
 
 The graph is compiled once per batch and invoked once per lead:
