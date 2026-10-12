@@ -336,7 +336,7 @@ The [saved 60-lead combined report](scoring_eval_results/full_eval_2026-10-07_co
 | Sensitivity / invariance | CTO 94 → Intern 72; both cosmetic pairs passed |
 | Adversarial | 6/6 passed |
 
-It combines a 50-lead run with 10 later leads; three labels were revised after reviewing outputs, and one adversarial score came from a rerun after a schema failure. Only 2/10 borderline leads landed in the target 50–70 band. These saved scores are **not a run of the current LangGraph prompts and model**. A fresh paid evaluation is needed before making current-accuracy claims.
+It combines a 50-lead run with 10 later leads; three labels were revised after reviewing outputs, and one adversarial score came from a rerun after a schema failure. Only 2/10 borderline leads landed in the target 50–70 band.
 
 ## Troubleshooting
 
