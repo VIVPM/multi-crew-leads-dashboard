@@ -41,6 +41,7 @@ graph TD
     subgraph AI ["4 · Agents — LangGraph · StateGraph per lead"]
         direction LR
         A2["🏢 Company + Fit"] --> A1["🔎 Personal"] --> A3["🏆 Score"]
+        C[("📦 Company research cache")] -.->|cache hit: skip research| A1
         A3 -->|score > 70| E1["✍️ Email"]
     end
 
