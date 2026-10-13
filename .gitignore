@@ -19,6 +19,8 @@ load_test_results/*.log
 
 load_test_results/*.json
 scoring_eval_results/*.json
-!scoring_eval_results/full_eval_2026-10-07_combined.json
+!scoring_eval_results/golden_eval.json
+!load_test_results/ramp.json
 adversarial_results/*.json
 v0-v1-v2.txt
+brag-output/
