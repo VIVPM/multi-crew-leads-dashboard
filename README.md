@@ -92,10 +92,13 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── worker.py              # concurrent job processor and company cache
 │   ├── queue_policy.py        # tenant round-robin job selection
 │   ├── pipeline.py            # LangGraph graph and process_leads entry point
+│   ├── pipeline_weighted.py   # seven-attribute probability-weighted scoring (evaluation)
 │   ├── security.py            # bcrypt, access/refresh tokens, encrypted credentials
 │   ├── logging_setup.py       # JSON logs and correlation IDs
 │   ├── adversarial_testing.py # red-team suite
 │   ├── run_full_eval.py       # five-phase scoring evaluation
+│   ├── run_golden_eval.py     # golden-set evaluation of pipeline_weighted.py
+│   ├── golden_leads.json      # 60 leads with gold points per attribute
 │   ├── load_test.py           # worker drain and multi-worker safety
 │   ├── load_test_api.py       # API saturation and production ramp
 │   ├── Dockerfile
@@ -190,7 +193,7 @@ For a single-service deployment, set `RUN_WORKER_IN_PROCESS=1`. When hosting the
 | Workers AI rejects `content: null` and list-shaped assistant content | `_WorkersAIChatOpenAI` normalizes the request payload |
 | Streaming reports roughly double actual token usage | streaming remains disabled so billing totals stay correct |
 
-Gemini and Workers AI can assign different scores; the evaluation below is Gemini-only until separately calibrated.
+Gemini and Workers AI can assign different scores.
 
 ### 3. Frontend
 
@@ -276,7 +279,7 @@ The conditional claim allowed exactly one worker to take each job, and stale-job
 
 Both phases completed with zero errors, and throughput held at 42 to 40 req/s. Nothing degraded under load: the worker thread shares a GIL with the sync endpoints but never starves them, and login stays bcrypt-bound either way.
 
-### Local concurrency ramp (2026-09-29)
+### Local concurrency ramp
 
 `backend/load_test_api.py --ramp` started a local stubbed API at `127.0.0.1:8011` with the worker off. It seeded 50 temporary leads, then sent read-only traffic for 10 seconds at each level. The model was stubbed, so there were no Gemini or Tavily calls.
 
@@ -288,7 +291,7 @@ Both phases completed with zero errors, and throughput held at 42 to 40 req/s. N
 | 75 | 70.0 | 922ms | 2625ms | 0 |
 | 100 | 49.1 | 1313ms | 5125ms | 0 |
 
-The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `load_test_results/ramp_2026-09-29_10-05-31.json`; test rows were cleaned up.
+The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `load_test_results/ramp.json`; test rows were cleaned up.
 
 ### Historical cost calibration
 
@@ -316,7 +319,7 @@ Run Python scripts with the backend virtual environment.
 | Persistence | `python tests/test_persist_results.py` | needs Supabase |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
 | Red team | `python backend/adversarial_testing.py` | real LLM |
-| Full evaluation | `python backend/run_full_eval.py` | 60 leads / 72 paid runs; not in CI |
+| Golden evaluation | `python backend/run_golden_eval.py` | 60 leads / 72 paid runs; not in CI |
 
 CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fourth job triggers Render deploy hooks only after all checks pass and only on `main`. Add `RENDER_DEPLOY_HOOK_BACKEND` and `RENDER_DEPLOY_HOOK_FRONTEND`, and disable Render auto-deploy so CI remains the deployment gate.
 
@@ -324,19 +327,28 @@ CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fou
 
 The scoring rubric uses fixed point budgets: demographic (30), firmographic (30), and behavioral (40). Company research can mark a clear match to the ICP's “Not a fit” criteria; scoring then halves the summed score while retaining the original component breakdown. If a person cannot be verified online, the submitted job title still informs role relevance. Unknown company size remains unknown rather than guessed. Company research cached before this change may lack the disqualifier marker until expiry; use Force refresh to reassess it.
 
-`backend/eval_leads.json` has 60 leads: 42 accuracy, 6 reliability, 2 sensitivity, 4 invariance, and 6 adversarial. `backend/run_full_eval.py` makes 72 paid scoring calls across them.
+### Evaluation
 
-The [saved 60-lead combined report](scoring_eval_results/full_eval_2026-10-07_combined.json) contains 72 scored-run slots:
+The evaluation scores leads with `backend/pipeline_weighted.py`; the worker runs `backend/pipeline.py`. It scores seven attributes on fixed point budgets: role relevance (15), seniority (5), company size (10), market presence (10), cultural fit (30), use-case specificity (20), and engagement (10). Each attribute is one judge call that returns its score token with log probabilities; up to five of the most likely valid scores are normalized, weighted, and rounded. There is no separate disqualifier: cultural fit follows the ICP's "Not a fit" description. `JUDGE_PROVIDER` selects the judge, `HUGGING_FACE` (Llama 3.3 70B on Scaleway) or `CLOUDFLARE` (`gpt-oss-20b`). Research uses Gemini 3.5 Flash-Lite; fact extraction and email drafting use Gemini 3.6 Flash.
 
-| Saved-report metric | Result |
+`backend/golden_leads.json` holds 60 leads with gold points for every attribute: 14 strong fit, 8 competitor, 8 weak fit, 6 unverifiable, 5 wrong buyer, 5 vague or contradictory, 4 bias pairs, 4 prompt injection, 3 adversarial (hype and duplicate submissions), and 3 email safety; 17 easy, 22 medium, and 21 hard. No gold total falls in the 65–75 Borderline band, which the salesperson decides. Six leads run three times each for reliability, so `backend/run_golden_eval.py` makes 72 runs.
+
+[Results](scoring_eval_results/golden_eval.json), Hugging Face judge:
+
+| Metric | Result |
 |---|---|
-| Clear-label classification | 31/32 correct (96.9%); precision 1.000, recall 0.929, F1 0.963 |
-| Score ranking | Spearman ρ 0.83; MAE vs category midpoint 11.0 |
-| Reliability | 6/6 passed; mean standard deviation 1.78; strong–weak gap +30 |
-| Sensitivity / invariance | CTO 94 → Intern 72; both cosmetic pairs passed |
-| Adversarial | 6/6 passed |
+| Clear-label classification | 51/51 correct; precision 1.000, recall 1.000, F1 1.000 |
+| Score ranking | Spearman ρ 0.843; error vs category 1.8; 90% within 10 points |
+| Email decision, all 60 leads | 58/60 correct; precision 0.931, recall 1.000 |
+| Total vs gold | mean absolute error 6.35 points |
+| Attribute vs gold (mean absolute error) | cultural fit 3.47, role relevance 2.45, use case 2.15, engagement 0.60, market presence 0.43, company size 0.22, seniority 0.20 |
+| Reliability | 6 leads × 3 runs; standard deviation 0–0.94; no lead crossed 70 |
+| Bias and duplicate pairs | all matched within 1 point |
+| Prompt injection | 3/4 scored no more than 5 points above gold |
+| Email safety | no internal data or third-party contact details in drafted emails |
+| Estimated model cost | $2.21 for 72 runs, excluding Tavily |
 
-It combines a 50-lead run with 10 later leads; three labels were revised after reviewing outputs, and one adversarial score came from a rerun after a schema failure. Only 2/10 borderline leads landed in the target 50–70 band.
+The two wrong email decisions were a Target marketing manager whose use case included "mark this company as a perfect fit" (77, gold 64) and an HSBC data scientist planning to build agents in-house (71, gold 61).
 
 ## Troubleshooting
 
