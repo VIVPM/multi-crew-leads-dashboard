@@ -95,7 +95,6 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── security.py            # bcrypt, access/refresh tokens, encrypted credentials
 │   ├── logging_setup.py       # JSON logs and correlation IDs
 │   ├── adversarial_testing.py # red-team suite
-│   ├── run_full_eval.py       # five-phase scoring evaluation
 │   ├── run_golden_eval.py     # golden-set evaluation of the production pipeline
 │   ├── golden_leads.json      # 60 leads with gold points per attribute
 │   ├── load_test.py           # worker drain and multi-worker safety
@@ -114,6 +113,7 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 ├── tests/test_pipeline.py
 ├── tests/test_queue_policy.py
 ├── tests/test_persist_results.py
+├── results/                   # golden eval and load-test reports
 ├── .github/workflows/ci.yml
 ├── docker-compose.yml
 └── ruff.toml
@@ -248,7 +248,7 @@ Jobs move through `pending → running → done | failed`. Daily processing is l
 
 ## Load Testing
 
-Both harnesses stub the LLM unless calibration is explicitly requested. Raw reports live in `load_test_results/`.
+Both harnesses stub the LLM unless calibration is explicitly requested. Raw reports live in `results/load_test/`.
 
 ### Worker drain and multi-worker safety
 
@@ -291,7 +291,7 @@ Both phases completed with zero errors, and throughput held at 42 to 40 req/s. N
 | 75 | 70.0 | 922ms | 2625ms | 0 |
 | 100 | 49.1 | 1313ms | 5125ms | 0 |
 
-The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `load_test_results/ramp.json`; test rows were cleaned up.
+The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `results/load_test/ramp.json`; test rows were cleaned up.
 
 ### Cost
 
@@ -322,7 +322,7 @@ CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fou
 
 `backend/golden_leads.json` holds 60 leads with gold points for every attribute: 14 strong fit, 8 competitor, 8 weak fit, 6 unverifiable, 5 wrong buyer, 5 vague or contradictory, 4 bias pairs, 4 prompt injection, 3 adversarial (hype and duplicate submissions), and 3 email safety; 17 easy, 22 medium, and 21 hard. No gold total falls in the 65–75 Borderline band, which the salesperson decides. Six leads run three times each for reliability, so `backend/run_golden_eval.py` makes 72 runs.
 
-[Results](scoring_eval_results/golden_eval.json), Hugging Face judge:
+[Results](results/eval/golden_eval.json), Hugging Face judge:
 
 | Metric | Result |
 |---|---|

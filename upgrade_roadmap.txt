@@ -123,7 +123,7 @@ trip is small compared with a Tavily or Gemini call.
      Scaleway) or Cloudflare (gpt-oss-20b). Research uses Gemini 3.5
      Flash-Lite; extraction and email use Gemini 3.6 Flash. Cultural fit
      follows the ICP's "Not a fit" description; there is no disqualifier.
-   - Results (scoring_eval_results/golden_eval.json,
+   - Results (results/eval/golden_eval.json,
      Hugging Face judge): clear-label classification 51/51; email decision
      58/60 (precision 0.931, recall 1.000); Spearman 0.843; total mean
      absolute error 6.35; reliability standard deviation 0-0.94 with no
@@ -185,7 +185,7 @@ PART 2: PRODUCT GAPS
 ========================================================================
 
 No outstanding small-user product gaps are tracked here. Completed work is in
-Part 1, README.md, scoring_eval_results/, and load_test_results/.
+Part 1, README.md, results/eval/, and results/load_test/.
 
 
 ========================================================================
