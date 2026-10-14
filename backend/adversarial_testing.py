@@ -211,7 +211,7 @@ async def run_red_team(gemini_key: str, tavily_key: str):
         print(f"  [{status}] {r['test']}: {r.get('check', r.get('error', 'N/A'))}")
 
 
-    results_dir = os.path.join(ROOT_DIR, "adversarial_results")
+    results_dir = os.path.join(ROOT_DIR, "results", "adversarial")
     os.makedirs(results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_path = os.path.join(results_dir, f"run_{timestamp}.json")

@@ -268,7 +268,7 @@ def report(m: dict, claims: dict, boots: list, claim_ms: list, args, tag: str) -
             print("       round-robin has a single tenant to rotate through and all the")
             print("       workers converge on the same oldest row.")
 
-    out_dir = os.path.join(os.path.dirname(BASE_DIR), "load_test_results")
+    out_dir = os.path.join(os.path.dirname(BASE_DIR), "results", "load_test")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"drain_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -379,7 +379,7 @@ def calibrate(n_leads: int, base: str) -> None:
     print(f"\n  Feed {pipeline_s / n:.0f} to --lead-seconds for an unscaled run; the scaled")
     print("  default only preserves ratios.")
 
-    out_dir = os.path.join(os.path.dirname(BASE_DIR), "load_test_results")
+    out_dir = os.path.join(os.path.dirname(BASE_DIR), "results", "load_test")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"calibration_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
     with open(path, "w", encoding="utf-8") as f:

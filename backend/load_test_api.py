@@ -224,7 +224,7 @@ def ramp_report(rows: list, args, tag: str) -> None:
     print("  This is the local API ceiling with the worker off; another machine")
     print("  can produce a different result, so treat these as local measurements.")
 
-    out_dir = os.path.join(ROOT_DIR, "load_test_results")
+    out_dir = os.path.join(ROOT_DIR, "results", "load_test")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"ramp_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -361,7 +361,7 @@ def report(idle: dict, sat: dict, args, running: int, tag: str) -> None:
     for s in (idle["errors"]["samples"] + sat["errors"]["samples"])[:5]:
         print(f"    {s}")
 
-    out_dir = os.path.join(ROOT_DIR, "load_test_results")
+    out_dir = os.path.join(ROOT_DIR, "results", "load_test")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"api_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -445,8 +445,8 @@ def main() -> None:
         if not args.in_process_worker:
             cmd.append("--no-in-process-worker")
 
-        os.makedirs(os.path.join(ROOT_DIR, "load_test_results"), exist_ok=True)
-        api_log_path = os.path.join(ROOT_DIR, "load_test_results", "api_server.log")
+        os.makedirs(os.path.join(ROOT_DIR, "results", "load_test"), exist_ok=True)
+        api_log_path = os.path.join(ROOT_DIR, "results", "load_test", "api_server.log")
         api_log = open(api_log_path, "w", encoding="utf-8")
         api = subprocess.Popen(cmd, env=env, cwd=ROOT_DIR,
                                stdout=api_log, stderr=subprocess.STDOUT)

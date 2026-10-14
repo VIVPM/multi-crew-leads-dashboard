@@ -263,7 +263,7 @@ def main():
     with open(os.path.join(BASE, "..", "company_icp.txt"), encoding="utf-8") as fh:
         icp = fh.read()
 
-    out_dir = os.path.join(BASE, "..", "scoring_eval_results")
+    out_dir = os.path.join(BASE, "..", "results", "eval")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"golden_eval_{datetime.now():%Y-%m-%d_%H-%M-%S}.json")
     meter = UsageMeter()
