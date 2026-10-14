@@ -611,12 +611,13 @@ def _user_api_keys(user_id: str) -> dict:
 def _resolve_api_keys(user_id: str, for_job: bool = False) -> tuple:
     """Return (llm_key, tavily_key, uses_own_keys), preferring the user's keys.
 
-    A saved Gemini key only applies while LLM_MODEL is GEMINI; on Cloudflare the
-    operator's model key is always used, so daily credits still apply. With
-    for_job, user keys are re-encrypted before they're written to the jobs row.
+    A saved Gemini key runs the user's jobs on Gemini even when LLM_MODEL is
+    CLOUDFLARE; without one, the operator's model serves them under daily
+    credits. With for_job, user keys are re-encrypted before they're written to
+    the jobs row.
     """
     own = _user_api_keys(user_id)
-    own_llm = own["gemini"] if LLM_MODEL == "GEMINI" else None
+    own_llm = own["gemini"]
     llm_key, tavily_key = own_llm or LLM_API_KEY, own["tavily"] or TAVILY_API_KEY
     if for_job:
         if own_llm:
@@ -631,8 +632,8 @@ def get_api_keys(user_id: str = Depends(current_user)):
     own = _user_api_keys(user_id)
     return {
         **{name: {"saved": bool(key), "last4": key[-4:] if key else None} for name, key in own.items()},
-        "provider": LLM_MODEL,
-        "unlimited": LLM_MODEL == "GEMINI" and bool(own["gemini"] and own["tavily"]),
+        "provider": "GEMINI" if own["gemini"] else LLM_MODEL,
+        "unlimited": bool(own["gemini"] and own["tavily"]),
     }
 
 
@@ -918,7 +919,9 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
 
     try:
-        draft = draft_email(_resolve_api_keys(user_id)[0], lead["scoring_result"], company_context)
+        llm_key = _resolve_api_keys(user_id)[0]
+        provider = "GEMINI" if llm_key != LLM_API_KEY else None
+        draft = draft_email(llm_key, lead["scoring_result"], company_context, provider)
     except Exception:
         logger.exception("Failed to draft email for lead %s", lead_id)
         raise HTTPException(status_code=502, detail="Couldn't draft the email right now. Try again shortly.")

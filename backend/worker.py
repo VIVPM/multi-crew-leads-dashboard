@@ -321,6 +321,11 @@ def _job_key(stored: str) -> str:
     return decrypt_secret(stored[4:], os.environ["SECRET_KEY"]) if stored.startswith("enc:") else stored
 
 
+def _job_provider(stored_llm_key: str) -> Optional[str]:
+    """A user's own key is always a Gemini key, so it runs on Gemini; operator keys follow LLM_MODEL."""
+    return "GEMINI" if stored_llm_key.startswith("enc:") else None
+
+
 async def run_job(job: dict) -> list:
     leads = job["leads"]
     start = time.time()
@@ -339,6 +344,7 @@ async def run_job(job: dict) -> list:
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
+        provider=_job_provider(job["gemini_api_key"]),
     )
     elapsed = round(time.time() - start, 1)
     return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)

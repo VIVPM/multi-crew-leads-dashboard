@@ -86,11 +86,20 @@ try:
     assert worker._job_key(queued_llm) == "user-gemini-1234"
     assert worker._job_key("operator-gemini") == "operator-gemini"
 
+    assert worker._job_provider(queued_llm) == "GEMINI"
+    assert worker._job_provider("operator-gemini") is None
+
     backend.LLM_MODEL = "CLOUDFLARE"
-    llm, tavily, own = backend._resolve_api_keys("7")
-    assert (llm, tavily, own) == (backend.LLM_API_KEY, "user-tavily-5678", False), \
-        "a saved Gemini key must not replace the Cloudflare model key"
+    assert backend._resolve_api_keys("7") == ("user-gemini-1234", "user-tavily-5678", True), \
+        "a saved Gemini key overrides the Cloudflare model"
+    assert backend.get_credits("7")["unlimited"] is True
+    assert backend.get_api_keys("7")["provider"] == "GEMINI"
+
+    backend.supabase = FakeSupabase({"tavily_api_key_enc": encrypt_secret("user-tavily-5678", secret)})
+    assert backend._resolve_api_keys("7") == (backend.LLM_API_KEY, "user-tavily-5678", False), \
+        "without a Gemini key the operator's Cloudflare model serves the job under daily credits"
     assert backend.get_credits("7")["unlimited"] is False
+    assert backend.get_api_keys("7")["provider"] == "CLOUDFLARE"
     backend.LLM_MODEL = original_model
 
     backend.supabase = FakeSupabase({}, missing_columns=True)
