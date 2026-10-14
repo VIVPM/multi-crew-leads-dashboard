@@ -40,6 +40,7 @@ import socket
 import time
 import types
 import yaml
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 from typing import Callable, Dict, List, Optional, TypedDict
 
@@ -913,7 +914,7 @@ def build_graph(
                 "personal_cost": _estimated_cost(p, c, "research", provider)}
 
     def scoring_node(state: LeadState) -> dict:
-        """Judge each rubric once, then add the rounded weighted point values."""
+        """Judge each rubric once, all seven calls at the same time, then add the rounded weighted point values."""
         started = time.time()
         task = _CONFIGS["lead_tasks"]["weighted_scoring"]
         lead = state["lead"]
@@ -937,11 +938,16 @@ def build_graph(
         )
         points, criteria = {}, []
         scoring_cost = _estimated_cost(p, c, "main", provider)
-        for name, rubric in task["attributes"].items():
-            value, reason, (prompt_tokens, completion_tokens), _ = _judge_attribute(
-                rubric, task["instruction"],
-                "\n\n".join(sections[k] for k in rubric["evidence_from"]),
-            )
+        attributes = task["attributes"]
+        with ThreadPoolExecutor(max_workers=len(attributes)) as pool:
+            verdicts = list(pool.map(
+                lambda rubric: _judge_attribute(
+                    rubric, task["instruction"],
+                    "\n\n".join(sections[k] for k in rubric["evidence_from"]),
+                ),
+                attributes.values(),
+            ))
+        for (name, rubric), (value, reason, (prompt_tokens, completion_tokens), _) in zip(attributes.items(), verdicts):
             points[name] = value
             criteria.append(f"{rubric['label']}: {reason} ({value}/{rubric['max_points']})")
             p += prompt_tokens
@@ -993,8 +999,8 @@ def build_graph(
     graph.add_node("email", email_node)
 
     graph.add_edge(START, "company")
-    graph.add_edge("company", "personal_research")
-    graph.add_edge("personal_research", "scoring")
+    graph.add_edge(START, "personal_research")
+    graph.add_edge(["company", "personal_research"], "scoring")
     graph.add_conditional_edges("scoring", route_email, ["email", END])
     graph.add_edge("email", END)
     return graph.compile()

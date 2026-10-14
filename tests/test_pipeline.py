@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
 os.environ.setdefault("LLM_MODEL", "GEMINI")
@@ -87,7 +88,11 @@ def fake_chat(llm, messages, schema=None, via_prompt=None):
     return "Subject: hi\n\nBody text.", None, 40, 15
 
 
+judges_together = threading.Barrier(7, timeout=5)
+
+
 def fake_judge(rubric, instruction, evidence):
+    judges_together.wait()
     label = rubric["label"]
     low = ((label in ("Role relevance", "Seniority") and "Bob" in evidence)
            or (label == "Use-case specificity" and "No need" in evidence)
@@ -126,10 +131,13 @@ assert scores[1].token_usage.total_tokens == 230
 assert scores[0].cost_usd > scores[1].cost_usd > 0
 assert emails[0].cost_usd > 0
 assert pipeline._estimated_cost(1000, 1000, "main", "CLOUDFLARE") < pipeline._estimated_cost(1000, 1000, "main", "GEMINI")
-assert stages == [
-    ("company", "done"), ("personal_research", "done"), ("scoring", "done"), ("email", "done"),
-    ("company", "cached"), ("personal_research", "done"), ("scoring", "done"),
-]
+assert set(stages[:2]) == {("company", "done"), ("personal_research", "done")}
+assert stages[2:4] == [("scoring", "done"), ("email", "done")]
+assert set(stages[4:6]) == {("company", "cached"), ("personal_research", "done")}
+assert stages[6:] == [("scoring", "done")]
+assert {("__start__", "company"), ("__start__", "personal_research")} <= {
+    (e.source, e.target) for e in pipeline.build_graph("k", "k").get_graph().edges
+}
 assert set(agent_times) == {ROLE_COMPANY, ROLE_PERSONAL, ROLE_SCORING, ROLE_EMAIL}
 assert ROLE_COMPANY == "Company Research & Cultural Fit Analyst"
 assert ROLE_EMAIL == "Email Specialist"
