@@ -1,5 +1,5 @@
 """
-run_golden_eval.py — Scores every lead in golden_leads.json with pipeline_weighted
+run_golden_eval.py — Scores every lead in golden_leads.json with the production pipeline
 and compares the result with the human-reviewed gold points.
 
 Reports per-attribute MAE, total MAE, email-decision accuracy, and pass/fail for the bias, invariance, injection, and email-safety
@@ -25,11 +25,8 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE, ".env"))
 sys.path.insert(0, BASE)
 
-import pipeline_weighted as pipeline  # noqa: E402
+import pipeline  # noqa: E402
 
-GEMINI_FLASH = (1.50, 7.50)
-GEMINI_LITE = (0.30, 2.50)
-JUDGE_RATES = {"HUGGING_FACE": (0.90, 0.90), "CLOUDFLARE": (0.20, 0.30)}
 PAIR_TOLERANCE = 3
 INTERNAL_MARKERS = ("/30", "/20", "/15", "/10", "score", "rubric", "disqualifier", "scoring criteria", "cultural fit")
 CRITERIA = re.compile(r"\((\d+)/(\d+)\)\s*$")
@@ -40,7 +37,6 @@ class UsageMeter:
 
     def __init__(self):
         self.tokens = {"flash": [0, 0], "lite": [0, 0], "judge": [0, 0]}
-        self.judge_rate = JUDGE_RATES[pipeline.judge_config()["provider"]]
         self._research, self._chat, self._judge = pipeline._research, pipeline._chat, pipeline._judge_attribute
         pipeline._research, pipeline._chat, pipeline._judge_attribute = self.research, self.chat, self.judge
 
@@ -69,9 +65,9 @@ class UsageMeter:
     def take(self) -> dict:
         """Return this lead's tokens and estimated USD, then reset the counters."""
         f, lt, j = self.tokens["flash"], self.tokens["lite"], self.tokens["judge"]
-        usd = ((f[0] * GEMINI_FLASH[0] + f[1] * GEMINI_FLASH[1]
-                + lt[0] * GEMINI_LITE[0] + lt[1] * GEMINI_LITE[1]
-                + j[0] * self.judge_rate[0] + j[1] * self.judge_rate[1]) / 1e6)
+        usd = (pipeline._estimated_cost(f[0], f[1], "main")
+               + pipeline._estimated_cost(lt[0], lt[1], "research")
+               + pipeline._estimated_cost(j[0], j[1], "judge"))
         snapshot = {"tokens": {k: list(v) for k, v in self.tokens.items()}, "estimated_usd": round(usd, 5)}
         self.tokens = {"flash": [0, 0], "lite": [0, 0], "judge": [0, 0]}
         return snapshot
@@ -91,8 +87,10 @@ def score_lead(record: dict, icp: str, meter: UsageMeter) -> dict:
     started = time.time()
     names = list(pipeline._CONFIGS["lead_tasks"]["weighted_scoring"]["attributes"])
     try:
+        llm_key = (os.environ["GEMINI_API_KEY"] if pipeline.LLM_MODEL == "GEMINI"
+                   else os.environ["CLOUDFLARE_API_TOKEN"])
         scores, emails, _, _ = asyncio.run(pipeline.process_leads(
-            [record["lead"]], os.environ["GEMINI_API_KEY"], os.environ["TAVILY_API_KEY"], icp,
+            [record["lead"]], llm_key, os.environ["TAVILY_API_KEY"], icp,
             max_retries=2, force_refresh=True,
         ))
         result = scores[0].pydantic
@@ -138,7 +136,7 @@ def headline_metrics(done: list, results: dict) -> dict:
     """The original eval's headline numbers: clear-label classification, category error, and rank order.
 
     Borderline leads are left out of classification, as before. A competitor counts as inside
-    its category at any score up to 70, since without halving it no longer lands near zero.
+    its category at any score up to 70, since its other attributes can still earn points.
     """
     tp = fp = fn = tn = 0
     errors = []

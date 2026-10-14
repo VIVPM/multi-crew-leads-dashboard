@@ -1085,6 +1085,8 @@ def persist_results(
 def _persist_one_lead(
     lead: dict, score_obj, email_draft, agent_times: dict, cache_hit: bool, elapsed: float,
 ) -> dict:
+    if score_obj.cost_usd is None or (email_draft and email_draft.cost_usd is None):
+        raise ValueError("Pipeline did not report model cost for this lead.")
     pyd = score_obj.pydantic
     update_payload = {
         "score":          pyd.lead_score.score,
@@ -1099,18 +1101,9 @@ def _persist_one_lead(
     email_usage = email_draft.token_usage if email_draft else None
     score_tokens  = getattr(score_usage, "total_tokens",      0) or 0
     email_tokens  = getattr(email_usage, "total_tokens",      0) or 0
-    score_prompt  = getattr(score_usage, "prompt_tokens",     0) or 0
-    score_compl   = getattr(score_usage, "completion_tokens", 0) or 0
-    email_prompt  = getattr(email_usage, "prompt_tokens",     0) or 0
-    email_compl   = getattr(email_usage, "completion_tokens", 0) or 0
-
     total_tokens = score_tokens + email_tokens
 
-    total_cost = round(
-        (score_prompt + email_prompt) * 0.15 / 1_000_000
-        + (score_compl + email_compl) * 0.60 / 1_000_000,
-        6,
-    )
+    total_cost = round(score_obj.cost_usd + (email_draft.cost_usd if email_draft else 0), 6)
     cost_per_token = (total_cost / total_tokens) if total_tokens else 0.0
 
     email_tasks = (email_draft.tasks_output if email_draft else None) or []
@@ -1141,7 +1134,7 @@ def _persist_one_lead(
             agents_data.append({
                 "agent": name, "status": "Success",
                 "tokens": tokens,
-                "cost": round(tokens * cost_per_token, 6),
+                "cost": round(t.cost, 6) if t.cost is not None else round(tokens * cost_per_token, 6),
                 "time_seconds": agent_times.get(name),
             })
     if cache_hit:

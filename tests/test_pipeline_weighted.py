@@ -1,4 +1,4 @@
-"""Offline checks for the separate probability-weighted scoring pipeline."""
+"""Offline checks for probability-weighted scoring in the production pipeline."""
 
 import asyncio
 import math
@@ -9,7 +9,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 os.environ.setdefault("LLM_MODEL", "GEMINI")
 
-import pipeline_weighted as pipeline  # noqa: E402
+import pipeline  # noqa: E402
 
 
 rubrics = pipeline._CONFIGS["lead_tasks"]["weighted_scoring"]["attributes"]

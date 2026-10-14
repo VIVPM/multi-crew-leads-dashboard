@@ -1,5 +1,5 @@
 """
-pipeline.py — Pure LangGraph logic for the Sales Pipeline Lead Coordinator.
+pipeline.py — LangGraph lead research and probability-weighted scoring pipeline.
 No Streamlit/FastAPI imports here. All agents, nodes, the graph, and the single
 async entry-point `process_leads` live here.
 
@@ -20,8 +20,8 @@ One graph runs per lead:
   3. Email drafting (+ optimization, merged into one prompt) runs only for
      qualified leads, off a conditional edge.
 
-The four YAML prompt files define roles and task contracts. They are rendered
-into system and human messages without changing the scoring rubric here.
+The scoring task YAML defines seven direct point rubrics. The worker imports
+`process_leads` from this module.
 
 Outputs use `_StageOutput` / `_CombinedScoreOutput`, which present the
 `.pydantic`, `.raw`, `.token_usage`, `.tasks_output`, `.to_dict()` and `[key]`
@@ -31,7 +31,9 @@ surface that backend.py's `persist_results` expects.
 import asyncio
 import hashlib
 import ipaddress
+import json
 import logging
+import math
 import os
 import random
 import socket
@@ -122,8 +124,28 @@ def make_scrape_tool(cache: Optional[dict] = None):
     @tool("read_website_content")
     def read_website_content(url: str) -> str:
         """Fetch a web page and return its visible text."""
-        return memoized(url)
+        for attempt in range(SCRAPE_ATTEMPTS):
+            try:
+                return memoized(url)
+            except (requests.RequestException, UnsafeURLError) as exc:
+                if attempt + 1 < SCRAPE_ATTEMPTS and _scrape_retryable(exc):
+                    time.sleep(2 ** attempt + random.uniform(0, 1))
+                    continue
+                return (f"Could not read {url}: {type(exc).__name__}: {str(exc)[:200]}. "
+                        "Use other search results instead.")
     return read_website_content
+
+
+SCRAPE_ATTEMPTS = 3
+
+
+def _scrape_retryable(exc: BaseException) -> bool:
+    """Rate limits, server errors, timeouts and dropped connections can pass on retry; 4xx, DNS and unsafe URLs cannot."""
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return True
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status == 429 or (status is not None and status >= 500)
 
 
 def _as_untrusted(text: str, source: str) -> str:
@@ -252,6 +274,12 @@ class LeadScoringResult(BaseModel):
     lead_score: LeadScore
 
 
+class ResearchReport(BaseModel):
+    personal_info: LeadPersonalInfo
+    company_info: CompanyInfo
+    validation_notes: Optional[str] = None
+
+
 def _load_configs() -> Dict[str, dict]:
     """Load all four YAML config files relative to this file's directory."""
     base = os.path.dirname(os.path.abspath(__file__))
@@ -292,8 +320,6 @@ CLOUDFLARE_MODEL = os.getenv("CLOUDFLARE_MODEL", "@cf/openai/gpt-oss-20b")
 CLOUDFLARE_MAX_TOKENS = int(os.getenv("CLOUDFLARE_MAX_TOKENS", "4096"))
 
 
-LLM_FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", "").strip().upper()
-
 _SUPPORTED_LLM_MODELS = ("GEMINI", "CLOUDFLARE")
 if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
     raise RuntimeError(
@@ -301,16 +327,6 @@ if LLM_MODEL not in _SUPPORTED_LLM_MODELS:
         "A typo here would otherwise fall through to the default provider and "
         "quietly bill the wrong account."
     )
-if LLM_FALLBACK_MODEL:
-    if LLM_FALLBACK_MODEL not in _SUPPORTED_LLM_MODELS:
-        raise RuntimeError(
-            f"LLM_FALLBACK_MODEL={LLM_FALLBACK_MODEL!r} is not one of {_SUPPORTED_LLM_MODELS}."
-        )
-    if LLM_FALLBACK_MODEL == LLM_MODEL:
-        raise RuntimeError(
-            "LLM_FALLBACK_MODEL is the same provider as LLM_MODEL, which would "
-            "retry an outage against the endpoint that is already failing."
-        )
 
 
 STRUCTURED_VIA_PROMPT = LLM_MODEL == "CLOUDFLARE"
@@ -318,13 +334,13 @@ STRUCTURED_VIA_PROMPT = LLM_MODEL == "CLOUDFLARE"
 
 def normalize_company_key(company_name: str, our_company_context: str) -> str:
     """
-    Cache key = normalized company name + a hash of the ICP text, since
-    cultural-fit assessment is relative to whichever ICP is asking — two
-    users with different ICPs must not share a cached fit score.
+    Cache key = normalized company name + a hash of the ICP text and the scoring
+    version. This keeps earlier cached research from carrying old fit instructions
+    into the weighted scorer, without deleting stored rows.
     """
     icp_hash = hashlib.sha256((our_company_context or "").encode()).hexdigest()[:16]
     normalized_name = (company_name or "").strip().lower()
-    return f"{normalized_name}:{icp_hash}"
+    return f"weighted-v1:{normalized_name}:{icp_hash}"
 
 
 def format_company_summary(company_dump: dict) -> str:
@@ -347,15 +363,12 @@ def format_company_summary(company_dump: dict) -> str:
 
 
 class _AgentRef:
-    """One analysis-row role with its exact token count when available.
+    """One analysis-row role with its exact tokens and estimated cost."""
 
-    None leaves the legacy even-split fallback for stages without per-role
-    usage, while fresh graph nodes carry their own counts.
-    """
-
-    def __init__(self, role: str, tokens: Optional[int] = None):
+    def __init__(self, role: str, tokens: Optional[int] = None, cost: Optional[float] = None):
         self.agent = role
         self.tokens = tokens
+        self.cost = cost
 
 
 class _StageOutput:
@@ -367,14 +380,16 @@ class _StageOutput:
 
     def __init__(self, roles: List[str], raw: str, pydantic=None,
                  prompt_tokens: int = 0, completion_tokens: int = 0,
-                 per_role: Optional[List[tuple]] = None):
+                 per_role: Optional[List[tuple]] = None,
+                 per_role_cost: Optional[List[float]] = None):
         self.raw = raw
         self.pydantic = pydantic
-
+        self.cost_usd = sum(per_role_cost) if per_role_cost is not None else None
 
         if per_role:
             self.tasks_output = [
-                _AgentRef(role, p + c) for role, (p, c) in zip(roles, per_role)
+                _AgentRef(role, p + c, per_role_cost[i] if per_role_cost else None)
+                for i, (role, (p, c)) in enumerate(zip(roles, per_role))
             ]
         else:
             self.tasks_output = [_AgentRef(r) for r in roles]
@@ -433,6 +448,12 @@ class _CombinedScoreOutput:
         )
 
     @property
+    def cost_usd(self):
+        stages = (self._scoring_output, self._company_output)
+        costs = [stage.cost_usd for stage in stages if stage is not None]
+        return sum(costs) if all(cost is not None for cost in costs) else None
+
+    @property
     def tasks_output(self):
         company_tasks = list(self._company_output.tasks_output) if self._company_output else []
         return company_tasks + list(self._scoring_output.tasks_output or [])
@@ -481,7 +502,8 @@ _TRANSPORT_MARKERS = (
 _PERMANENT_MARKERS = (
     "parse failed", "validationerror", "invalid_argument", "invalid function name",
     "api key not valid", "permission denied", "unauthorized", "401", "403",
-    "unsafeurlerror",
+    "unsafeurlerror", "score-token", "judge did not", "judge returned no",
+    "score was not", "logprobs", "log probabilities unsupported",
 )
 
 
@@ -574,23 +596,11 @@ def _research(llm, tools, system: str, human: str):
     return messages, prompt, completion
 
 
-def _provider_key(provider: str) -> Optional[str]:
-    """The operator-held API key for a provider, or None if it isn't configured.
-
-    Only used by the fallback path — the primary provider's key arrives as an
-    argument, because it travels with the job.
-    """
-    return os.getenv("CLOUDFLARE_API_TOKEN" if provider == "CLOUDFLARE" else "GEMINI_API_KEY")
-
-
 def _build_llms(llm_key: str, provider: Optional[str] = None):
-    """The two model tiers the agents use, for whichever provider is selected.
+    """The two model tiers for the selected research provider.
 
-    `provider` defaults to LLM_MODEL; the fallback path passes the other one.
-
-    Returns (judgment_llm, retrieval_llm). On Gemini that's 2.5 Flash for
-    judgment and 2.5 Flash-Lite for retrieval, the models the 60-lead
-    evaluation was scored on; Cloudflare has one Workers AI model for both.
+    Gemini uses 3.6 Flash for extraction/email and 3.5 Flash-Lite for
+    research; Cloudflare uses one Workers AI model for both tiers.
     """
     if (provider or LLM_MODEL) == "CLOUDFLARE":
         from langchain_openai import ChatOpenAI
@@ -649,9 +659,126 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
 
     limits = {"timeout": LLM_REQUEST_TIMEOUT_S, "max_retries": LLM_REQUEST_RETRIES}
     return (
-        ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=llm_key, streaming=True, **limits),
-        ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", google_api_key=llm_key, streaming=True, **limits),
+        ChatGoogleGenerativeAI(model="gemini-3.6-flash", google_api_key=llm_key, streaming=True, **limits),
+        ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", google_api_key=llm_key, streaming=True, **limits),
     )
+
+
+HF_JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct:scaleway"
+_JUDGE_PROVIDERS = ("HUGGING_FACE", "CLOUDFLARE")
+
+
+def judge_config() -> dict:
+    """Client settings for the scoring judge chosen by JUDGE_PROVIDER (HUGGING_FACE or CLOUDFLARE)."""
+    provider = os.getenv("JUDGE_PROVIDER", "").strip().upper()
+    if provider not in _JUDGE_PROVIDERS:
+        raise RuntimeError(f"JUDGE_PROVIDER must be one of {_JUDGE_PROVIDERS}; got {provider or 'nothing'}.")
+    if provider == "HUGGING_FACE":
+        key = os.getenv("HUGGINGFACE_API_KEY")
+        if not key:
+            raise RuntimeError("JUDGE_PROVIDER=HUGGING_FACE needs HUGGINGFACE_API_KEY.")
+        return {"provider": provider, "api_key": key, "base_url": "https://router.huggingface.co/v1",
+                "model": HF_JUDGE_MODEL, "extra": {"max_tokens": 256, "top_logprobs": 20}}
+    key, account = os.getenv("CLOUDFLARE_API_TOKEN"), os.getenv("CLOUDFLARE_ACCOUNT_ID")
+    if not key or not account:
+        raise RuntimeError("JUDGE_PROVIDER=CLOUDFLARE needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.")
+    return {"provider": provider, "api_key": key,
+            "base_url": f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
+            "model": CLOUDFLARE_MODEL,
+            "extra": {"max_completion_tokens": 512, "reasoning_effort": "low", "top_logprobs": 20}}
+
+
+def _estimated_cost(prompt_tokens: int, completion_tokens: int, tier: str) -> float:
+    """Model-token estimate in USD; excludes Tavily and provider-specific cache discounts."""
+    if tier == "judge":
+        rates = (0.90, 0.90) if judge_config()["provider"] == "HUGGING_FACE" else (0.20, 0.30)
+    elif LLM_MODEL == "CLOUDFLARE":
+        rates = (0.20, 0.30)
+    else:
+        rates = (0.30, 2.50) if tier == "research" else (1.50, 7.50)
+    return (prompt_tokens * rates[0] + completion_tokens * rates[1]) / 1_000_000
+
+
+def _score_token(tokens: list):
+    """The first answer token; for gpt-oss, the first token after its final-channel marker."""
+    starts = [i + 3 for i in range(len(tokens) - 2)
+              if tokens[i].token == "<|channel|>" and tokens[i + 1].token.strip() == "final"
+              and tokens[i + 2].token == "<|message|>"]
+    index = starts[-1] if starts else 0
+    return tokens[index] if index < len(tokens) else None
+
+
+def judge_company_summary(summary: str) -> str:
+    """Company research without its own 0-10 fit number, so the judge scores fit from the notes."""
+    return "\n".join(line for line in summary.splitlines() if not line.startswith("Cultural Fit Score"))
+
+
+def _score_candidates(candidates: list, maximum: int) -> list:
+    """Up to five most likely valid score tokens as (score, normalized probability)."""
+    scores, log_probs = [], []
+    for candidate in candidates:
+        token = candidate.token.strip()
+        if (token.isascii() and token.isdecimal() and 0 <= int(token) <= maximum
+                and candidate.logprob is not None and math.isfinite(candidate.logprob)):
+            scores.append(int(token))
+            log_probs.append(candidate.logprob)
+            if len(scores) == 5:
+                break
+    if not scores:
+        raise ValueError("The judge did not return any numeric score-token candidates.")
+    shift = max(log_probs)
+    weights = [math.exp(prob - shift) for prob in log_probs]
+    total = sum(weights)
+    return [(score, weight / total) for score, weight in zip(scores, weights)]
+
+
+def _weighted_points(candidates: list, maximum: int) -> int:
+    """Weight the five most likely valid score tokens and round once."""
+    pairs = _score_candidates(candidates, maximum)
+    return math.floor(sum(score * prob for score, prob in pairs) + 0.5)
+
+
+def _judge_attribute(rubric: dict, instruction: str, evidence: str) -> tuple:
+    """Score one attribute in one judge call, weighting its five most likely score tokens.
+
+    Returns (points, reason, (prompt_tokens, completion_tokens), [(score, probability), ...]).
+    """
+    from openai import OpenAI
+
+    maximum = rubric["max_points"]
+    bands = "\n".join(
+        f"{band['range'][0]}–{band['range'][1]}: {band['evidence']}"
+        for band in rubric["bands"]
+    )
+    system = (
+        f"{instruction}\nJudge {rubric['label']} directly from 0 to {maximum}.\n"
+        f"Bands:\n{bands}\n"
+        "Output an integer score as the FIRST token, then a newline and one "
+        "sentence explaining the evidence. No prefix, quotes, or markdown."
+    )
+    cfg = judge_config()
+    with OpenAI(
+        api_key=cfg["api_key"], base_url=cfg["base_url"],
+        timeout=LLM_REQUEST_TIMEOUT_S, max_retries=LLM_REQUEST_RETRIES,
+    ) as client:
+        response = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": evidence}],
+            temperature=0, logprobs=True, **cfg["extra"],
+        )
+    choice = response.choices[0]
+    lines = (choice.message.content or "").strip().splitlines()
+    if len(lines) < 2 or not lines[0].strip().isdecimal() or not " ".join(lines[1:]).strip():
+        raise ValueError(f"{rubric['label']} judge returned no score or evidence.")
+    if not choice.logprobs or not choice.logprobs.content:
+        raise ValueError(f"{rubric['label']} judge did not provide token probabilities.")
+    first_token = _score_token(choice.logprobs.content)
+    if first_token is None or first_token.token.strip() != lines[0].strip():
+        raise ValueError(f"{rubric['label']} score was not a single first token.")
+    candidates = _score_candidates(first_token.top_logprobs or [], maximum)
+    points = math.floor(sum(score * prob for score, prob in candidates) + 0.5)
+    usage = (response.usage.prompt_tokens, response.usage.completion_tokens) if response.usage else (0, 0)
+    return points, " ".join(lines[1:]).strip(), usage, candidates
 
 
 class LeadState(TypedDict, total=False):
@@ -662,6 +789,7 @@ class LeadState(TypedDict, total=False):
     cache_hit: bool
     personal_raw: str
     personal_tokens: tuple
+    personal_cost: float
     scoring: _StageOutput
     email: Optional[_StageOutput]
 
@@ -743,12 +871,16 @@ def build_graph(
         task_cfg = _CONFIGS["lead_tasks"]["company_research"]
         inputs = {"lead_data": lead, "our_company_context": state["icp"]}
         messages, p, c = _research(
-            llm_flash, search_tools,
+            llm_flash_lite, search_tools,
             _system_prompt(agent_cfg, task_cfg), _human_prompt(task_cfg, inputs),
         )
 
 
-        raw, parsed, p2, c2 = _chat(llm_flash, messages, CompanyResearchResult, via_prompt)
+        raw, parsed, p2, c2 = _chat(
+            llm_flash,
+            [*messages, HumanMessage("Return the company research report above as structured output.")],
+            CompanyResearchResult, via_prompt,
+        )
 
         dump = parsed.model_dump()
         if cache_set:
@@ -756,7 +888,11 @@ def build_graph(
         _done("company", ROLE_COMPANY, started)
         return {
             "company_summary": format_company_summary(dump),
-            "company_out": _StageOutput([ROLE_COMPANY], raw, parsed, p + p2, c + c2),
+            "company_out": _StageOutput(
+                [ROLE_COMPANY], raw, parsed, p + p2, c + c2,
+                per_role=[(p + p2, c + c2)],
+                per_role_cost=[_estimated_cost(p, c, "research") + _estimated_cost(p2, c2, "main")],
+            ),
             "cache_hit": False,
         }
 
@@ -771,33 +907,65 @@ def build_graph(
             _human_prompt(task_cfg, {"lead_data": state["lead"]}),
         )
         _done("personal_research", ROLE_PERSONAL, started)
-        return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c)}
+        return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c),
+                "personal_cost": _estimated_cost(p, c, "research")}
 
-    # Scores the lead from the gathered company and personal context.
     def scoring_node(state: LeadState) -> dict:
+        """Judge each rubric once, then add the rounded weighted point values."""
         started = time.time()
-        agent_cfg = _CONFIGS["lead_agents"]["scoring_validation_agent"]
-        task_cfg = _CONFIGS["lead_tasks"]["lead_scoring_and_validation"]
-        inputs = {
-            "lead_data": state["lead"],
-            "company_research_summary": state["company_summary"],
+        task = _CONFIGS["lead_tasks"]["weighted_scoring"]
+        lead = state["lead"]
+        sections = {
+            "seller": f"Seller's company profile:\n{state['icp']}",
+            "lead": f"Submitted lead:\n{json.dumps(lead, ensure_ascii=False)}",
+            "personal": f"Personal research:\n{state['personal_raw']}",
+            "company": f"Company research:\n{judge_company_summary(state['company_summary'])}",
+            "use_case": f"Submitted use case:\n{lead.get('use_case') or 'None given'}",
+            "source": f"Lead source field:\n{lead.get('source') or 'Unknown'}",
         }
-        raw, parsed, p, c = _chat(
+        evidence = "\n\n".join(sections[k] for k in ("seller", "lead", "personal", "company"))
+        raw, report, p, c = _chat(
             llm_flash,
-            [
-                SystemMessage(_system_prompt(agent_cfg, task_cfg)),
-                HumanMessage(_human_prompt(task_cfg, inputs, context=state["personal_raw"])),
-            ],
-            LeadScoringResult,
-            via_prompt,
+            [SystemMessage(task["report"]), HumanMessage(evidence)],
+            ResearchReport,
+        )
+        sections["person"] = (
+            "Person (from research):\n"
+            + json.dumps(report.personal_info.model_dump(include={"job_title", "years_experience"}), ensure_ascii=False)
+        )
+        points, criteria = {}, []
+        scoring_cost = _estimated_cost(p, c, "main")
+        for name, rubric in task["attributes"].items():
+            value, reason, (prompt_tokens, completion_tokens), _ = _judge_attribute(
+                rubric, task["instruction"],
+                "\n\n".join(sections[k] for k in rubric["evidence_from"]),
+            )
+            points[name] = value
+            criteria.append(f"{rubric['label']}: {reason} ({value}/{rubric['max_points']})")
+            p += prompt_tokens
+            c += completion_tokens
+            scoring_cost += _estimated_cost(prompt_tokens, completion_tokens, "judge")
+        demographic = points["role_relevance"] + points["seniority"]
+        firmographic = points["company_size"] + points["market_presence"]
+        behavioral = points["cultural_fit"] + points["use_case_specificity"] + points["engagement_signal"]
+        parsed = LeadScoringResult(
+            personal_info=report.personal_info,
+            company_info=report.company_info,
+            lead_score=LeadScore(
+                score=demographic + firmographic + behavioral,
+                scoring_criteria=criteria,
+                validation_notes=report.validation_notes,
+                demographic_score=demographic,
+                firmographic_score=firmographic,
+                behavioral_score=behavioral,
+            ),
         )
         _done("scoring", ROLE_SCORING, started)
         pp, pc = state["personal_tokens"]
-
-
         return {"scoring": _StageOutput(
             [ROLE_PERSONAL, ROLE_SCORING], raw, parsed, pp + p, pc + c,
             per_role=[(pp, pc), (p, c)],
+            per_role_cost=[state["personal_cost"], scoring_cost],
         )}
 
     # Drafts an outreach email for qualified leads.
@@ -808,7 +976,10 @@ def build_graph(
             via_prompt=via_prompt,
         )
         _done("email", ROLE_EMAIL, started)
-        return {"email": _StageOutput([ROLE_EMAIL], raw, None, p, c)}
+        return {"email": _StageOutput(
+            [ROLE_EMAIL], raw, None, p, c,
+            per_role=[(p, c)], per_role_cost=[_estimated_cost(p, c, "main")],
+        )}
 
     def route_email(state: LeadState) -> str:
         return "email" if state["scoring"].pydantic.lead_score.score > EMAIL_SCORE_THRESHOLD else END
@@ -850,7 +1021,6 @@ async def process_leads(
     force_refresh: bool = False,
     max_retries: int = 3,
     on_stage: Optional[Callable[[str, str], None]] = None,
-    allow_fallback: bool = True,
 ):
     """
     Score and email-draft all leads in `leads`.
@@ -873,6 +1043,7 @@ async def process_leads(
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
+    judge_config()
 
     agent_times: Dict[str, float] = {}
     provider = LLM_MODEL
@@ -902,21 +1073,6 @@ async def process_leads(
             if attempt == max_retries:
                 logger.error("All %d retry attempts exhausted", max_retries)
                 raise
-
-
-            if allow_fallback and LLM_FALLBACK_MODEL and provider == LLM_MODEL:
-                fallback_key = _provider_key(LLM_FALLBACK_MODEL)
-                if fallback_key:
-                    provider = LLM_FALLBACK_MODEL
-                    logger.warning("Falling back from %s to %s for the remaining attempts",
-                                   LLM_MODEL, provider)
-                    graph = build_graph(
-                        fallback_key, tavily_key, cache_get, cache_set, force_refresh,
-                        on_stage, agent_times, provider,
-                    )
-                else:
-                    logger.warning("LLM_FALLBACK_MODEL=%s but its API key is unset; "
-                                   "staying on %s", LLM_FALLBACK_MODEL, provider)
 
 
             wait = random.uniform(0, 2 ** attempt)

@@ -2,7 +2,7 @@
   "_about": {
     "purpose": "Golden dataset for the weighted lead scorer: human-reviewable gold points per attribute, so judge accuracy can be measured as per-attribute MAE plus email-decision accuracy.",
     "icp": "company_icp.txt (multi-agent orchestration seller). Gold scores are ICP-specific.",
-    "rubric": "backend/config/lead_qualification_tasks_weighted.yaml (role 15, seniority 5, size 10, presence 10, cultural fit 30, use case 20, engagement 10).",
+    "rubric": "backend/config/lead_qualification_tasks.yaml (role 15, seniority 5, size 10, presence 10, cultural fit 30, use case 20, engagement 10).",
     "status": "DRAFT gold scores written by an assistant from general knowledge; a human must review every record, especially real-company facts.",
     "email_rule": "gold.email is true when gold.total > 70.",
     "borderline_excluded": "Leads whose gold total is 65-75 (the app's Borderline band) are left out: the salesperson decides those, so the eval only scores clear cases.",

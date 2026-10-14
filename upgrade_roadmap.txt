@@ -117,7 +117,7 @@ trip is small compared with a Tavily or Gemini call.
      safety; 17 easy, 22 medium, 21 hard. No gold total is in the 65-75
      Borderline band. Six leads repeat three times, so
      `run_golden_eval.py` makes 72 runs.
-   - It scores with `pipeline_weighted.py`: one judge call per attribute,
+   - It scores with `pipeline.py`, the same code the worker runs: one judge call per attribute,
      with up to five valid score tokens weighted by normalized
      probabilities. `JUDGE_PROVIDER` selects Hugging Face (Llama 3.3 70B on
      Scaleway) or Cloudflare (gpt-oss-20b). Research uses Gemini 3.5
@@ -132,12 +132,10 @@ trip is small compared with a Tavily or Gemini call.
      runs, excluding Tavily.
 
 13. Explicit scoring budgets
-   - Seven sub-component bands total 100: demographic 30, firmographic 30,
-     behavioral 40. Unverifiable companies receive zero firmographic points.
-   - Company research marks clear ICP disqualifiers in cultural-fit notes.
-     Scoring halves the summed score when marked, keeping the original
-     component breakdown. Unverified people are scored from the submitted
-     job title rather than assigned zero role relevance.
+   - Seven attribute budgets total 100: demographic 20, firmographic 20,
+     behavioral 60. Unverifiable companies receive zero firmographic points.
+   - Unverified people are scored from the submitted job title rather than
+     assigned zero role relevance.
 
 14. Provider selection
    - `LLM_MODEL` explicitly selects Gemini or Cloudflare Workers AI; there is no
@@ -175,10 +173,9 @@ trip is small compared with a Tavily or Gemini call.
      instead of breaking every request.
    - CI covers main and all langgraph branches and installs real requirements.
 
-17. Disqualifier penalty
-   - Company research ends cultural-fit notes with `Disqualifier: yes/no`
-     based on the ICP's "Not a fit" line. Scoring halves the summed score on
-     a clear match; the component breakdown remains unhalved.
+17. ICP "Not a fit" handling
+   - Cultural fit is judged against the ICP's "Not a fit" line, so a clear
+     match scores low on that attribute.
    - When the person cannot be verified, role relevance uses the submitted
      job title. Unknown company size is valid and receives zero size points.
 

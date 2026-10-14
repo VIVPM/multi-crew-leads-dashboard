@@ -85,7 +85,7 @@ try:
     from backend.backend import supabase, persist_results  # noqa: E402
 except ImportError:
     from backend import supabase, persist_results  # noqa: E402
-from pipeline import process_leads, PIPELINE_TIMEOUT_S, is_retryable  # noqa: E402
+from pipeline import process_leads, PIPELINE_TIMEOUT_S, is_retryable, judge_config  # noqa: E402
 from queue_policy import choose_round_robin_job, next_concurrency  # noqa: E402
 from security import decrypt_secret  # noqa: E402
 
@@ -332,7 +332,6 @@ async def run_job(job: dict) -> list:
         progress[stage] = state
         supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
 
-    user_funded = job["gemini_api_key"].startswith("enc:")
     scores, emails, agent_times, cache_hits = await process_leads(
         leads, _job_key(job["gemini_api_key"]), _job_key(job["tavily_api_key"]),
         our_company_context=job.get("our_company_context") or "",
@@ -340,7 +339,6 @@ async def run_job(job: dict) -> list:
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
-        allow_fallback=not user_funded,
     )
     elapsed = round(time.time() - start, 1)
     return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
@@ -368,6 +366,7 @@ async def process_one_job(job: dict) -> None:
 
 
 async def main():
+    judge_config()
     logger.info(
         "Worker started (poll interval %ds, up to %d job(s) concurrently)",
         POLL_INTERVAL_S, MAX_CONCURRENT_JOBS,

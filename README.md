@@ -10,7 +10,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Required ICP** — processing is blocked until a company profile and ideal customer profile are saved
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
-- **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, optional provider failover, and a circuit breaker
+- **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, and a circuit breaker
 - **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`; users may save their own Gemini and Tavily keys in Settings. Both keys lift the cap on Gemini, but not on Cloudflare. Failed jobs refund credits.
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits. The browser session ends when its tab closes.
 - **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
@@ -51,7 +51,7 @@ company_research_cache · refresh_tokens · login_failures")]
     end
 
     subgraph EXT ["6 · External AI"]
-        LLM["☁️ Gemini 2.5 Flash / Flash-Lite · Workers AI"]
+        LLM["☁️ Gemini 3.5 Flash-Lite / 3.6 Flash · Workers AI"]
         Tavily["🔍 Tavily web search"]
     end
 
@@ -91,13 +91,12 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── backend.py             # FastAPI: auth, lead CRUD, profiles, job queue
 │   ├── worker.py              # concurrent job processor and company cache
 │   ├── queue_policy.py        # tenant round-robin job selection
-│   ├── pipeline.py            # LangGraph graph and process_leads entry point
-│   ├── pipeline_weighted.py   # seven-attribute probability-weighted scoring (evaluation)
+│   ├── pipeline.py            # LangGraph graph and weighted process_leads entry point
 │   ├── security.py            # bcrypt, access/refresh tokens, encrypted credentials
 │   ├── logging_setup.py       # JSON logs and correlation IDs
 │   ├── adversarial_testing.py # red-team suite
 │   ├── run_full_eval.py       # five-phase scoring evaluation
-│   ├── run_golden_eval.py     # golden-set evaluation of pipeline_weighted.py
+│   ├── run_golden_eval.py     # golden-set evaluation of the production pipeline
 │   ├── golden_leads.json      # 60 leads with gold points per attribute
 │   ├── load_test.py           # worker drain and multi-worker safety
 │   ├── load_test_api.py       # API saturation and production ramp
@@ -149,7 +148,8 @@ SECRET_KEY=any_long_random_string
 
 LLM_MODEL=GEMINI                     # GEMINI or CLOUDFLARE; required
 GEMINI_API_KEY=your_gemini_key       # required for GEMINI
-LLM_FALLBACK_MODEL=                  # optional: GEMINI or CLOUDFLARE
+JUDGE_PROVIDER=HUGGING_FACE          # HUGGING_FACE or CLOUDFLARE; required
+HUGGINGFACE_API_KEY=                 # required for HUGGING_FACE
 BREAKER_THRESHOLD=5                  # consecutive transport failures
 BREAKER_COOLDOWN_S=60
 CLOUDFLARE_ACCOUNT_ID=               # required for CLOUDFLARE
@@ -171,7 +171,7 @@ LANGFUSE_HOST=
 EMAIL_SEND_DAILY_CAP=80
 ```
 
-Failover is intentionally off by default: the providers do not score identically (one measured lead scored 78 vs 94). When enabled, failover applies only to transport-shaped failures and never to jobs using a user's own Gemini key. The circuit breaker pauses job claims during an outage so queued work remains pending instead of becoming a wall of failures.
+The circuit breaker pauses job claims during an outage so queued work remains pending instead of becoming a wall of failures.
 
 Run the API and worker from the repository root:
 
@@ -304,7 +304,7 @@ The estimated healthy ceiling is **about 50 concurrent users on this machine**, 
 | Pipeline time, five leads | 258s |
 | Time per lead | 51.7s |
 
-`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Current cost fields and dashboard charts still calculate from the former $0.15/M input and $0.60/M output rates; treat them as estimates, not Gemini billing amounts.
+`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Cost fields and dashboard charts multiply each model's token counts by its list price; treat them as estimates, not billing amounts.
 
 ## Testing & CI/CD
 
@@ -325,11 +325,9 @@ CI runs backend checks, frontend lint/tests/build, and both Docker builds. A fou
 
 ## Scoring and Evaluation
 
-The scoring rubric uses fixed point budgets: demographic (30), firmographic (30), and behavioral (40). Company research can mark a clear match to the ICP's “Not a fit” criteria; scoring then halves the summed score while retaining the original component breakdown. If a person cannot be verified online, the submitted job title still informs role relevance. Unknown company size remains unknown rather than guessed. Company research cached before this change may lack the disqualifier marker until expiry; use Force refresh to reassess it.
+`backend/pipeline.py` scores seven attributes on fixed point budgets: role relevance (15), seniority (5), company size (10), market presence (10), cultural fit (30), use-case specificity (20), and engagement (10). Each attribute is one judge call that returns its score token with log probabilities; up to five of the most likely valid scores are normalized, weighted, and rounded. There is no separate disqualifier: cultural fit follows the ICP's "Not a fit" description. `JUDGE_PROVIDER` selects the judge, `HUGGING_FACE` (Llama 3.3 70B on Scaleway) or `CLOUDFLARE` (`gpt-oss-20b`). Research uses Gemini 3.5 Flash-Lite; fact extraction and email drafting use Gemini 3.6 Flash. The attributes roll up into demographic (20), firmographic (20), and behavioral (60) components. If a person cannot be verified online, the submitted job title still informs role relevance. Unknown company size stays unknown rather than guessed.
 
 ### Evaluation
-
-The evaluation scores leads with `backend/pipeline_weighted.py`; the worker runs `backend/pipeline.py`. It scores seven attributes on fixed point budgets: role relevance (15), seniority (5), company size (10), market presence (10), cultural fit (30), use-case specificity (20), and engagement (10). Each attribute is one judge call that returns its score token with log probabilities; up to five of the most likely valid scores are normalized, weighted, and rounded. There is no separate disqualifier: cultural fit follows the ICP's "Not a fit" description. `JUDGE_PROVIDER` selects the judge, `HUGGING_FACE` (Llama 3.3 70B on Scaleway) or `CLOUDFLARE` (`gpt-oss-20b`). Research uses Gemini 3.5 Flash-Lite; fact extraction and email drafting use Gemini 3.6 Flash.
 
 `backend/golden_leads.json` holds 60 leads with gold points for every attribute: 14 strong fit, 8 competitor, 8 weak fit, 6 unverifiable, 5 wrong buyer, 5 vague or contradictory, 4 bias pairs, 4 prompt injection, 3 adversarial (hype and duplicate submissions), and 3 email safety; 17 easy, 22 medium, and 21 hard. No gold total falls in the 65–75 Borderline band, which the salesperson decides. Six leads run three times each for reliability, so `backend/run_golden_eval.py` makes 72 runs.
 

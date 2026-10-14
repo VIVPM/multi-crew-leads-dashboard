@@ -42,8 +42,8 @@ def _scoring(score: int) -> LeadScoringResult:
         company_info={"company_name": "Acme", "industry": "Tech",
                       "company_size": 500, "market_presence": 8},
         lead_score={"score": score, "scoring_criteria": ["role"],
-                    "demographic_score": 28, "firmographic_score": 27,
-                    "behavioral_score": score - 55},
+                    "demographic_score": 20, "firmographic_score": 20,
+                    "behavioral_score": score - 40},
     )
 
 
@@ -61,15 +61,17 @@ try:
 
     score_a = _CombinedScoreOutput(
         _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(85), 100, 50,
-                     per_role=[(90, 40), (10, 10)]),
-        _StageOutput([ROLE_COMPANY], "company raw", None, 30, 10),
+                     per_role=[(90, 40), (10, 10)], per_role_cost=[0.00008, 0.00018]),
+        _StageOutput([ROLE_COMPANY], "company raw", None, 30, 10,
+                     per_role=[(30, 10)], per_role_cost=[0.00012]),
     )
     score_b = _CombinedScoreOutput(
         _StageOutput([ROLE_PERSONAL, ROLE_SCORING], "scoring raw", _scoring(40), 100, 50,
-                     per_role=[(90, 40), (10, 10)]),
+                     per_role=[(90, 40), (10, 10)], per_role_cost=[0.00008, 0.00018]),
         None,
     )
-    email_a = _StageOutput([ROLE_EMAIL], "Subject: hi\n\nBody.", None, 40, 20)
+    email_a = _StageOutput([ROLE_EMAIL], "Subject: hi\n\nBody.", None, 40, 20,
+                           per_role=[(40, 20)], per_role_cost=[0.00004])
 
     results = persist_results(
         [lead_a, lead_b], [score_a, score_b], [email_a, None],
@@ -130,7 +132,8 @@ try:
 
 
     assert abs(sum(x["cost"] for x in ra["agents_data"]) - ra["total_cost"]) < 1e-4
-    assert ra["total_cost"] > 0
+    assert ra["total_cost"] == 0.00042
+    assert rb["total_cost"] == 0.00026
 
 
     persist_results([lead_a], [score_a], [email_a], {}, [False], 9.0)
