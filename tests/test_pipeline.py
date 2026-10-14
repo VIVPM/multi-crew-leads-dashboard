@@ -125,6 +125,7 @@ assert scores[0].token_usage.total_tokens == 390
 assert scores[1].token_usage.total_tokens == 230
 assert scores[0].cost_usd > scores[1].cost_usd > 0
 assert emails[0].cost_usd > 0
+assert pipeline._estimated_cost(1000, 1000, "main", "CLOUDFLARE") < pipeline._estimated_cost(1000, 1000, "main", "GEMINI")
 assert stages == [
     ("company", "done"), ("personal_research", "done"), ("scoring", "done"), ("email", "done"),
     ("company", "cached"), ("personal_research", "done"), ("scoring", "done"),

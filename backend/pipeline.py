@@ -688,11 +688,11 @@ def judge_config() -> dict:
             "extra": {"max_completion_tokens": 512, "reasoning_effort": "low", "top_logprobs": 20}}
 
 
-def _estimated_cost(prompt_tokens: int, completion_tokens: int, tier: str) -> float:
-    """Model-token estimate in USD; excludes Tavily and provider-specific cache discounts."""
+def _estimated_cost(prompt_tokens: int, completion_tokens: int, tier: str, provider: Optional[str] = None) -> float:
+    """Model-token estimate in USD for the research provider (LLM_MODEL unless overridden); excludes Tavily and cache discounts."""
     if tier == "judge":
         rates = (0.90, 0.90) if judge_config()["provider"] == "HUGGING_FACE" else (0.20, 0.30)
-    elif LLM_MODEL == "CLOUDFLARE":
+    elif (provider or LLM_MODEL) == "CLOUDFLARE":
         rates = (0.20, 0.30)
     else:
         rates = (0.30, 2.50) if tier == "research" else (1.50, 7.50)
@@ -810,16 +810,17 @@ def _email_messages(scoring: dict, icp: str) -> list:
     ]
 
 
-def draft_email(llm_key: str, scoring_result: dict, icp: str) -> str:
+def draft_email(llm_key: str, scoring_result: dict, icp: str, provider: Optional[str] = None) -> str:
     """Draft an email for a lead that is already scored — no research, no re-score.
 
     For borderline leads the graph skipped because they landed at or just under
     EMAIL_SCORE_THRESHOLD. One model call on the stored scoring_result, so it
     costs a fraction of a full run.
     """
-    llm_flash, _ = _build_llms(llm_key)
+    provider = provider or LLM_MODEL
+    llm_flash, _ = _build_llms(llm_key, provider)
     raw, _, _, _ = _chat(
-        llm_flash, _email_messages(scoring_result, icp), via_prompt=LLM_MODEL == "CLOUDFLARE",
+        llm_flash, _email_messages(scoring_result, icp), via_prompt=provider == "CLOUDFLARE",
     )
     return raw
 
@@ -841,8 +842,9 @@ def build_graph(
     per call (cheap — object construction only), so there is no shared state
     between concurrent requests.
     """
+    provider = provider or LLM_MODEL
     llm_flash, llm_flash_lite = _build_llms(llm_key, provider)
-    via_prompt = (provider or LLM_MODEL) == "CLOUDFLARE"
+    via_prompt = provider == "CLOUDFLARE"
 
     tool_cache: dict = {}
     search_tools = [make_tavily_tool(tavily_key, tool_cache), make_scrape_tool(tool_cache)]
@@ -891,7 +893,7 @@ def build_graph(
             "company_out": _StageOutput(
                 [ROLE_COMPANY], raw, parsed, p + p2, c + c2,
                 per_role=[(p + p2, c + c2)],
-                per_role_cost=[_estimated_cost(p, c, "research") + _estimated_cost(p2, c2, "main")],
+                per_role_cost=[_estimated_cost(p, c, "research", provider) + _estimated_cost(p2, c2, "main", provider)],
             ),
             "cache_hit": False,
         }
@@ -908,7 +910,7 @@ def build_graph(
         )
         _done("personal_research", ROLE_PERSONAL, started)
         return {"personal_raw": _text(messages[-1].content), "personal_tokens": (p, c),
-                "personal_cost": _estimated_cost(p, c, "research")}
+                "personal_cost": _estimated_cost(p, c, "research", provider)}
 
     def scoring_node(state: LeadState) -> dict:
         """Judge each rubric once, then add the rounded weighted point values."""
@@ -934,7 +936,7 @@ def build_graph(
             + json.dumps(report.personal_info.model_dump(include={"job_title", "years_experience"}), ensure_ascii=False)
         )
         points, criteria = {}, []
-        scoring_cost = _estimated_cost(p, c, "main")
+        scoring_cost = _estimated_cost(p, c, "main", provider)
         for name, rubric in task["attributes"].items():
             value, reason, (prompt_tokens, completion_tokens), _ = _judge_attribute(
                 rubric, task["instruction"],
@@ -978,7 +980,7 @@ def build_graph(
         _done("email", ROLE_EMAIL, started)
         return {"email": _StageOutput(
             [ROLE_EMAIL], raw, None, p, c,
-            per_role=[(p, c)], per_role_cost=[_estimated_cost(p, c, "main")],
+            per_role=[(p, c)], per_role_cost=[_estimated_cost(p, c, "main", provider)],
         )}
 
     def route_email(state: LeadState) -> str:
@@ -1021,6 +1023,7 @@ async def process_leads(
     force_refresh: bool = False,
     max_retries: int = 3,
     on_stage: Optional[Callable[[str, str], None]] = None,
+    provider: Optional[str] = None,
 ):
     """
     Score and email-draft all leads in `leads`.
@@ -1040,13 +1043,15 @@ async def process_leads(
     `cache_get`/`cache_set` are optional storage-backed callables supplied
     by the caller (pipeline.py itself has no Supabase dependency); omit them
     to disable company-research caching entirely.
+
+    `provider` overrides LLM_MODEL for research, extraction and email; the
+    judge always follows JUDGE_PROVIDER.
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
     judge_config()
 
     agent_times: Dict[str, float] = {}
-    provider = LLM_MODEL
     graph = build_graph(
         llm_key, tavily_key, cache_get, cache_set, force_refresh, on_stage, agent_times,
         provider,
