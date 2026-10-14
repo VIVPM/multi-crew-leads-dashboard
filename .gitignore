@@ -15,13 +15,13 @@ company_icp.txt
 sample_leads_3.csv
 sample_leads_5.csv
 
-load_test_results/*.log
+results/load_test/*.log
 
-load_test_results/*.json
-scoring_eval_results/*.json
-!scoring_eval_results/golden_eval.json
-!load_test_results/ramp.json
-adversarial_results/*.json
+results/load_test/*.json
+results/eval/*.json
+!results/eval/golden_eval.json
+!results/load_test/ramp.json
+results/adversarial/*.json
 v0-v1-v2.txt
 brag-output/
 v0-v1-v2.txt

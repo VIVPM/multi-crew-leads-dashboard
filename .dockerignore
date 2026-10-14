@@ -17,9 +17,7 @@ migrations.sql
 CLAUDE.md
 .claude
 company_icp.txt
-scoring_eval_results
-adversarial_results
-load_test_results
+results
 sample_leads_*.csv
 *.md
 !README.md
