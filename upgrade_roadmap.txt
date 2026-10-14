@@ -21,10 +21,6 @@ trip is small compared with a Tavily or Gemini call.
      an earlier multi-worker bug where a newly started process treated another
      worker's active jobs as abandoned. The load test completed 20/20 jobs with
      no duplication or stuck rows despite contested claims.
-   - The synthetic drain test (re-run on LangGraph) processed 200
-     leads in 43.3s with peak concurrency 20. Twelve contested claims were
-     safely lost: the conditional update allowed exactly one process to own
-     each row. Worker boot dropped to 8.4-8.7s after trimming runtime imports.
 
 2. Company-research cache
    - Supabase rows are keyed by normalized company + ICP hash, so different
@@ -275,14 +271,13 @@ running job. At DAILY_LEAD_CAP=5 it rests at the minimum almost always — the
 point is an automatic response to a backlog, not extra throughput. Real
 worker-count scaling remains blocked on a multi-instance host.
 
-Local ramp evidence (worker off, model stubbed, 50 seeded leads):
-10/25/50/75/100 concurrent clients gave 28.0/29.0/74.4/70.0/49.1 req/s,
-with p95 read latencies 812/1672/1515/2625/5125ms and zero errors at every
-level. The test's healthy-ceiling rule estimates ~50 users on this machine.
-That number should not be used as a capacity claim for a different host. The
-ramp does not measure LLM throughput, tenant fairness, or worker autoscaling.
-Worker-saturation testing separately showed zero API errors and sub-second
-read p95 while five in-process jobs were active.
+k6 evidence (local machine, model stubbed at the golden set's 41s average):
+pages held with zero errors to 300 users (200 inside every latency limit) and
+failed from 500. Raising the Supabase connection pool from httpx's default
+100/20 to 200/100 moved the break from 300 to 500. The job queue is the
+earlier limit: one worker's 10 slots meet the queue-wait limits to 25 users.
+More workers raise that; more API capacity would not. Numbers are this
+machine's, not a capacity claim for another host.
 
 C. Keep optional until demanded
 

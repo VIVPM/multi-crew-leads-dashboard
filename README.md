@@ -6,7 +6,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 
 ## Features
 
-- **Four-node LangGraph pipeline** — company research → personal research → scoring → conditional email generation
+- **Four-node LangGraph pipeline** — company and personal research in parallel → scoring (seven judge calls at once) → conditional email generation
 - **Required ICP** — processing is blocked until a company profile and ideal customer profile are saved
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
@@ -40,8 +40,9 @@ graph TD
 
     subgraph AI ["4 · Agents — LangGraph · StateGraph per lead"]
         direction LR
-        A2["🏢 Company + Fit"] --> A1["🔎 Personal"] --> A3["🏆 Score"]
-        C[("📦 Company research cache")] -.->|cache hit: skip research| A1
+        A2["🏢 Company + Fit"] --> A3["🏆 Score"]
+        A1["🔎 Personal"] --> A3
+        C[("📦 Company research cache")] -.->|cache hit: skip research| A3
         A3 -->|score > 70| E1["✍️ Email"]
     end
 
@@ -99,6 +100,7 @@ Only the research nodes need an agent loop. Scoring and email have no tools and 
 │   ├── golden_leads.json      # 60 leads with gold points per attribute
 │   ├── load_test.py           # worker drain and multi-worker safety
 │   ├── load_test_api.py       # API saturation and production ramp
+│   ├── load_test_k6.py        # k6 realistic-user levels; API and job queue measured separately
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── config/                # agent and task prompt YAML
@@ -238,7 +240,7 @@ Jobs move through `pending → running → done | failed`. Daily processing is l
 
 - **Tenant fairness** — the worker scans the oldest `FAIR_CLAIM_SCAN_LIMIT` pending rows, rotates across their `user_id` values, and preserves FIFO within each tenant. The conditional update remains the atomic claim boundary.
 - **Worker capacity** — the chosen deployment runs one worker process with up to `MAX_CONCURRENT_JOBS=10` concurrent pipelines. Its executor is sized to that ceiling rather than the current target, so a scale-up can start work immediately instead of queueing behind a smaller pool.
-- **Concurrency autoscales on queue depth.** The host runs a single instance, so there is no worker count to scale; the same control loop moves the job slots inside the one worker instead. Depth is polled each cycle and published as `queue_pending_jobs`; the target slots ride between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` (10) and are published as `worker_target_concurrency`. Scale-up is immediate — queued work should never wait out a timer — while scale-in halves and only after `SCALE_COOLDOWN_S`, and never cancels a running job. Adding *more workers* would still need a multi-instance host.
+- **Concurrency autoscales on queue depth.** The host runs a single instance, so there is no worker count to scale; the same control loop moves the job slots inside the one worker instead. Depth is polled each cycle and published as `queue_pending_jobs`; the target slots ride between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` (10) and are published as `worker_target_concurrency`. Slots double as soon as `SCALE_UP_QUEUE_DEPTH` (1) job is waiting. Scale-up is immediate — queued work should never wait out a timer — while scale-in halves and only after `SCALE_COOLDOWN_S`, and never cancels a running job. Adding *more workers* would still need a multi-instance host.
 - **Stateless API** — access tokens are HMAC-signed and refresh tokens live in Supabase, so API instances can scale with a shared `SECRET_KEY`.
 - **Distributed limits** — login and signup limits are Supabase-backed and hold across instances. Every `429` includes `Retry-After`.
 - **Idempotency** — repeated `Idempotency-Key` submissions return the existing job. Concurrent requests with one key still create a single job.
@@ -248,50 +250,69 @@ Jobs move through `pending → running → done | failed`. Daily processing is l
 
 ## Load Testing
 
-Both harnesses stub the LLM unless calibration is explicitly requested. Raw reports live in `results/load_test/`.
+The harnesses stub the LLM unless calibration is explicitly requested. Raw reports live in `results/load_test/`.
 
-### Worker drain and multi-worker safety
+### Realistic users (k6)
 
-`backend/load_test.py`: 20 jobs × 10 leads, four workers, two-second simulated lead time.
+`backend/load_test_k6.py` drives `backend/load_test_k6.js` with [k6](https://k6.io). Each virtual user logs in once, loads the leads page (leads, credits, company profile) with 5–15 s pauses, submits one lead, and polls its job every 5 s like the frontend. Twenty test accounts with 25 leads each share the users. The API, Supabase and in-process worker are real; the model call is a 41 s sleep, the golden evaluation's average lead time, and queued keys are fake, so it costs nothing. Each level ramps for 30 s and holds for 3 minutes, and its queue drains before the next level. k6 reports request latency; the harness polls the `jobs` table to time queue wait and completion separately, since k6 never sees a job finish.
 
-| Metric | Result |
-|---|---|
-| Completed / failed / stuck | **20 / 0 / 0** |
-| Drain time | 43.3s |
-| Peak concurrent leads | 20 |
-| Worker boot | 8.4-8.7s to first claim |
-| Claim latency p50 / p95 | 632ms / 759ms |
-| Queue wait p50 / p95 | 15.6s / 21.5s |
-| Contested claims | 20 won / 12 safely rejected |
+Limits, fixed before the run: read pages p50/p95/p99 under 800/1500/3000 ms, submit under 2500/4000/6000 ms, queue wait under 5/30/60 s, errors under 1%, no failed jobs. The read limits allow for the ~300 ms round trip from this machine to Supabase.
 
-The conditional claim allowed exactly one worker to take each job, and stale-job recovery ages each job against its own `started_at` budget, so a starting worker never reaps another worker's in-flight work.
+| Users | Requests | Errors | `GET /leads` p50 / p95 / p99 | `GET /jobs/{id}` p50 / p95 / p99 | `POST /leads/process` p50 / p95 / p99 |
+|---|---|---|---|---|---|
+| 10 | 524 | 0% | 592 / 664 / 947 ms | 289 / 352 / 425 ms | 2029 / 2112 / 2120 ms |
+| 25 | 1300 | 0% | 603 / 691 / 965 ms | 294 / 367 / 500 ms | 2067 / 2200 / 2489 ms |
+| 50 | 2413 | 0% | 598 / 666 / 726 ms | 293 / 349 / 393 ms | 2015 / 2166 / 2248 ms |
+| 75 | 3551 | 0% | 615 / 708 / 763 ms | 299 / 361 / 426 ms | 2082 / 2214 / 2413 ms |
+| 100 | 4692 | 0% | 631 / 811 / 1052 ms | 300 / 387 / 507 ms | 2096 / 2256 / 2301 ms |
+| 150 | 6900 | 0.01% | 631 / 822 / 1082 ms | 316 / 449 / 595 ms | 2108 / 2319 / 2485 ms |
 
-### API latency under saturation
-
-`backend/load_test_api.py`: 20 clients with six jobs running in-process.
-
-| Endpoint | Idle p95 | Saturated p95 |
-|---|---|---|
-| `GET /` | 47ms | 31ms |
-| `GET /leads` | 922ms | 407ms |
-| `GET /jobs/{id}` | 360ms | 375ms |
-| `POST /auth/login` | 1719ms | 1562ms |
-
-Both phases completed with zero errors, and throughput held at 42 to 40 req/s. Nothing degraded under load: the worker thread shares a GIL with the sync endpoints but never starves them, and login stays bcrypt-bound either way.
-
-### Local concurrency ramp
-
-`backend/load_test_api.py --ramp` started a local stubbed API at `127.0.0.1:8011` with the worker off. It seeded 50 temporary leads, then sent read-only traffic for 10 seconds at each level. The model was stubbed, so there were no Gemini or Tavily calls.
-
-| Concurrent | req/s | p50 | p95 | Errors |
+| Users | Jobs done / failed | Queue wait p50 / p95 / p99 | Submit to finished p50 / p95 / p99 | Within limits |
 |---|---|---|---|---|
-| 10 | 28.0 | 282ms | 812ms | 0 |
-| 25 | 29.0 | 594ms | 1672ms | 0 |
-| 50 | 74.4 | 516ms | 1515ms | 0 |
-| 75 | 70.0 | 922ms | 2625ms | 0 |
-| 100 | 49.1 | 1313ms | 5125ms | 0 |
+| 10 | 10 / 0 | 1.5 / 2.4 / 2.4 s | 44.6 / 45.5 / 45.5 s | yes |
+| 25 | 25 / 0 | 3.6 / 15.5 / 15.8 s | 47.0 / 57.5 / 60.1 s | yes |
+| 50 | 50 / 0 | 52.0 / 111.4 / 111.6 s | 94.4 / 155.7 / 156.4 s | no |
+| 75 | 75 / 0 | 104.9 / 226.2 / 235.3 s | 149.5 / 271.3 / 280.1 s | no |
+| 100 | 100 / 0 | 133.6 / 312.9 / 328.5 s | 176.5 / 355.8 / 374.7 s | no |
+| 150 | 150 / 0 | 241.9 / 504.9 / 521.9 s | 284.2 / 547.9 / 565.9 s | no |
 
-The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `results/load_test/ramp.json`; test rows were cleaned up.
+The API holds to 150 users with no errors; from 100 users the read p99 creeps past one second. The job queue is the earlier limit: one worker runs at most `MAX_CONCURRENT_JOBS` (10) jobs of ~44 s, about 14 a minute, so from 50 users submitting within a few minutes the queue grows faster than it drains. More workers raise that ceiling; more API capacity would not. The report is `results/load_test/k6.json`. Suspend any deployed worker that shares the Supabase project before running it, or that worker claims test jobs and fails them on the fake keys.
+
+#### API stress
+
+`--jobs-per-user 0 --ramp-up 60 --hold 120` drops the submit, so only the API is under test.
+
+| Users | Requests | Errors | `POST /auth/login` p50 / p95 / p99 | `GET /leads` p50 / p95 / p99 |
+|---|---|---|---|---|
+| 200 | 8846 | 0% | 1196 / 1304 / 1402 ms | 577 / 649 / 712 ms |
+| 300 | 13221 | 0% | 1213 / 1347 / 1508 ms | 596 / 2081 / 3786 ms |
+| 500 | 18779 | 54.18% | 1262 / 3402 / 4481 ms | 632 / 9687 / 12397 ms |
+| 750 | 24594 | 79.67% | 0 / 20305 / 27970 ms | 0 / 18526 / 29254 ms |
+| 1000 | 36204 | 75.38% | 0 / 13806 / 17362 ms | 0 / 11290 / 15935 ms |
+
+Pages hold to 300 users with no errors; at 300 the read p95 reaches about 2 s, past the 1.5 s limit, so 200 is the last level inside every limit. From 500 requests fail. Both Supabase clients share `SUPABASE_POOL` (200 connections, 100 kept alive). With httpx's default of 100 and 20 kept alive, 300 users already failed: requests timed out waiting for a connection (`httpx.PoolTimeout`), and reopening the connections that weren't kept alive failed on Windows DNS lookups for Supabase (`getaddrinfo failed`). Past 500 the larger pool hits the same DNS failures and the single API process starts refusing connections, so read the error rates there as "broken", not as a measurement; requests that fail at once pull p50 down to zero. The report is `results/load_test/k6_stress.json`.
+
+#### Bottlenecks found and fixed
+
+**Worker scale-up.** The worker starts at `WORKER_MIN_CONCURRENCY` (2) slots and added more only once `SCALE_UP_QUEUE_DEPTH` jobs were waiting. At 5, light traffic sat behind two slots; at 1, slots double as soon as anything waits. Same k6 run, 30 s stub, queue wait p50 / p95 / p99:
+
+| Users | Scale up at 5 waiting | Scale up at 1 waiting |
+|---|---|---|
+| 10 | 20.9 / 55.7 / 55.7 s | 2.3 / 3.7 / 3.7 s |
+| 25 | 10.8 / 30.3 / 30.8 s | 2.7 / 12.8 / 15.0 s |
+| 50 | 25.8 / 55.9 / 58.0 s | 24.9 / 76.5 / 77.7 s |
+
+From 50 users nothing changes: the queue is then limited by the 10-slot ceiling, not by how fast it reaches it.
+
+**Supabase connection pool.** httpx defaults to 100 connections with 20 kept alive. Under the API stress run that gave `httpx.PoolTimeout` (2073 in one run) and, from reopening the other 80, Windows DNS failures (`getaddrinfo failed`). `SUPABASE_POOL` raises it to 200 with 100 kept alive. Error rate and `GET /leads` p95:
+
+| Users | Default pool, two runs | `SUPABASE_POOL` |
+|---|---|---|
+| 200 | 0% (707 ms) · 0% (4461 ms) | 0% (649 ms) |
+| 300 | 20.2% · 26.3% | 0% (2081 ms) |
+| 500 | 73.4% · 58.6% | 54.2% |
+
+**Pipeline time per lead.** Company and personal research run in parallel, and scoring's seven judge calls run at once. The worker's throughput is slots ÷ job time, so a shorter job raises the queue ceiling on the same machine. The k6 runs stub the whole pipeline, so they can't show this; it needs a real-model run to measure.
 
 ### Cost
 
