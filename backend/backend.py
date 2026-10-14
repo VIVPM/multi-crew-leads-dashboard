@@ -81,9 +81,11 @@ class _RetryStaleConnTransport(httpx.HTTPTransport):
             return super().handle_request(request)
 
 
+SUPABASE_POOL = httpx.Limits(max_connections=200, max_keepalive_connections=100)
+
 supabase = create_client(
     SUPABASE_URL, SUPABASE_KEY,
-    options=ClientOptions(httpx_client=httpx.Client(transport=_RetryStaleConnTransport())),
+    options=ClientOptions(httpx_client=httpx.Client(transport=_RetryStaleConnTransport(limits=SUPABASE_POOL))),
 )
 
 
@@ -178,7 +180,8 @@ async def _init_async_supabase():
     global supabase_async
     supabase_async = await acreate_client(
         SUPABASE_URL, SUPABASE_KEY,
-        options=AsyncClientOptions(httpx_client=httpx.AsyncClient(transport=_AsyncRetryStaleConnTransport())),
+        options=AsyncClientOptions(httpx_client=httpx.AsyncClient(
+            transport=_AsyncRetryStaleConnTransport(limits=SUPABASE_POOL))),
     )
 
 
