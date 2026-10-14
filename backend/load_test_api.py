@@ -77,6 +77,7 @@ def serve_mode(port: int, lead_seconds: float, in_process_worker: bool) -> None:
     pipeline.process_leads = stub_process_leads
 
     import backend as backend_mod
+    backend_mod.LLM_API_KEY = backend_mod.TAVILY_API_KEY = "loadtest-stub"
     backend_mod.persist_results = lambda leads, *_a, **_k: [
         {"lead_id": lead.get("id"), "stub": True} for lead in leads
     ]
