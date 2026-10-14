@@ -11,7 +11,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
 - **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, and a circuit breaker
-- **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`; users may save their own Gemini and Tavily keys in Settings. Both keys lift the cap on Gemini, but not on Cloudflare. Failed jobs refund credits.
+- **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`; users may save their own Gemini and Tavily keys in Settings. A saved Gemini key runs that user's jobs on Gemini even when the app runs on Cloudflare; both keys lift the cap. Failed jobs refund credits.
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits. The browser session ends when its tab closes.
 - **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and graph steps aren't recorded (Langfuse covers agents)
@@ -221,7 +221,7 @@ Operator keys in `backend/.env` work by default; users don't need to enter their
 - **Gemini** — [Google AI Studio](https://aistudio.google.com/app/apikey)
 - **Tavily** — [Tavily](https://app.tavily.com)
 
-Users can optionally save either key under **Settings → API keys**. Each saved key replaces the operator's corresponding key on a job. With both saved and `LLM_MODEL=GEMINI`, the daily lead cap is lifted; on Cloudflare the saved Gemini key isn't used, so the cap still applies. User keys are encrypted both in the users table and while queued in jobs. Keys aren't validated on save. Changing `SECRET_KEY` makes stored keys and SMTP passwords unreadable, so users must re-enter them. Rerun the local `migrations.sql` in Supabase if the key columns are missing.
+Users can optionally save either key under **Settings → API keys**. Each saved key replaces the operator's corresponding key on a job. A saved Gemini key runs that user's jobs on Gemini whatever `LLM_MODEL` is; users without one run on the operator's model under daily credits. With both keys saved, the daily lead cap is lifted. The scoring judge always uses the operator's `JUDGE_PROVIDER` key, so those calls stay operator-paid. User keys are encrypted both in the users table and while queued in jobs. Keys aren't validated on save. Changing `SECRET_KEY` makes stored keys and SMTP passwords unreadable, so users must re-enter them. Rerun the local `migrations.sql` in Supabase if the key columns are missing.
 
 ## How to Use
 

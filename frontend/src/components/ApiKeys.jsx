@@ -11,8 +11,8 @@ const PROVIDERS = [
 function summary(saved) {
   if (saved.provider === 'CLOUDFLARE') {
     return saved.tavily?.saved
-      ? 'Cloudflare uses the app model key and your Tavily key — daily credits still apply.'
-      : 'Cloudflare uses the app model key — daily credits apply.'
+      ? "Using the app's model and your Tavily key — daily credits apply. Add your Gemini key to remove the limit."
+      : "Using the app's model — daily credits apply. Add your own Gemini and Tavily keys to remove the limit."
   }
   if (saved.unlimited) return 'Using your own Gemini and Tavily keys — no daily credit limit.'
   if (saved.gemini?.saved || saved.tavily?.saved) return 'Using one of your own keys — add both to remove the daily credit limit.'
@@ -83,7 +83,7 @@ export default function ApiKeys({ onMessage, onChanged }) {
         <>
           <p className="muted" style={{ marginTop: '0.5rem' }}>
             {saved.provider === 'CLOUDFLARE'
-              ? 'Cloudflare currently uses the app model key, so daily credits still apply. Your Tavily key is used for searches; a saved Gemini key is only used if the provider switches to Gemini.'
+              ? "Leads run on the app's model with daily credits. Save your own Gemini key to run them on Gemini at your cost; save both keys to remove the daily limit."
               : 'By default leads use the app keys and daily credits. Save both of your own keys to pay for your usage without the daily limit.'}
             {' '}Keys are stored encrypted and never shown again.
           </p>
