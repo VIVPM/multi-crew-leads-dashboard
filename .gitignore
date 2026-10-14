@@ -24,3 +24,4 @@ scoring_eval_results/*.json
 adversarial_results/*.json
 v0-v1-v2.txt
 brag-output/
+v0-v1-v2.txt

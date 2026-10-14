@@ -240,8 +240,8 @@ is empty about 97% of the day.
 
 A. Cost ceiling
 
-Operator-held keys make every lead operator spend. At the measured ~$0.03/lead
-(five-lead calibration, cache bypassed), 10,000 leads/day is roughly
+Operator-held keys make every lead operator spend. At ~$0.03/lead
+(golden evaluation: ~$2.21 for 72 runs, excluding Tavily), 10,000 leads/day is roughly
 $300/day or $9,000/month. Lead-count quotas cannot bound a
 tool loop that consumes ten times normal tokens. Before serious traffic, choose:
 

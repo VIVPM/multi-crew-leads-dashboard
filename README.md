@@ -293,18 +293,9 @@ Both phases completed with zero errors, and throughput held at 42 to 40 req/s. N
 
 The estimated healthy ceiling is **about 50 concurrent users on this machine**, using the test's <1% errors and p95 <3× the 10-user baseline criteria. The report is `load_test_results/ramp.json`; test rows were cleaned up.
 
-### Historical cost calibration
+### Cost
 
-`load_test.py --calibrate 5` — five real leads through the then-current pipeline, cache bypassed. It is not a price estimate for new runs. It is the only load test here that spends money.
-
-| Metric | Result |
-|---|---|
-| Cost per lead | **~$0.03** |
-| Total, five leads | $0.146 |
-| Pipeline time, five leads | 258s |
-| Time per lead | 51.7s |
-
-`analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so the saved `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Queue and API tests are unaffected because they stub the LLM. Cost fields and dashboard charts multiply each model's token counts by its list price; treat them as estimates, not billing amounts.
+`load_test.py --calibrate N` runs N real leads with the cache bypassed and is the only load test that spends money. `analysis_runs.duration_seconds` is per **job**, duplicated onto each lead's row, so its `median_per_lead_s` is a job total — divide by the lead count for a per-lead figure. Cost fields and dashboard charts multiply each model's token counts by its list price; treat them as estimates, not billing amounts.
 
 ## Testing & CI/CD
 
