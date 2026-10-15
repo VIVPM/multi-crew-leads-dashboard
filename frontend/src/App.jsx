@@ -14,7 +14,8 @@ import { api, friendlyError } from './api'
 import './App.css'
 
 const SESSION_KEY = 'sp_session'
-const JOB_POLL_MS = 5000
+const JOB_POLL_FIRST_MS = 3000
+const JOB_POLL_MAX_MS = 10000
 const JOB_DEADLINE_MS = 20 * 60 * 1000
 
 // Reads this tab's session. It lives in sessionStorage, so it survives a
@@ -149,11 +150,13 @@ export default function App() {
     }
   }, [userId])
 
-  // Poll a job until it finishes. onProgress receives its {stage: state} map each poll.
+  // Poll a job until it finishes, backing off from 3 s to 10 s since jobs take ~45 s. onProgress receives its {stage: state} map each poll.
   async function waitForJob(jobId, onProgress) {
     const deadline = Date.now() + JOB_DEADLINE_MS
+    let delay = JOB_POLL_FIRST_MS
     while (Date.now() < deadline) {
-      await sleep(JOB_POLL_MS)
+      await sleep(delay)
+      delay = Math.min(delay * 1.5, JOB_POLL_MAX_MS)
       const job = await api('GET', `/jobs/${jobId}`)
       onProgress?.(job.progress)
       if (job.status === 'done') return job
