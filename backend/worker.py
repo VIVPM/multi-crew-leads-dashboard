@@ -15,6 +15,7 @@ import signal
 import sys
 import time
 import asyncio
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -321,9 +322,20 @@ def _job_key(stored: str) -> str:
     return decrypt_secret(stored[4:], os.environ["SECRET_KEY"]) if stored.startswith("enc:") else stored
 
 
-def _job_provider(stored_llm_key: str) -> Optional[str]:
-    """A user's own key is always a Gemini key, so it runs on Gemini; operator keys follow LLM_MODEL."""
-    return "GEMINI" if stored_llm_key.startswith("enc:") else None
+def _job_llm(stored: str) -> tuple:
+    """Return (key, provider, cloudflare_account_id) for a job's model credentials.
+
+    A user's credentials are queued as encrypted JSON naming their provider; a bare
+    encrypted key is a Gemini key queued before the model choice existed. Operator
+    keys pass through with no provider, so the job follows LLM_MODEL.
+    """
+    if not stored.startswith("enc:"):
+        return stored, None, None
+    plain = _job_key(stored)
+    if not plain.startswith("{"):
+        return plain, "GEMINI", None
+    own = json.loads(plain)
+    return own["key"], own["provider"], own.get("account_id")
 
 
 async def run_job(job: dict) -> list:
@@ -337,14 +349,16 @@ async def run_job(job: dict) -> list:
         progress[stage] = state
         supabase.table("jobs").update({"progress": progress}).eq("id", job["id"]).execute()
 
+    llm_key, provider, cloudflare_account_id = _job_llm(job["gemini_api_key"])
     scores, emails, agent_times, cache_hits = await process_leads(
-        leads, _job_key(job["gemini_api_key"]), _job_key(job["tavily_api_key"]),
+        leads, llm_key, _job_key(job["tavily_api_key"]),
         our_company_context=job.get("our_company_context") or "",
         cache_get=cache_get_company,
         cache_set=cache_set_company,
         force_refresh=job.get("force_refresh", False),
         on_stage=_on_stage,
-        provider=_job_provider(job["gemini_api_key"]),
+        provider=provider,
+        cloudflare_account_id=cloudflare_account_id,
     )
     elapsed = round(time.time() - start, 1)
     return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)

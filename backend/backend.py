@@ -12,6 +12,7 @@ import os
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
+import json
 import logging
 import secrets
 import smtplib
@@ -19,7 +20,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -394,8 +395,11 @@ class EmailSettingsRequest(BaseModel):
 
 
 class ApiKeysRequest(BaseModel):
-    """Optional per-user Gemini and Tavily credentials."""
+    """Optional per-user model choice and credentials; Tavily is separate from the model choice."""
+    llm_provider: Optional[Literal["APP", "GEMINI", "CLOUDFLARE"]] = None
     gemini_api_key: Optional[str] = Field(default=None, max_length=300)
+    cloudflare_account_id: Optional[str] = Field(default=None, max_length=100)
+    cloudflare_api_token: Optional[str] = Field(default=None, max_length=300)
     tavily_api_key: Optional[str] = Field(default=None, max_length=300)
 
 
@@ -585,24 +589,30 @@ def set_email_settings(req: EmailSettingsRequest, user_id: str = Depends(current
     return {"message": "Email sending settings saved.", "password_last4": password[-4:]}
 
 
-_API_KEY_COLUMNS = {"gemini": "gemini_api_key_enc", "tavily": "tavily_api_key_enc"}
+_API_KEY_COLUMNS = {
+    "gemini": "gemini_api_key_enc",
+    "cloudflare_account_id": "cloudflare_account_id_enc",
+    "cloudflare_api_token": "cloudflare_api_token_enc",
+    "tavily": "tavily_api_key_enc",
+}
 _MISSING_COLUMN_CODES = {"42703", "PGRST204"}
 
 
 def _user_api_keys(user_id: str) -> dict:
-    """Return this user's decrypted keys; a missing migration means no saved keys, not an outage."""
+    """Return this user's decrypted keys and chosen model; a missing migration means none saved, not an outage."""
     from postgrest.exceptions import APIError
 
+    empty = {**{name: None for name in _API_KEY_COLUMNS}, "provider": None}
     try:
-        resp = supabase.table("users").select(",".join(_API_KEY_COLUMNS.values())).eq("id", user_id).execute()
+        resp = (supabase.table("users").select(",".join([*_API_KEY_COLUMNS.values(), "llm_provider"]))
+                .eq("id", user_id).execute())
     except APIError as exc:
         if getattr(exc, "code", None) in _MISSING_COLUMN_CODES:
-            return {name: None for name in _API_KEY_COLUMNS}
+            return empty
         raise
     row = resp.data[0] if resp.data else {}
-    keys = {}
+    keys = {**empty, "provider": row.get("llm_provider")}
     for name, column in _API_KEY_COLUMNS.items():
-        keys[name] = None
         if row.get(column) and os.getenv("SECRET_KEY"):
             try:
                 keys[name] = decrypt_secret(row[column], SECRET_KEY)
@@ -611,45 +621,69 @@ def _user_api_keys(user_id: str) -> dict:
     return keys
 
 
-def _resolve_api_keys(user_id: str, for_job: bool = False) -> tuple:
-    """Return (llm_key, tavily_key, uses_own_keys), preferring the user's keys.
+def _own_llm(own: dict) -> Optional[dict]:
+    """The user's complete model credentials for their chosen provider, or None to use the operator's model.
 
-    A saved Gemini key runs the user's jobs on Gemini even when LLM_MODEL is
-    CLOUDFLARE; without one, the operator's model serves them under daily
-    credits. With for_job, user keys are re-encrypted before they're written to
-    the jobs row.
+    "APP" chooses the operator's model. A Gemini key saved before the model
+    choice existed has no provider and still counts as Gemini.
+    """
+    provider = own["provider"] or ("GEMINI" if own["gemini"] else None)
+    if provider == "GEMINI" and own["gemini"]:
+        return {"provider": "GEMINI", "key": own["gemini"], "account_id": None}
+    if provider == "CLOUDFLARE" and own["cloudflare_api_token"] and own["cloudflare_account_id"]:
+        return {"provider": "CLOUDFLARE", "key": own["cloudflare_api_token"],
+                "account_id": own["cloudflare_account_id"]}
+    return None
+
+
+def _resolve_api_keys(user_id: str, for_job: bool = False) -> tuple:
+    """Return (llm_key, tavily_key, uses_own_keys, own_llm), preferring the user's keys.
+
+    Complete credentials for the user's chosen model run their jobs on that
+    provider whatever LLM_MODEL is; otherwise the operator's model serves them
+    under daily credits. Model credentials plus a Tavily key lift the cap. With
+    for_job, the user's model credentials are queued as one encrypted
+    'enc:{json}' value and the Tavily key as 'enc:…', for worker._job_llm and
+    worker._job_key.
     """
     own = _user_api_keys(user_id)
-    own_llm = own["gemini"]
-    llm_key, tavily_key = own_llm or LLM_API_KEY, own["tavily"] or TAVILY_API_KEY
+    own_llm = _own_llm(own)
+    llm_key = own_llm["key"] if own_llm else LLM_API_KEY
+    tavily_key = own["tavily"] or TAVILY_API_KEY
     if for_job:
         if own_llm:
-            llm_key = "enc:" + encrypt_secret(own_llm, SECRET_KEY)
+            llm_key = "enc:" + encrypt_secret(json.dumps(own_llm), SECRET_KEY)
         if own["tavily"]:
             tavily_key = "enc:" + encrypt_secret(own["tavily"], SECRET_KEY)
-    return llm_key, tavily_key, bool(own_llm and own["tavily"])
+    return llm_key, tavily_key, bool(own_llm and own["tavily"]), own_llm
 
 
 @app.get("/account/api-keys")
 def get_api_keys(user_id: str = Depends(current_user)):
     own = _user_api_keys(user_id)
+    own_llm = _own_llm(own)
     return {
-        **{name: {"saved": bool(key), "last4": key[-4:] if key else None} for name, key in own.items()},
-        "provider": "GEMINI" if own["gemini"] else LLM_MODEL,
-        "unlimited": bool(own["gemini"] and own["tavily"]),
+        **{name: {"saved": bool(own[name]), "last4": own[name][-4:] if own[name] else None}
+           for name in _API_KEY_COLUMNS},
+        "provider": own["provider"] or ("GEMINI" if own["gemini"] else None),
+        "default_provider": LLM_MODEL,
+        "active_provider": own_llm["provider"] if own_llm else LLM_MODEL,
+        "unlimited": bool(own_llm and own["tavily"]),
     }
 
 
 @app.put("/account/api-keys")
 def set_api_keys(req: ApiKeysRequest, user_id: str = Depends(current_user)):
-    """Encrypt and save the supplied keys; they are never returned or logged."""
+    """Encrypt and save the supplied keys and model choice; keys are never returned or logged."""
     _require_credential_secret()
-    payload = {}
-    for name, value in (("gemini", req.gemini_api_key), ("tavily", req.tavily_api_key)):
+    payload = {"llm_provider": req.llm_provider} if req.llm_provider else {}
+    for name in _API_KEY_COLUMNS:
+        value = getattr(req, "gemini_api_key" if name == "gemini" else
+                        "tavily_api_key" if name == "tavily" else name)
         if value and value.strip():
             payload[_API_KEY_COLUMNS[name]] = encrypt_secret(value.strip(), SECRET_KEY)
     if not payload:
-        raise HTTPException(status_code=400, detail="Enter at least one API key.")
+        raise HTTPException(status_code=400, detail="Choose a model or enter at least one key.")
     supabase.table("users").update(payload).eq("id", user_id).execute()
     return {"message": "API keys saved."}
 
@@ -659,7 +693,7 @@ def delete_api_key(provider: str, user_id: str = Depends(current_user)):
     if provider not in _API_KEY_COLUMNS:
         raise HTTPException(status_code=404, detail="Unknown provider.")
     supabase.table("users").update({_API_KEY_COLUMNS[provider]: None}).eq("id", user_id).execute()
-    return {"message": f"{provider.capitalize()} key removed."}
+    return {"message": "Key removed."}
 
 
 def _seconds_until_utc_midnight() -> int:
@@ -689,7 +723,7 @@ def _leads_used_today(user_id: str) -> int:
 
 @app.get("/account/credits")
 def get_credits(user_id: str = Depends(current_user)):
-    """Daily lead credits for operator-paid jobs; none when the user brings both keys."""
+    """Daily lead credits for operator-paid jobs; none when the user brings model credentials and a Tavily key."""
     if _resolve_api_keys(user_id)[2]:
         return {"unlimited": True, "cap": None, "used": None, "remaining": None}
     used = _leads_used_today(user_id)
@@ -922,9 +956,9 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
 
     try:
-        llm_key = _resolve_api_keys(user_id)[0]
-        provider = "GEMINI" if llm_key != LLM_API_KEY else None
-        draft = draft_email(llm_key, lead["scoring_result"], company_context, provider)
+        llm_key, _, _, own_llm = _resolve_api_keys(user_id)
+        draft = draft_email(llm_key, lead["scoring_result"], company_context,
+                            own_llm and own_llm["provider"], own_llm and own_llm["account_id"])
     except Exception:
         logger.exception("Failed to draft email for lead %s", lead_id)
         raise HTTPException(status_code=502, detail="Couldn't draft the email right now. Try again shortly.")
@@ -977,7 +1011,7 @@ def process_leads_endpoint(
         raise HTTPException(status_code=404, detail="One or more leads not found.")
 
 
-    llm_key, tavily_key, uses_own_keys = _resolve_api_keys(user_id, for_job=True)
+    llm_key, tavily_key, uses_own_keys, _ = _resolve_api_keys(user_id, for_job=True)
     used_today = 0 if uses_own_keys else _leads_used_today(user_id)
     if not uses_own_keys and used_today + len(req.leads) > DAILY_LEAD_CAP:
         remaining = max(0, DAILY_LEAD_CAP - used_today)

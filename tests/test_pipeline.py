@@ -107,7 +107,7 @@ for _llm in pipeline._build_llms("fake-key", "GEMINI"):
 pipeline._research = lambda *args: ([FakeMessage()], 100, 20)
 pipeline._chat = fake_chat
 pipeline._judge_attribute = fake_judge
-pipeline._build_llms = lambda key, provider=None: (None, None)
+pipeline._build_llms = lambda *_args: (None, None)
 
 cache, stages = {}, []
 leads = [

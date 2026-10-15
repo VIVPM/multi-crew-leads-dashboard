@@ -122,7 +122,7 @@ def fake_judge(rubric, instruction, evidence):
     return rubric["max_points"], "Matched the evidence.", (2, 3), []
 
 
-pipeline._build_llms = lambda key, provider=None: (None, None)
+pipeline._build_llms = lambda *_args: (None, None)
 pipeline._research = lambda *args: ([FakeMessage()], 2, 3)
 pipeline._chat = fake_chat
 pipeline._judge_attribute = fake_judge

@@ -1,33 +1,45 @@
-// Lets users save their own Gemini and Tavily keys, which override the operator's.
+// Lets users pick a model provider, save its credentials and a Tavily key, and so pay for their own usage.
 import { useState, useEffect } from 'react'
 import { api, friendlyError } from '../api'
 
-const PROVIDERS = [
-  { id: 'gemini', label: 'Gemini API key', link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIza…' },
-  { id: 'tavily', label: 'Tavily API key', link: 'https://app.tavily.com', placeholder: 'tvly-…' },
-]
+const MODEL_FIELDS = {
+  GEMINI: [
+    { id: 'gemini', label: 'Gemini API key', link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIza…', secret: true },
+  ],
+  CLOUDFLARE: [
+    { id: 'cloudflare_account_id', label: 'Cloudflare account ID', link: 'https://dash.cloudflare.com', placeholder: '32-character account ID', secret: false },
+    { id: 'cloudflare_api_token', label: 'Cloudflare API token (Workers AI)', link: 'https://dash.cloudflare.com/profile/api-tokens', placeholder: 'Token with Workers AI access', secret: true },
+  ],
+}
+const TAVILY_FIELD = { id: 'tavily', label: 'Tavily API key', link: 'https://app.tavily.com', placeholder: 'tvly-…', secret: true }
+const PROVIDER_NAMES = { GEMINI: 'Gemini', CLOUDFLARE: 'Cloudflare' }
+const EMPTY_VALUES = { gemini: '', cloudflare_account_id: '', cloudflare_api_token: '', tavily: '' }
 
-// Describes which keys are in use and whether daily credits apply.
-function summary(saved) {
-  if (saved.provider === 'CLOUDFLARE') {
-    return saved.tavily?.saved
-      ? "Using the app's model and your Tavily key — daily credits apply. Add your Gemini key to remove the limit."
-      : "Using the app's model — daily credits apply. Add your own Gemini and Tavily keys to remove the limit."
-  }
-  if (saved.unlimited) return 'Using your own Gemini and Tavily keys — no daily credit limit.'
-  if (saved.gemini?.saved || saved.tavily?.saved) return 'Using one of your own keys — add both to remove the daily credit limit.'
-  return 'Using the app\'s keys — daily credits apply. Add both of yours to remove the limit.'
+// Names the fields still missing before the user's own keys lift the daily limit.
+function missingFields(saved, provider) {
+  return [...(MODEL_FIELDS[provider] || []), TAVILY_FIELD].filter(f => !saved[f.id]?.saved).map(f => f.label)
+}
+
+// Describes which model runs the leads and whether daily credits apply.
+function summary(saved, provider) {
+  if (saved.unlimited) return `Using your own ${PROVIDER_NAMES[saved.active_provider]} and Tavily keys — no daily credit limit.`
+  if (!MODEL_FIELDS[provider]) return "Using the app's model — daily credits apply. Choose a model and add your keys to remove the limit."
+  return `Daily credits apply until you add: ${missingFields(saved, provider).join(', ')}.`
 }
 
 export default function ApiKeys({ onMessage, onChanged }) {
   const [expanded, setExpanded] = useState(false)
   const [saved, setSaved] = useState({})
-  const [values, setValues] = useState({ gemini: '', tavily: '' })
+  const [provider, setProvider] = useState('')
+  const [values, setValues] = useState(EMPTY_VALUES)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
   function load() {
-    return api('GET', '/account/api-keys').then(setSaved).catch(() => {})
+    return api('GET', '/account/api-keys').then(data => {
+      setSaved(data)
+      setProvider(data.provider || 'APP')
+    }).catch(() => {})
   }
 
   useEffect(() => { load() }, [])
@@ -37,10 +49,13 @@ export default function ApiKeys({ onMessage, onChanged }) {
     setError(null)
     try {
       await api('PUT', '/account/api-keys', {
+        llm_provider: provider,
         gemini_api_key: values.gemini || null,
+        cloudflare_account_id: values.cloudflare_account_id || null,
+        cloudflare_api_token: values.cloudflare_api_token || null,
         tavily_api_key: values.tavily || null,
       })
-      setValues({ gemini: '', tavily: '' })
+      setValues(EMPTY_VALUES)
       await load()
       onChanged?.()
       onMessage?.('API keys saved.')
@@ -65,6 +80,36 @@ export default function ApiKeys({ onMessage, onChanged }) {
     }
   }
 
+  function keyField(f) {
+    return (
+      <div className="form-group" key={f.id} style={{ marginTop: '0.75rem' }}>
+        <label htmlFor={`${f.id}-api-key`}>
+          {f.label}{' '}
+          <a href={f.link} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem' }}>get one</a>
+        </label>
+        {saved[f.id]?.saved && (
+          <div className="muted" style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>
+            Saved, ending in ••••{saved[f.id].last4}{' '}
+            <button className="btn btn-sm btn-outline" onClick={() => handleRemove(f.id)} disabled={busy}>
+              Remove
+            </button>
+          </div>
+        )}
+        <input
+          id={`${f.id}-api-key`}
+          type={f.secret ? 'password' : 'text'}
+          autoComplete="off"
+          value={values[f.id]}
+          onChange={e => setValues(v => ({ ...v, [f.id]: e.target.value }))}
+          placeholder={saved[f.id]?.saved ? 'Enter a new value to replace it' : f.placeholder}
+          disabled={busy}
+        />
+      </div>
+    )
+  }
+
+  const changed = provider !== (saved.provider || 'APP') || Object.values(values).some(v => v.trim())
+
   return (
     <div className="card company-profile-card">
       <div className="company-profile-header" role="button" tabIndex={0} aria-expanded={expanded}
@@ -74,7 +119,7 @@ export default function ApiKeys({ onMessage, onChanged }) {
         }}>
         <div>
           <h3 className="card-title" style={{ marginBottom: 0 }}>API keys (optional)</h3>
-          {!expanded && <p className="muted company-profile-summary">{summary(saved)}</p>}
+          {!expanded && <p className="muted company-profile-summary">{summary(saved, saved.provider)}</p>}
         </div>
         <span className="lead-card-chevron">{expanded ? '▲' : '▼'}</span>
       </div>
@@ -82,45 +127,29 @@ export default function ApiKeys({ onMessage, onChanged }) {
       {expanded && (
         <>
           <p className="muted" style={{ marginTop: '0.5rem' }}>
-            {saved.provider === 'CLOUDFLARE'
-              ? "Leads run on the app's model with daily credits. Save your own Gemini key to run them on Gemini at your cost; save both keys to remove the daily limit."
-              : 'By default leads use the app keys and daily credits. Save both of your own keys to pay for your usage without the daily limit.'}
+            Without your own keys, leads run on the app's model with daily credits. Choose a model, add its
+            credentials and a Tavily key, and your leads run on your accounts with no daily limit.
             {' '}Keys are stored encrypted and never shown again.
           </p>
 
-          {PROVIDERS.map(p => (
-            <div className="form-group" key={p.id} style={{ marginTop: '0.75rem' }}>
-              <label htmlFor={`${p.id}-api-key`}>
-                {p.label}{' '}
-                <a href={p.link} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem' }}>get one</a>
-              </label>
-              {saved[p.id]?.saved && (
-                <div className="muted" style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>
-                  Saved key ending in ••••{saved[p.id].last4}{' '}
-                  <button className="btn btn-sm btn-outline" onClick={() => handleRemove(p.id)} disabled={busy}>
-                    Remove
-                  </button>
-                </div>
-              )}
-              <input
-                id={`${p.id}-api-key`}
-                type="password"
-                autoComplete="new-password"
-                value={values[p.id]}
-                onChange={e => setValues(v => ({ ...v, [p.id]: e.target.value }))}
-                placeholder={saved[p.id]?.saved ? 'Enter a new key to replace it' : p.placeholder}
-                disabled={busy}
-              />
-            </div>
-          ))}
+          <div className="form-group" style={{ marginTop: '0.75rem' }}>
+            <label htmlFor="llm-provider">Model provider</label>
+            <select id="llm-provider" value={provider} onChange={e => setProvider(e.target.value)} disabled={busy}>
+              <option value="APP">App's model (daily credits)</option>
+              <option value="GEMINI">Gemini</option>
+              <option value="CLOUDFLARE">Cloudflare Workers AI</option>
+            </select>
+          </div>
 
+          {(MODEL_FIELDS[provider] || []).map(keyField)}
+          {keyField(TAVILY_FIELD)}
+
+          {MODEL_FIELDS[provider] && !saved.unlimited && (
+            <p className="muted" style={{ fontSize: '0.85rem' }}>{summary(saved, provider)}</p>
+          )}
           {error && <div className="alert alert-error">{error}</div>}
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={busy || (!values.gemini.trim() && !values.tavily.trim())}
-          >
-            {busy ? 'Saving…' : 'Save API keys'}
+          <button className="btn btn-primary" onClick={handleSave} disabled={busy || !changed}>
+            {busy ? 'Saving…' : 'Save'}
           </button>
         </>
       )}

@@ -597,7 +597,7 @@ def _research(llm, tools, system: str, human: str):
     return messages, prompt, completion
 
 
-def _build_llms(llm_key: str, provider: Optional[str] = None):
+def _build_llms(llm_key: str, provider: Optional[str] = None, cloudflare_account_id: Optional[str] = None):
     """The two model tiers for the selected research provider.
 
     Gemini uses 3.6 Flash for extraction/email and 3.5 Flash-Lite for
@@ -637,7 +637,7 @@ def _build_llms(llm_key: str, provider: Optional[str] = None):
                         )
                 return payload
 
-        account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        account_id = cloudflare_account_id or os.getenv("CLOUDFLARE_ACCOUNT_ID")
         if not account_id:
             raise RuntimeError(
                 "LLM_MODEL=CLOUDFLARE needs CLOUDFLARE_ACCOUNT_ID (the account the "
@@ -811,7 +811,8 @@ def _email_messages(scoring: dict, icp: str) -> list:
     ]
 
 
-def draft_email(llm_key: str, scoring_result: dict, icp: str, provider: Optional[str] = None) -> str:
+def draft_email(llm_key: str, scoring_result: dict, icp: str, provider: Optional[str] = None,
+                cloudflare_account_id: Optional[str] = None) -> str:
     """Draft an email for a lead that is already scored — no research, no re-score.
 
     For borderline leads the graph skipped because they landed at or just under
@@ -819,7 +820,7 @@ def draft_email(llm_key: str, scoring_result: dict, icp: str, provider: Optional
     costs a fraction of a full run.
     """
     provider = provider or LLM_MODEL
-    llm_flash, _ = _build_llms(llm_key, provider)
+    llm_flash, _ = _build_llms(llm_key, provider, cloudflare_account_id)
     raw, _, _, _ = _chat(
         llm_flash, _email_messages(scoring_result, icp), via_prompt=provider == "CLOUDFLARE",
     )
@@ -835,6 +836,7 @@ def build_graph(
     on_stage: Optional[Callable[[str, str], None]] = None,
     agent_times: Optional[Dict[str, float]] = None,
     provider: Optional[str] = None,
+    cloudflare_account_id: Optional[str] = None,
 ):
     """Compile the per-lead graph.
 
@@ -844,7 +846,7 @@ def build_graph(
     between concurrent requests.
     """
     provider = provider or LLM_MODEL
-    llm_flash, llm_flash_lite = _build_llms(llm_key, provider)
+    llm_flash, llm_flash_lite = _build_llms(llm_key, provider, cloudflare_account_id)
     via_prompt = provider == "CLOUDFLARE"
 
     tool_cache: dict = {}
@@ -1030,6 +1032,7 @@ async def process_leads(
     max_retries: int = 3,
     on_stage: Optional[Callable[[str, str], None]] = None,
     provider: Optional[str] = None,
+    cloudflare_account_id: Optional[str] = None,
 ):
     """
     Score and email-draft all leads in `leads`.
@@ -1050,8 +1053,9 @@ async def process_leads(
     by the caller (pipeline.py itself has no Supabase dependency); omit them
     to disable company-research caching entirely.
 
-    `provider` overrides LLM_MODEL for research, extraction and email; the
-    judge always follows JUDGE_PROVIDER.
+    `provider` overrides LLM_MODEL for research, extraction and email, and
+    `cloudflare_account_id` overrides CLOUDFLARE_ACCOUNT_ID for a user's own
+    Workers AI account; the judge always follows JUDGE_PROVIDER.
     """
     if not our_company_context or not our_company_context.strip():
         raise ValueError("our_company_context is required — set a company profile before processing leads.")
@@ -1060,7 +1064,7 @@ async def process_leads(
     agent_times: Dict[str, float] = {}
     graph = build_graph(
         llm_key, tavily_key, cache_get, cache_set, force_refresh, on_stage, agent_times,
-        provider,
+        provider, cloudflare_account_id,
     )
     timeout_s = PIPELINE_TIMEOUT_S * max(1, len(leads))
 

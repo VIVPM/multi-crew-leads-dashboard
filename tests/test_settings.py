@@ -67,44 +67,59 @@ secret = os.environ["SECRET_KEY"]
 original_supabase, original_model = backend.supabase, backend.LLM_MODEL
 try:
     backend.supabase = FakeSupabase({})
-    llm, tavily, own = backend._resolve_api_keys("7")
-    assert (llm, tavily, own) == ("operator-gemini", "operator-tavily", False)
+    assert backend._resolve_api_keys("7") == ("operator-gemini", "operator-tavily", False, None)
 
-    backend.supabase = FakeSupabase({
-        "gemini_api_key_enc": encrypt_secret("user-gemini-1234", secret),
-        "tavily_api_key_enc": encrypt_secret("user-tavily-5678", secret),
-    })
-    assert backend._resolve_api_keys("7") == ("user-gemini-1234", "user-tavily-5678", True)
-    queued_llm, queued_tavily, _ = backend._resolve_api_keys("7", for_job=True)
+    import worker
+    enc = lambda value: encrypt_secret(value, secret)  # noqa: E731
+    legacy_gemini = {"gemini_api_key_enc": enc("user-gemini-1234"), "tavily_api_key_enc": enc("user-tavily-5678")}
+
+    backend.supabase = FakeSupabase(dict(legacy_gemini))
+    llm, tavily, unlimited, own = backend._resolve_api_keys("7")
+    assert (llm, tavily, unlimited, own["provider"]) == ("user-gemini-1234", "user-tavily-5678", True, "GEMINI"),         "a Gemini key saved before the model choice still counts as Gemini"
+    queued_llm, queued_tavily, _, _ = backend._resolve_api_keys("7", for_job=True)
     assert queued_llm.startswith("enc:") and "user-gemini" not in queued_llm
     assert queued_tavily.startswith("enc:") and "user-tavily" not in queued_tavily
+    assert worker._job_llm(queued_llm) == ("user-gemini-1234", "GEMINI", None)
+    assert worker._job_key(queued_tavily) == "user-tavily-5678"
+    assert worker._job_llm("enc:" + enc("old-queued-gemini")) == ("old-queued-gemini", "GEMINI", None)
+    assert worker._job_llm("operator-gemini") == ("operator-gemini", None, None)
     assert backend.get_credits("7")["unlimited"] is True
     keys = backend.get_api_keys("7")
     assert keys["gemini"] == {"saved": True, "last4": "1234"} and keys["unlimited"] is True
-
-    import worker
-    assert worker._job_key(queued_llm) == "user-gemini-1234"
-    assert worker._job_key("operator-gemini") == "operator-gemini"
-
-    assert worker._job_provider(queued_llm) == "GEMINI"
-    assert worker._job_provider("operator-gemini") is None
+    assert keys["active_provider"] == "GEMINI"
 
     backend.LLM_MODEL = "CLOUDFLARE"
-    assert backend._resolve_api_keys("7") == ("user-gemini-1234", "user-tavily-5678", True), \
-        "a saved Gemini key overrides the Cloudflare model"
-    assert backend.get_credits("7")["unlimited"] is True
-    assert backend.get_api_keys("7")["provider"] == "GEMINI"
+    backend.supabase = FakeSupabase({
+        "llm_provider": "CLOUDFLARE", "cloudflare_account_id_enc": enc("acct-42"),
+        "cloudflare_api_token_enc": enc("cf-token-9876"), "tavily_api_key_enc": enc("user-tavily-5678"),
+    })
+    queued_llm, _, unlimited, own = backend._resolve_api_keys("7", for_job=True)
+    assert unlimited and own == {"provider": "CLOUDFLARE", "key": "cf-token-9876", "account_id": "acct-42"}
+    assert worker._job_llm(queued_llm) == ("cf-token-9876", "CLOUDFLARE", "acct-42")
+    assert backend.get_api_keys("7")["active_provider"] == "CLOUDFLARE"
 
-    backend.supabase = FakeSupabase({"tavily_api_key_enc": encrypt_secret("user-tavily-5678", secret)})
-    assert backend._resolve_api_keys("7") == (backend.LLM_API_KEY, "user-tavily-5678", False), \
-        "without a Gemini key the operator's Cloudflare model serves the job under daily credits"
+    backend.supabase = FakeSupabase({
+        "llm_provider": "CLOUDFLARE", "cloudflare_api_token_enc": enc("cf-token-9876"),
+        "gemini_api_key_enc": enc("user-gemini-1234"), "tavily_api_key_enc": enc("user-tavily-5678"),
+    })
+    assert backend._resolve_api_keys("7") == (backend.LLM_API_KEY, "user-tavily-5678", False, None),         "Cloudflare chosen without an account ID uses the operator's model, not the saved Gemini key"
     assert backend.get_credits("7")["unlimited"] is False
-    assert backend.get_api_keys("7")["provider"] == "CLOUDFLARE"
+
+    backend.supabase = FakeSupabase({"tavily_api_key_enc": enc("user-tavily-5678")})
+    assert backend._resolve_api_keys("7") == (backend.LLM_API_KEY, "user-tavily-5678", False, None),         "a Tavily key alone keeps the operator's model and daily credits"
+    assert backend.get_api_keys("7")["active_provider"] == "CLOUDFLARE"
     backend.LLM_MODEL = original_model
 
+    backend.supabase = FakeSupabase({})
+    backend.set_api_keys(backend.ApiKeysRequest(llm_provider="CLOUDFLARE", cloudflare_account_id=" acct-1 "), "7")
+    saved_row = backend.supabase.db["row"]
+    assert saved_row["llm_provider"] == "CLOUDFLARE" and "acct-1" not in saved_row["cloudflare_account_id_enc"]
+
+    backend.supabase = FakeSupabase({**legacy_gemini, "llm_provider": "APP"})
+    assert backend._resolve_api_keys("7") == ("operator-gemini", "user-tavily-5678", False, None),         "choosing the app's model ignores a saved Gemini key"
+
     backend.supabase = FakeSupabase({}, missing_columns=True)
-    assert backend._resolve_api_keys("7") == ("operator-gemini", "operator-tavily", False), \
-        "a missing key migration must not break processing"
+    assert backend._resolve_api_keys("7") == ("operator-gemini", "operator-tavily", False, None),         "a missing key migration must not break processing"
 
     saved = backend.encrypt_secret("app-pass-9999", backend.SECRET_KEY)
     assert backend._smtp_password("7", saved) == "app-pass-9999"
