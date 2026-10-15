@@ -131,26 +131,19 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_service_key
 SECRET_KEY=any_long_random_string
 
-LLM_MODEL=GEMINI                     # GEMINI or CLOUDFLARE; required
-GEMINI_API_KEY=your_gemini_key       # required for GEMINI
-CLOUDFLARE_ACCOUNT_ID=               # required for CLOUDFLARE
+LLM_MODEL=GEMINI                     # GEMINI or CLOUDFLARE
+GEMINI_API_KEY=your_gemini_key       # for GEMINI
+CLOUDFLARE_ACCOUNT_ID=               # for CLOUDFLARE, or JUDGE_PROVIDER=CLOUDFLARE
 CLOUDFLARE_API_TOKEN=
-CLOUDFLARE_MODEL=@cf/openai/gpt-oss-20b
-CLOUDFLARE_MAX_TOKENS=4096
-JUDGE_PROVIDER=HUGGING_FACE          # HUGGING_FACE or CLOUDFLARE; required
-HUGGINGFACE_API_KEY=                 # required for HUGGING_FACE
+JUDGE_PROVIDER=HUGGING_FACE          # HUGGING_FACE or CLOUDFLARE
+HUGGINGFACE_API_KEY=                 # for HUGGING_FACE
 TAVILY_API_KEY=your_tavily_key
 
-DAILY_LEAD_CAP=5                     # required, no default
+DAILY_LEAD_CAP=5
 ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173
-
 RUN_WORKER_IN_PROCESS=1              # 1 runs the worker inside the API; 0 for separate workers
-MAX_CONCURRENT_JOBS=10               # jobs each worker runs at once
-BREAKER_THRESHOLD=5                  # consecutive transport failures before claims pause
-BREAKER_COOLDOWN_S=60
-WORKER_SHUTDOWN_GRACE_S=25
-EMAIL_SEND_DAILY_CAP=80
-LANGFUSE_PUBLIC_KEY=
+
+LANGFUSE_PUBLIC_KEY=                 # optional tracing
 LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=
 ```
@@ -187,7 +180,7 @@ Operator keys in `backend/.env` work by default. Under **Settings → API keys**
 
 ### Cloudflare Workers AI
 
-`gpt-oss-20b` needs a few workarounds, all inside the model wrapper: `CLOUDFLARE_MAX_TOKENS=4096` so reasoning doesn't use up the reply, the JSON schema in the prompt because native structured output fails, `content: null` coerced to `""`, and streaming off because it double-counts tokens. Gemini and Workers AI can score the same lead differently.
+`gpt-oss-20b` needs a few workarounds, all inside the model wrapper: a 4096-token reply limit (the default `CLOUDFLARE_MAX_TOKENS`) so reasoning doesn't use up the reply, the JSON schema in the prompt because native structured output fails, `content: null` coerced to `""`, and streaming off because it double-counts tokens. Gemini and Workers AI can score the same lead differently.
 
 ## How to Use
 
