@@ -1,12 +1,14 @@
 {
   "settings": {
-    "levels": "10,25,50,75,100,150",
+    "levels": "50,75,100,150,200",
     "ramp_up": 30,
     "hold": 180,
     "accounts": 20,
     "seed_leads": 25,
     "jobs_per_user": 1,
-    "lead_seconds": 41
+    "lead_seconds": 30.0,
+    "workers": 3,
+    "slots_per_worker": 20
   },
   "limits": {
     "reads_ms": {
@@ -28,226 +30,62 @@
   },
   "levels": [
     {
-      "users": 10,
-      "passed": true,
-      "api": {
-        "endpoints": {
-          "login": {
-            "count": 10,
-            "p50": 1204,
-            "p95": 1676,
-            "p99": 1879,
-            "error_pct": 0
-          },
-          "leads": {
-            "count": 135,
-            "p50": 592,
-            "p95": 664,
-            "p99": 947,
-            "error_pct": 0
-          },
-          "credits": {
-            "count": 135,
-            "p50": 584,
-            "p95": 677,
-            "p99": 1031,
-            "error_pct": 0
-          },
-          "company_context": {
-            "count": 135,
-            "p50": 293,
-            "p95": 365,
-            "p99": 790,
-            "error_pct": 0
-          },
-          "create_lead": {
-            "count": 10,
-            "p50": 583,
-            "p95": 661,
-            "p99": 667,
-            "error_pct": 0
-          },
-          "process": {
-            "count": 10,
-            "p50": 2029,
-            "p95": 2112,
-            "p99": 2120,
-            "error_pct": 0
-          },
-          "job_status": {
-            "count": 89,
-            "p50": 289,
-            "p95": 352,
-            "p99": 425,
-            "error_pct": 0
-          }
-        },
-        "error_pct": 0,
-        "requests": 524,
-        "thresholds_failed": []
-      },
-      "jobs": {
-        "submitted": 10,
-        "done": 10,
-        "failed": 0,
-        "unfinished": 0,
-        "queue_wait_s": {
-          "p50": 1.5,
-          "p95": 2.4,
-          "p99": 2.4
-        },
-        "run_s": {
-          "p50": 42.7,
-          "p95": 43.6,
-          "p99": 43.6
-        },
-        "total_s": {
-          "p50": 44.6,
-          "p95": 45.5,
-          "p99": 45.5
-        }
-      },
-      "job_limits_failed": []
-    },
-    {
-      "users": 25,
-      "passed": true,
-      "api": {
-        "endpoints": {
-          "login": {
-            "count": 25,
-            "p50": 1234,
-            "p95": 1323,
-            "p99": 1340,
-            "error_pct": 0
-          },
-          "leads": {
-            "count": 330,
-            "p50": 603,
-            "p95": 691,
-            "p99": 965,
-            "error_pct": 0
-          },
-          "credits": {
-            "count": 330,
-            "p50": 601,
-            "p95": 703,
-            "p99": 1059,
-            "error_pct": 0
-          },
-          "company_context": {
-            "count": 330,
-            "p50": 307,
-            "p95": 376,
-            "p99": 507,
-            "error_pct": 0
-          },
-          "create_lead": {
-            "count": 25,
-            "p50": 597,
-            "p95": 695,
-            "p99": 721,
-            "error_pct": 0
-          },
-          "process": {
-            "count": 25,
-            "p50": 2067,
-            "p95": 2200,
-            "p99": 2489,
-            "error_pct": 0
-          },
-          "job_status": {
-            "count": 235,
-            "p50": 294,
-            "p95": 367,
-            "p99": 500,
-            "error_pct": 0
-          }
-        },
-        "error_pct": 0,
-        "requests": 1300,
-        "thresholds_failed": []
-      },
-      "jobs": {
-        "submitted": 25,
-        "done": 25,
-        "failed": 0,
-        "unfinished": 0,
-        "queue_wait_s": {
-          "p50": 3.6,
-          "p95": 15.5,
-          "p99": 15.8
-        },
-        "run_s": {
-          "p50": 43.1,
-          "p95": 44.2,
-          "p99": 44.6
-        },
-        "total_s": {
-          "p50": 47.0,
-          "p95": 57.5,
-          "p99": 60.1
-        }
-      },
-      "job_limits_failed": []
-    },
-    {
       "users": 50,
-      "passed": false,
+      "passed": true,
       "api": {
         "endpoints": {
           "login": {
             "count": 50,
-            "p50": 1271,
-            "p95": 1415,
-            "p99": 1496,
+            "p50": 1311,
+            "p95": 1855,
+            "p99": 2214,
             "error_pct": 0
           },
           "leads": {
-            "count": 486,
-            "p50": 598,
-            "p95": 666,
-            "p99": 726,
+            "count": 738,
+            "p50": 599,
+            "p95": 697,
+            "p99": 841,
             "error_pct": 0
           },
           "credits": {
-            "count": 486,
-            "p50": 593,
-            "p95": 678,
-            "p99": 753,
+            "count": 738,
+            "p50": 588,
+            "p95": 689,
+            "p99": 747,
             "error_pct": 0
           },
           "company_context": {
-            "count": 486,
+            "count": 738,
             "p50": 305,
-            "p95": 369,
-            "p99": 414,
+            "p95": 383,
+            "p99": 445,
             "error_pct": 0
           },
           "create_lead": {
             "count": 50,
-            "p50": 581,
-            "p95": 692,
-            "p99": 731,
+            "p50": 588,
+            "p95": 678,
+            "p99": 874,
             "error_pct": 0
           },
           "process": {
             "count": 50,
-            "p50": 2015,
-            "p95": 2166,
-            "p99": 2248,
+            "p50": 2010,
+            "p95": 2119,
+            "p99": 2178,
             "error_pct": 0
           },
           "job_status": {
-            "count": 805,
-            "p50": 293,
-            "p95": 349,
-            "p99": 393,
+            "count": 336,
+            "p50": 290,
+            "p95": 358,
+            "p99": 429,
             "error_pct": 0
           }
         },
         "error_pct": 0,
-        "requests": 2413,
+        "requests": 2700,
         "thresholds_failed": []
       },
       "jobs": {
@@ -256,84 +94,80 @@
         "failed": 0,
         "unfinished": 0,
         "queue_wait_s": {
-          "p50": 52.0,
-          "p95": 111.4,
-          "p99": 111.6
+          "p50": 1.4,
+          "p95": 3.1,
+          "p99": 3.6
         },
         "run_s": {
-          "p50": 44.0,
-          "p95": 45.6,
-          "p99": 46.1
+          "p50": 33.1,
+          "p95": 34.9,
+          "p99": 36.0
         },
         "total_s": {
-          "p50": 94.4,
-          "p95": 155.7,
-          "p99": 156.4
+          "p50": 34.8,
+          "p95": 37.4,
+          "p99": 38.5
         }
       },
-      "job_limits_failed": [
-        "queue_wait_p50",
-        "queue_wait_p95",
-        "queue_wait_p99"
-      ]
+      "job_limits_failed": []
     },
     {
       "users": 75,
-      "passed": false,
+      "passed": true,
       "api": {
         "endpoints": {
           "login": {
             "count": 75,
-            "p50": 1337,
-            "p95": 1534,
-            "p99": 1626,
+            "p50": 1380,
+            "p95": 1584,
+            "p99": 1763,
             "error_pct": 0
           },
           "leads": {
-            "count": 649,
-            "p50": 615,
-            "p95": 708,
-            "p99": 763,
+            "count": 1088,
+            "p50": 612,
+            "p95": 714,
+            "p99": 810,
             "error_pct": 0
           },
           "credits": {
-            "count": 649,
-            "p50": 607,
-            "p95": 698,
-            "p99": 849,
+            "count": 1088,
+            "p50": 606,
+            "p95": 699,
+            "p99": 755,
             "error_pct": 0
           },
           "company_context": {
-            "count": 649,
-            "p50": 318,
-            "p95": 401,
-            "p99": 486,
+            "count": 1088,
+            "p50": 312,
+            "p95": 389,
+            "p99": 445,
             "error_pct": 0
           },
           "create_lead": {
             "count": 75,
-            "p50": 607,
-            "p95": 698,
-            "p99": 749,
+            "p50": 576,
+            "p95": 681,
+            "p99": 751,
             "error_pct": 0
           },
           "process": {
             "count": 75,
-            "p50": 2082,
-            "p95": 2214,
-            "p99": 2413,
+            "p50": 2036,
+            "p95": 2172,
+            "p99": 2296,
             "error_pct": 0
           },
           "job_status": {
-            "count": 1379,
-            "p50": 299,
-            "p95": 361,
-            "p99": 426,
+            "count": 508,
+            "p50": 292,
+            "p95": 370,
+            "p99": 444,
             "error_pct": 0
           }
         },
         "error_pct": 0,
-        "requests": 3551,
+        "requests": 3997,
         "thresholds_failed": []
       },
       "jobs": {
@@ -342,84 +176,80 @@
         "failed": 0,
         "unfinished": 0,
         "queue_wait_s": {
-          "p50": 104.9,
-          "p95": 226.2,
-          "p99": 235.3
+          "p50": 1.3,
+          "p95": 3.7,
+          "p99": 3.9
         },
         "run_s": {
-          "p50": 44.1,
-          "p95": 46.5,
-          "p99": 47.6
+          "p50": 33.3,
+          "p95": 36.4,
+          "p99": 38.9
         },
         "total_s": {
-          "p50": 149.5,
-          "p95": 271.3,
-          "p99": 280.1
+          "p50": 35.0,
+          "p95": 38.6,
+          "p99": 40.3
         }
       },
-      "job_limits_failed": [
-        "queue_wait_p50",
-        "queue_wait_p95",
-        "queue_wait_p99"
-      ]
+      "job_limits_failed": []
     },
     {
       "users": 100,
-      "passed": false,
+      "passed": true,
       "api": {
         "endpoints": {
           "login": {
             "count": 100,
-            "p50": 1396,
-            "p95": 1643,
-            "p99": 1816,
+            "p50": 1381,
+            "p95": 1519,
+            "p99": 1659,
             "error_pct": 0
           },
           "leads": {
-            "count": 840,
-            "p50": 631,
-            "p95": 811,
-            "p99": 1052,
+            "count": 1429,
+            "p50": 606,
+            "p95": 993,
+            "p99": 1506,
             "error_pct": 0
           },
           "credits": {
-            "count": 840,
-            "p50": 629,
-            "p95": 742,
-            "p99": 939,
+            "count": 1429,
+            "p50": 609,
+            "p95": 930,
+            "p99": 1320,
             "error_pct": 0
           },
           "company_context": {
-            "count": 840,
-            "p50": 332,
-            "p95": 464,
-            "p99": 639,
+            "count": 1429,
+            "p50": 313,
+            "p95": 527,
+            "p99": 906,
             "error_pct": 0
           },
           "create_lead": {
             "count": 100,
-            "p50": 625,
-            "p95": 817,
-            "p99": 1161,
+            "p50": 616,
+            "p95": 1174,
+            "p99": 1395,
             "error_pct": 0
           },
           "process": {
             "count": 100,
-            "p50": 2096,
-            "p95": 2256,
-            "p99": 2301,
+            "p50": 2084,
+            "p95": 3251,
+            "p99": 3693,
             "error_pct": 0
           },
           "job_status": {
-            "count": 1872,
-            "p50": 300,
-            "p95": 387,
-            "p99": 507,
+            "count": 699,
+            "p50": 323,
+            "p95": 935,
+            "p99": 1405,
             "error_pct": 0
           }
         },
         "error_pct": 0,
-        "requests": 4692,
+        "requests": 5286,
         "thresholds_failed": []
       },
       "jobs": {
@@ -428,84 +258,80 @@
         "failed": 0,
         "unfinished": 0,
         "queue_wait_s": {
-          "p50": 133.6,
-          "p95": 312.9,
-          "p99": 328.5
+          "p50": 2.1,
+          "p95": 5.2,
+          "p99": 6.5
         },
         "run_s": {
-          "p50": 43.6,
-          "p95": 45.5,
-          "p99": 46.2
+          "p50": 34.4,
+          "p95": 39.0,
+          "p99": 40.1
         },
         "total_s": {
-          "p50": 176.5,
-          "p95": 355.8,
-          "p99": 374.7
+          "p50": 36.6,
+          "p95": 41.7,
+          "p99": 42.9
         }
       },
-      "job_limits_failed": [
-        "queue_wait_p50",
-        "queue_wait_p95",
-        "queue_wait_p99"
-      ]
+      "job_limits_failed": []
     },
     {
       "users": 150,
-      "passed": false,
+      "passed": true,
       "api": {
         "endpoints": {
           "login": {
             "count": 150,
-            "p50": 1261,
-            "p95": 1474,
-            "p99": 1817,
+            "p50": 1262,
+            "p95": 1397,
+            "p99": 1480,
             "error_pct": 0
           },
           "leads": {
-            "count": 1148,
-            "p50": 631,
-            "p95": 822,
-            "p99": 1082,
+            "count": 2170,
+            "p50": 624,
+            "p95": 1151,
+            "p99": 1640,
             "error_pct": 0
           },
           "credits": {
-            "count": 1148,
-            "p50": 625,
-            "p95": 787,
-            "p99": 910,
+            "count": 2170,
+            "p50": 620,
+            "p95": 941,
+            "p99": 1185,
             "error_pct": 0
           },
           "company_context": {
-            "count": 1148,
-            "p50": 328,
-            "p95": 472,
-            "p99": 603,
+            "count": 2170,
+            "p50": 324,
+            "p95": 582,
+            "p99": 781,
             "error_pct": 0
           },
           "create_lead": {
-            "count": 151,
-            "p50": 622,
-            "p95": 821,
-            "p99": 940,
-            "error_pct": 0.66
+            "count": 150,
+            "p50": 597,
+            "p95": 688,
+            "p99": 776,
+            "error_pct": 0
           },
           "process": {
             "count": 150,
-            "p50": 2108,
-            "p95": 2319,
-            "p99": 2485,
+            "p50": 2045,
+            "p95": 2189,
+            "p99": 2319,
             "error_pct": 0
           },
           "job_status": {
-            "count": 3005,
-            "p50": 316,
-            "p95": 449,
-            "p99": 595,
+            "count": 1060,
+            "p50": 299,
+            "p95": 370,
+            "p99": 465,
             "error_pct": 0
           }
         },
-        "error_pct": 0.01,
-        "requests": 6900,
+        "error_pct": 0,
+        "requests": 8020,
         "thresholds_failed": []
       },
       "jobs": {
@@ -514,27 +340,113 @@
         "failed": 0,
         "unfinished": 0,
         "queue_wait_s": {
-          "p50": 241.9,
-          "p95": 504.9,
-          "p99": 521.9
+          "p50": 1.7,
+          "p95": 4.4,
+          "p99": 4.7
         },
         "run_s": {
-          "p50": 43.6,
-          "p95": 45.0,
-          "p99": 45.3
+          "p50": 34.4,
+          "p95": 38.6,
+          "p99": 43.0
         },
         "total_s": {
-          "p50": 284.2,
-          "p95": 547.9,
-          "p99": 565.9
+          "p50": 36.3,
+          "p95": 41.8,
+          "p99": 45.8
+        }
+      },
+      "job_limits_failed": []
+    },
+    {
+      "users": 200,
+      "passed": false,
+      "api": {
+        "endpoints": {
+          "login": {
+            "count": 200,
+            "p50": 1543,
+            "p95": 8619,
+            "p99": 11873,
+            "error_pct": 0
+          },
+          "leads": {
+            "count": 1910,
+            "p50": 4592,
+            "p95": 10672,
+            "p99": 14044,
+            "error_pct": 0
+          },
+          "credits": {
+            "count": 1910,
+            "p50": 1420,
+            "p95": 3500,
+            "p99": 4946,
+            "error_pct": 0
+          },
+          "company_context": {
+            "count": 1910,
+            "p50": 1163,
+            "p95": 3229,
+            "p99": 4639,
+            "error_pct": 0
+          },
+          "create_lead": {
+            "count": 202,
+            "p50": 3762,
+            "p95": 8279,
+            "p99": 14795,
+            "error_pct": 0.99
+          },
+          "process": {
+            "count": 200,
+            "p50": 3955,
+            "p95": 8530,
+            "p99": 10370,
+            "error_pct": 0
+          },
+          "job_status": {
+            "count": 1085,
+            "p50": 2328,
+            "p95": 7057,
+            "p99": 10669,
+            "error_pct": 0
+          }
+        },
+        "error_pct": 0.03,
+        "requests": 7417,
+        "thresholds_failed": [
+          "api_company_context",
+          "api_credits",
+          "api_job_status",
+          "api_leads",
+          "api_process"
+        ]
+      },
+      "jobs": {
+        "submitted": 200,
+        "done": 200,
+        "failed": 0,
+        "unfinished": 0,
+        "queue_wait_s": {
+          "p50": 5.5,
+          "p95": 23.7,
+          "p99": 27.4
+        },
+        "run_s": {
+          "p50": 34.3,
+          "p95": 37.6,
+          "p99": 39.0
+        },
+        "total_s": {
+          "p50": 40.4,
+          "p95": 58.6,
+          "p99": 60.9
         }
       },
       "job_limits_failed": [
-        "queue_wait_p50",
-        "queue_wait_p95",
-        "queue_wait_p99"
+        "queue_wait_p50"
       ]
     }
   ],
-  "highest_passing_users": 25
+  "highest_passing_users": 150
 }

@@ -194,6 +194,9 @@ def main() -> None:
     ap.add_argument("--drain-timeout", type=int, default=600)
     ap.add_argument("--stop-error-pct", type=float, default=25)
     ap.add_argument("--port", type=int, default=8011)
+    ap.add_argument("--workers", type=int, default=0,
+                    help="separate stub worker processes; 0 runs the worker inside the API process")
+    ap.add_argument("--report", default="k6.json", help="report file name under results/load_test/")
     args = ap.parse_args()
 
     k6 = find_k6()
@@ -205,8 +208,13 @@ def main() -> None:
     env["DAILY_LEAD_CAP"] = "100000"
     log = open(os.path.join(OUT_DIR, "k6_server.log"), "w", encoding="utf-8")
     api = subprocess.Popen([sys.executable, os.path.join(BASE_DIR, "load_test_api.py"), "--serve",
-                            "--port", str(args.port), "--lead-seconds", str(args.lead_seconds)],
+                            "--port", str(args.port), "--lead-seconds", str(args.lead_seconds)]
+                           + (["--no-in-process-worker"] if args.workers else []),
                            env=env, cwd=ROOT_DIR, stdout=log, stderr=subprocess.STDOUT)
+    workers = [subprocess.Popen([sys.executable, os.path.join(BASE_DIR, "load_test.py"), "--worker-mode",
+                                 "--lead-seconds", str(args.lead_seconds)],
+                                env=env, cwd=ROOT_DIR, stdout=log, stderr=subprocess.STDOUT)
+               for _ in range(args.workers)]
     users, watcher, results = [], None, []
     accounts_path = os.path.join(OUT_DIR, "k6_accounts.json")
     try:
@@ -216,7 +224,8 @@ def main() -> None:
         with open(accounts_path, "w", encoding="utf-8") as f:
             json.dump([{"username": u["username"], "password": PASSWORD} for u in users], f)
         print(f"API up on {base}; {len(users)} accounts with {args.seed_leads} leads each; "
-              f"stub {args.lead_seconds}s per lead")
+              f"stub {args.lead_seconds}s per lead; "
+              + (f"{args.workers} separate worker(s)" if args.workers else "worker in-process"))
         watcher = JobWatcher([str(u["id"]) for u in users])
         watcher.start()
         for vus in [int(x) for x in args.levels.split(",")]:
@@ -232,22 +241,24 @@ def main() -> None:
         cleanup(users)
         if os.path.exists(accounts_path):
             os.remove(accounts_path)
-        api.terminate()
-        api.wait(timeout=30)
+        for proc in [api, *workers]:
+            proc.terminate()
+            proc.wait(timeout=30)
         log.close()
 
     passing = [r["users"] for r in results if r["passed"]]
     report = {"settings": {k: getattr(args, k) for k in ("levels", "ramp_up", "hold", "accounts", "seed_leads",
-                                                         "jobs_per_user", "lead_seconds")},
+                                                         "jobs_per_user", "lead_seconds", "workers")}
+                           | {"slots_per_worker": int(os.getenv("MAX_CONCURRENT_JOBS", "10"))},
               "limits": {"reads_ms": {"p50": 800, "p95": 1500, "p99": 3000},
                          "process_ms": {"p50": 2500, "p95": 4000, "p99": 6000},
                          "queue_wait_s": JOB_LIMITS_S, "error_pct": 1},
               "levels": results,
               "highest_passing_users": max(passing) if passing else None}
-    with open(os.path.join(OUT_DIR, "k6.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(OUT_DIR, args.report), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     print(f"\nHighest level passing every limit: {report['highest_passing_users']} users. "
-          f"Report: results/load_test/k6.json")
+          f"Report: results/load_test/{args.report}")
 
 
 if __name__ == "__main__":

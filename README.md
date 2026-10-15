@@ -11,7 +11,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim, and force-refresh option. Same lead run 10 times: **55s uncached → 31s average cached** (company research skipped)
 - **Async job queue** — `POST /leads/process` returns `202`; workers process jobs concurrently while the UI reports live per-agent progress
 - **Reliable execution** — idempotent submissions, tenant-fair job claims, targeted retries, graceful shutdown, and a circuit breaker
-- **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`; users may save their own Gemini and Tavily keys in Settings. A saved Gemini key runs that user's jobs on Gemini even when the app runs on Cloudflare; both keys lift the cap. Failed jobs refund credits.
+- **Bounded, visible spend** — operator keys by default with a required `DAILY_LEAD_CAP`. In Settings a user picks Gemini or Cloudflare Workers AI and saves that provider's credentials plus a Tavily key; with all of them, their leads run on their own accounts with no daily limit. Failed jobs refund credits.
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, and distributed login/signup rate limits. The browser session ends when its tab closes.
 - **React dashboard** — KPI cards, monthly cost/token charts with year selectors, score/industry/source/country charts, search, CSV import/export, analysis detail, editable drafts, and SMTP sending. Saved SMTP passwords and user API keys are encrypted; Settings displays only their last four characters.
 - **Audit trail** — lead create/import/edit/delete, job submits, email drafts and sends, settings changes, and successful signups/logins are written to the `audit_events` table with the acting user (taken from the login token, never the request), target, outcome, status and request ID. No request bodies or secrets are stored; reads and graph steps aren't recorded (Langfuse covers agents)
@@ -223,7 +223,7 @@ Operator keys in `backend/.env` work by default; users don't need to enter their
 - **Gemini** — [Google AI Studio](https://aistudio.google.com/app/apikey)
 - **Tavily** — [Tavily](https://app.tavily.com)
 
-Users can optionally save either key under **Settings → API keys**. Each saved key replaces the operator's corresponding key on a job. A saved Gemini key runs that user's jobs on Gemini whatever `LLM_MODEL` is; users without one run on the operator's model under daily credits. With both keys saved, the daily lead cap is lifted. The scoring judge always uses the operator's `JUDGE_PROVIDER` key, so those calls stay operator-paid. User keys are encrypted both in the users table and while queued in jobs. Keys aren't validated on save. Changing `SECRET_KEY` makes stored keys and SMTP passwords unreadable, so users must re-enter them. Rerun the local `migrations.sql` in Supabase if the key columns are missing.
+Under **Settings → API keys** a user chooses a model provider: the app's model, **Gemini** (Gemini API key) or **Cloudflare Workers AI** (account ID and API token). The Tavily key is a separate field. Complete credentials for the chosen provider run that user's jobs on their own account whatever `LLM_MODEL` is; adding a Tavily key as well lifts the daily lead cap. Anything incomplete falls back to the operator's model under daily credits. The scoring judge always uses the operator's `JUDGE_PROVIDER` key, so those calls stay operator-paid. Keys are encrypted in the users table and while queued in jobs, and aren't validated on save. Changing `SECRET_KEY` makes stored keys and SMTP passwords unreadable, so users must re-enter them. Rerun the local `migrations.sql` in Supabase if the key columns are missing.
 
 ## How to Use
 
@@ -234,7 +234,7 @@ Users can optionally save either key under **Settings → API keys**. Each saved
 5. Review the score breakdown and draft on the lead card. Use **Analysis** for each node's duration, token usage, and cost; cached and skipped nodes are shown explicitly with zero usage.
 6. Edit or send qualifying drafts, filter the lead list, or export the visible results to CSV.
 
-Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP` for operator-funded jobs: queued and successful leads use credits, and a failed job gives its credits back. Users supplying both keys on Gemini have no daily lead cap. Sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
+Jobs move through `pending → running → done | failed`. Daily processing is limited by `DAILY_LEAD_CAP` for operator-funded jobs: queued and successful leads use credits, and a failed job gives its credits back. Users with complete credentials for their chosen model plus a Tavily key have no daily lead cap. Sending is independently limited by `EMAIL_SEND_DAILY_CAP`.
 
 ## Scaling Notes
 
@@ -254,29 +254,29 @@ The harnesses stub the LLM unless calibration is explicitly requested. Raw repor
 
 ### Realistic users (k6)
 
-`backend/load_test_k6.py` drives `backend/load_test_k6.js` with [k6](https://k6.io). Each virtual user logs in once, loads the leads page (leads, credits, company profile) with 5–15 s pauses, submits one lead, and polls its job every 5 s like the frontend. Twenty test accounts with 25 leads each share the users. The API, Supabase and in-process worker are real; the model call is a 41 s sleep, the golden evaluation's average lead time, and queued keys are fake, so it costs nothing. Each level ramps for 30 s and holds for 3 minutes, and its queue drains before the next level. k6 reports request latency; the harness polls the `jobs` table to time queue wait and completion separately, since k6 never sees a job finish.
+`backend/load_test_k6.py` drives `backend/load_test_k6.js` with [k6](https://k6.io). Each virtual user logs in once, loads the leads page (leads, credits, company profile) with 5–15 s pauses, submits one lead, and polls its job every 5 s. The frontend polls less: it backs off from 3 s to 10 s while a job runs. Twenty test accounts with 25 leads each share the users. The API, Supabase and workers are real; the model call is a 30 s sleep and queued keys are fake, so it costs nothing. 30 s is the measured time for one real lead run ten times through the pipeline, which runs company and personal research in parallel and all seven judge calls at once (mean 30.0 s, median 28.1 s, range 24.6–38.1 s). Each level ramps for 30 s and holds for 3 minutes, and its queue drains before the next level. k6 reports request latency; the harness polls the `jobs` table to time queue wait and completion separately, since k6 never sees a job finish.
+
+The run below uses `--workers 3` with `MAX_CONCURRENT_JOBS=20`: three separate worker processes with up to 20 jobs each, 60 at once.
 
 Limits, fixed before the run: read pages p50/p95/p99 under 800/1500/3000 ms, submit under 2500/4000/6000 ms, queue wait under 5/30/60 s, errors under 1%, no failed jobs. The read limits allow for the ~300 ms round trip from this machine to Supabase.
 
 | Users | Requests | Errors | `GET /leads` p50 / p95 / p99 | `GET /jobs/{id}` p50 / p95 / p99 | `POST /leads/process` p50 / p95 / p99 |
 |---|---|---|---|---|---|
-| 10 | 524 | 0% | 592 / 664 / 947 ms | 289 / 352 / 425 ms | 2029 / 2112 / 2120 ms |
-| 25 | 1300 | 0% | 603 / 691 / 965 ms | 294 / 367 / 500 ms | 2067 / 2200 / 2489 ms |
-| 50 | 2413 | 0% | 598 / 666 / 726 ms | 293 / 349 / 393 ms | 2015 / 2166 / 2248 ms |
-| 75 | 3551 | 0% | 615 / 708 / 763 ms | 299 / 361 / 426 ms | 2082 / 2214 / 2413 ms |
-| 100 | 4692 | 0% | 631 / 811 / 1052 ms | 300 / 387 / 507 ms | 2096 / 2256 / 2301 ms |
-| 150 | 6900 | 0.01% | 631 / 822 / 1082 ms | 316 / 449 / 595 ms | 2108 / 2319 / 2485 ms |
+| 50 | 2700 | 0% | 599 / 697 / 841 ms | 290 / 358 / 429 ms | 2010 / 2119 / 2178 ms |
+| 75 | 3997 | 0% | 612 / 714 / 810 ms | 292 / 370 / 444 ms | 2036 / 2172 / 2296 ms |
+| 100 | 5286 | 0% | 606 / 993 / 1506 ms | 323 / 935 / 1405 ms | 2084 / 3251 / 3693 ms |
+| 150 | 8020 | 0% | 624 / 1151 / 1640 ms | 299 / 370 / 465 ms | 2045 / 2189 / 2319 ms |
+| 200 | 7417 | 0.03% | 4592 / 10672 / 14044 ms | 2328 / 7057 / 10669 ms | 3955 / 8530 / 10370 ms |
 
 | Users | Jobs done / failed | Queue wait p50 / p95 / p99 | Submit to finished p50 / p95 / p99 | Within limits |
 |---|---|---|---|---|
-| 10 | 10 / 0 | 1.5 / 2.4 / 2.4 s | 44.6 / 45.5 / 45.5 s | yes |
-| 25 | 25 / 0 | 3.6 / 15.5 / 15.8 s | 47.0 / 57.5 / 60.1 s | yes |
-| 50 | 50 / 0 | 52.0 / 111.4 / 111.6 s | 94.4 / 155.7 / 156.4 s | no |
-| 75 | 75 / 0 | 104.9 / 226.2 / 235.3 s | 149.5 / 271.3 / 280.1 s | no |
-| 100 | 100 / 0 | 133.6 / 312.9 / 328.5 s | 176.5 / 355.8 / 374.7 s | no |
-| 150 | 150 / 0 | 241.9 / 504.9 / 521.9 s | 284.2 / 547.9 / 565.9 s | no |
+| 50 | 50 / 0 | 1.4 / 3.1 / 3.6 s | 34.8 / 37.4 / 38.5 s | yes |
+| 75 | 75 / 0 | 1.3 / 3.7 / 3.9 s | 35.0 / 38.6 / 40.3 s | yes |
+| 100 | 100 / 0 | 2.1 / 5.2 / 6.5 s | 36.6 / 41.7 / 42.9 s | yes |
+| 150 | 150 / 0 | 1.7 / 4.4 / 4.7 s | 36.3 / 41.8 / 45.8 s | yes |
+| 200 | 200 / 0 | 5.5 / 23.7 / 27.4 s | 40.4 / 58.6 / 60.9 s | no |
 
-The API holds to 150 users with no errors; from 100 users the read p99 creeps past one second. The job queue is the earlier limit: one worker runs at most `MAX_CONCURRENT_JOBS` (10) jobs of ~44 s, about 14 a minute, so from 50 users submitting within a few minutes the queue grows faster than it drains. More workers raise that ceiling; more API capacity would not. The report is `results/load_test/k6.json`. Suspend any deployed worker that shares the Supabase project before running it, or that worker claims test jobs and fails them on the fake keys.
+All 575 jobs finished and none failed. Up to 150 users, every limit holds: queue wait stays under 5 s at p95 and a lead is done about 42 s after submitting. 200 users breaks the pages first (`GET /leads` p95 10.7 s) while jobs still finish within a minute. At that point the API, three workers running up to 60 jobs, and k6 all share one 4-core laptop and the same Supabase project, so the request latency there is this machine's limit as much as the app's. Throughput is roughly workers × slots ÷ job time: 60 slots ÷ 30 s ≈ 120 jobs a minute. The report is `results/load_test/k6.json`. Suspend any deployed worker that shares the Supabase project before running it, or that worker claims test jobs and fails them on the fake keys.
 
 #### API stress
 
@@ -290,29 +290,14 @@ The API holds to 150 users with no errors; from 100 users the read p99 creeps pa
 | 750 | 24594 | 79.67% | 0 / 20305 / 27970 ms | 0 / 18526 / 29254 ms |
 | 1000 | 36204 | 75.38% | 0 / 13806 / 17362 ms | 0 / 11290 / 15935 ms |
 
-Pages hold to 300 users with no errors; at 300 the read p95 reaches about 2 s, past the 1.5 s limit, so 200 is the last level inside every limit. From 500 requests fail. Both Supabase clients share `SUPABASE_POOL` (200 connections, 100 kept alive). With httpx's default of 100 and 20 kept alive, 300 users already failed: requests timed out waiting for a connection (`httpx.PoolTimeout`), and reopening the connections that weren't kept alive failed on Windows DNS lookups for Supabase (`getaddrinfo failed`). Past 500 the larger pool hits the same DNS failures and the single API process starts refusing connections, so read the error rates there as "broken", not as a measurement; requests that fail at once pull p50 down to zero. The report is `results/load_test/k6_stress.json`.
+Pages hold to 300 users with no errors; at 300 the read p95 reaches about 2 s, past the 1.5 s limit, so 200 is the last level inside every limit. From 500 requests fail: Windows DNS lookups for Supabase give out (`getaddrinfo failed`) and the single API process starts refusing connections. Read the error rates there as "broken", not as a measurement; requests that fail at once pull p50 down to zero. The report is `results/load_test/k6_stress.json`.
 
-#### Bottlenecks found and fixed
+#### Fixes behind these numbers
 
-**Worker scale-up.** The worker starts at `WORKER_MIN_CONCURRENCY` (2) slots and added more only once `SCALE_UP_QUEUE_DEPTH` jobs were waiting. At 5, light traffic sat behind two slots; at 1, slots double as soon as anything waits. Same k6 run, 30 s stub, queue wait p50 / p95 / p99:
-
-| Users | Scale up at 5 waiting | Scale up at 1 waiting |
-|---|---|---|
-| 10 | 20.9 / 55.7 / 55.7 s | 2.3 / 3.7 / 3.7 s |
-| 25 | 10.8 / 30.3 / 30.8 s | 2.7 / 12.8 / 15.0 s |
-| 50 | 25.8 / 55.9 / 58.0 s | 24.9 / 76.5 / 77.7 s |
-
-From 50 users nothing changes: the queue is then limited by the 10-slot ceiling, not by how fast it reaches it.
-
-**Supabase connection pool.** httpx defaults to 100 connections with 20 kept alive. Under the API stress run that gave `httpx.PoolTimeout` (2073 in one run) and, from reopening the other 80, Windows DNS failures (`getaddrinfo failed`). `SUPABASE_POOL` raises it to 200 with 100 kept alive. Error rate and `GET /leads` p95:
-
-| Users | Default pool, two runs | `SUPABASE_POOL` |
-|---|---|---|
-| 200 | 0% (707 ms) · 0% (4461 ms) | 0% (649 ms) |
-| 300 | 20.2% · 26.3% | 0% (2081 ms) |
-| 500 | 73.4% · 58.6% | 54.2% |
-
-**Pipeline time per lead.** Company and personal research run in parallel, and scoring's seven judge calls run at once. The worker's throughput is slots ÷ job time, so a shorter job raises the queue ceiling on the same machine. The k6 runs stub the whole pipeline, so they can't show this; it needs a real-model run to measure.
+- **Worker scale-up.** Slots double as soon as `SCALE_UP_QUEUE_DEPTH` (1) job is waiting, so light traffic doesn't queue behind the two minimum slots.
+- **Supabase connection pool.** Both clients share `SUPABASE_POOL` (200 connections, 100 kept alive). httpx's default of 100 with 20 kept alive ran out under stress (`httpx.PoolTimeout`), and reopening connections failed on DNS lookups.
+- **Pipeline time per lead.** Company and personal research run in parallel, and scoring's seven judge calls run at once. One real lead run ten times took 30.0 s on average, the job length the k6 run uses.
+- **Workers and slots.** `--workers 3` starts separate worker processes, and `MAX_CONCURRENT_JOBS=20` lets each run up to 20 jobs. With `RUN_WORKER_IN_PROCESS=0` the deployed app runs the same way.
 
 ### Cost
 
