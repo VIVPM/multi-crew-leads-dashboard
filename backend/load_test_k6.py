@@ -12,7 +12,7 @@ queue drains before the next starts. Everything the run created is deleted.
 
     python backend/load_test_k6.py                        # 10..150 users, 3 min each
     python backend/load_test_k6.py --levels 5 --hold 30   # smoke run
-    python backend/load_test_k6.py --spike 10,150         # 10 users, jump to 150, recover
+    python backend/load_test_k6.py --spike 10,150
 
 Read absolute numbers as this machine with a --lead-seconds stub, not production.
 """
