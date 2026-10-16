@@ -135,7 +135,7 @@ export default function ApiKeys({ onMessage, onChanged }) {
           <div className="form-group" style={{ marginTop: '0.75rem' }}>
             <label htmlFor="llm-provider">Model provider</label>
             <select id="llm-provider" value={provider} onChange={e => setProvider(e.target.value)} disabled={busy}>
-              <option value="APP">App's model (daily credits)</option>
+              {provider === 'APP' && <option value="APP" disabled>Choose a provider</option>}
               <option value="GEMINI">Gemini</option>
               <option value="CLOUDFLARE">Cloudflare Workers AI</option>
             </select>
