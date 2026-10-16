@@ -33,53 +33,12 @@ sys.path.insert(0, BASE_DIR)
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
-from logging_setup import configure_logging, job_context, current_correlation_ids  # noqa: E402
+from logging_setup import configure_logging, job_context  # noqa: E402
+from tracing_setup import setup_langfuse_tracing  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger("worker")
-
-
-_have_langfuse = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
-
-if _have_langfuse:
-    try:
-        import base64
-        from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-
-        _tracer_provider = TracerProvider(resource=Resource.create({
-            "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
-            "service.namespace": "lead-coordinator",
-            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
-        }))
-        # Copies correlation IDs onto both Langfuse traces and observations.
-        class _CorrelationSpanProcessor(SpanProcessor):
-            def on_start(self, span, parent_context=None):
-                for key, value in current_correlation_ids().items():
-                    if value is not None:
-                        span.set_attribute(f"langfuse.trace.metadata.{key}", value)
-                        span.set_attribute(f"langfuse.observation.metadata.{key}", value)
-
-        _tracer_provider.add_span_processor(_CorrelationSpanProcessor())
-        _lf_host = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-        _creds = f'{os.environ["LANGFUSE_PUBLIC_KEY"]}:{os.environ["LANGFUSE_SECRET_KEY"]}'
-        _auth = base64.b64encode(_creds.encode()).decode()
-        _tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-            endpoint=f"{_lf_host}/api/public/otel/v1/traces",
-            headers={
-                "Authorization": f"Basic {_auth}",
-                "x-langfuse-ingestion-version": "4",
-            },
-        )))
-        LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
-        logger.info("LLM tracing enabled via OTLP: Langfuse (%s)", _lf_host)
-    except Exception:
-        logger.exception("Failed to initialize LLM tracing (non-fatal)")
-else:
-    logger.info("Langfuse not configured — LLM tracing disabled")
+_tracer_provider = setup_langfuse_tracing(logger)
 
 
 try:

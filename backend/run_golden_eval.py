@@ -12,6 +12,7 @@ progress. Costs money: each lead runs the full research, judge, and email path.
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import statistics
@@ -26,6 +27,8 @@ load_dotenv(os.path.join(BASE, ".env"))
 sys.path.insert(0, BASE)
 
 import pipeline  # noqa: E402
+from logging_setup import job_context  # noqa: E402
+from tracing_setup import setup_langfuse_tracing  # noqa: E402
 
 PAIR_TOLERANCE = 3
 INTERNAL_MARKERS = ("/30", "/20", "/15", "/10", "score", "rubric", "disqualifier", "scoring criteria", "cultural fit")
@@ -267,25 +270,33 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"golden_eval_{datetime.now():%Y-%m-%d_%H-%M-%S}.json")
     meter = UsageMeter()
+    trace_provider = setup_langfuse_tracing(logging.getLogger("golden_eval"))
     results = {}
-    for i, record in enumerate(records, 1):
-        runs = [score_lead(record, icp, meter) for _ in range(record.get("repeats", 1))]
-        r = runs[0]
-        if len(runs) > 1:
-            r["repeat_totals"] = [x["total"] for x in runs if x["ok"]]
-            r["estimated_usd"] = round(sum(x["estimated_usd"] for x in runs), 5)
-        results[record["id"]] = r
-        status = (f"total {r['total']} (gold {record['gold']['total']}) email {r['email']} (gold {record['gold']['email']})"
-                  if r["ok"] else f"FAILED {r['error']}")
-        print(f"[{i}/{len(records)}] {record['id']:<10} {status} | {r['seconds']}s ~${r['estimated_usd']:.4f}", flush=True)
-        with open(out_path, "w", encoding="utf-8") as fh:
-            json.dump({"results": results, "summary": summarize(records, results)}, fh, indent=2, ensure_ascii=False)
+    try:
+        for i, record in enumerate(records, 1):
+            runs = []
+            for repeat in range(record.get("repeats", 1)):
+                with job_context(f"golden-eval-{record['id']}-{repeat + 1}"):
+                    runs.append(score_lead(record, icp, meter))
+            r = runs[0]
+            if len(runs) > 1:
+                r["repeat_totals"] = [x["total"] for x in runs if x["ok"]]
+                r["estimated_usd"] = round(sum(x["estimated_usd"] for x in runs), 5)
+            results[record["id"]] = r
+            status = (f"total {r['total']} (gold {record['gold']['total']}) email {r['email']} (gold {record['gold']['email']})"
+                      if r["ok"] else f"FAILED {r['error']}")
+            print(f"[{i}/{len(records)}] {record['id']:<10} {status} | {r['seconds']}s ~${r['estimated_usd']:.4f}", flush=True)
+            with open(out_path, "w", encoding="utf-8") as fh:
+                json.dump({"results": results, "summary": summarize(records, results)}, fh, indent=2, ensure_ascii=False)
 
-    summary = summarize(records, results)
-    print("\nSUMMARY")
-    print(json.dumps({k: v for k, v in summary.items() if k != "checks"}, indent=2))
-    print("FAILED CHECKS:", [c for c in summary["checks"] if not c["pass"]])
-    print("Saved:", out_path)
+        summary = summarize(records, results)
+        print("\nSUMMARY")
+        print(json.dumps({k: v for k, v in summary.items() if k != "checks"}, indent=2))
+        print("FAILED CHECKS:", [c for c in summary["checks"] if not c["pass"]])
+        print("Saved:", out_path)
+    finally:
+        if trace_provider and not trace_provider.force_flush():
+            print("Warning: Langfuse trace flush did not finish.", file=sys.stderr)
 
 
 if __name__ == "__main__":
