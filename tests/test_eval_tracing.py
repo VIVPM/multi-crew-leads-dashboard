@@ -1,12 +1,14 @@
 """Exercise evaluation trace setup, per-run correlation, and flush without model calls."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+os.environ.setdefault("LLM_MODEL", "GEMINI")
 import run_golden_eval as eval_runner  # noqa: E402
 from logging_setup import current_correlation_ids  # noqa: E402
 
