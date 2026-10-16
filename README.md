@@ -176,7 +176,7 @@ docker compose up --scale worker=3     # more workers
 
 ### 5. API keys
 
-Operator keys in `backend/.env` work by default. Under **Settings → API keys** a user picks the app's model, **Gemini** (API key) or **Cloudflare Workers AI** (account ID and API token), with Tavily as a separate field. Complete credentials for the chosen provider run that user's jobs on their own account; with a Tavily key too, the daily cap is lifted. The scoring judge always uses the operator's key. Keys aren't validated on save, and changing `SECRET_KEY` makes saved keys unreadable.
+Operator keys in `backend/.env` work by default. Under **Settings → API keys** a user can choose **Gemini** (API key) or **Cloudflare Workers AI** (account ID and API token), with Tavily as a separate field. Complete credentials for the chosen provider run that user's jobs on their own account; with a Tavily key too, the daily cap is lifted. The scoring judge always uses the operator's key. Keys aren't validated on save, and changing `SECRET_KEY` makes saved keys unreadable.
 
 ### Cloudflare Workers AI
 
@@ -208,33 +208,61 @@ Limits, set before testing: reads p50/p95/p99 under 800/1500/3000 ms, submit und
 
 **Load and stress** — each level ramps for 30 s and holds for 3 minutes:
 
-| Users | Errors | `GET /leads` p50 / p95 / p99 | Queue wait p50 / p95 / p99 | Submit to done p95 | Jobs failed | Within limits |
-|---|---|---|---|---|---|---|
-| 50 | 0% | 599 / 697 / 841 ms | 1.4 / 3.1 / 3.6 s | 37.4 s | 0 | ✅ |
-| 75 | 0% | 612 / 714 / 810 ms | 1.3 / 3.7 / 3.9 s | 38.6 s | 0 | ✅ |
-| 100 | 0% | 606 / 993 / 1506 ms | 2.1 / 5.2 / 6.5 s | 41.7 s | 0 | ✅ |
-| 150 | 0% | 624 / 1151 / 1640 ms | 1.7 / 4.4 / 4.7 s | 41.8 s | 0 | ✅ |
-| 200 | 0.03% | 4592 / 10672 / 14044 ms | 5.5 / 23.7 / 27.4 s | 58.6 s | 0 | ❌ |
+`GET /leads` latency:
 
-**API stress** — no submits, to find where the API alone breaks:
+| Users | p50 (ms) | p95 (ms) | p99 (ms) | All-request errors |
+|---:|---:|---:|---:|---:|
+| 50 | 599 | 697 | 841 | 0% |
+| 75 | 612 | 714 | 810 | 0% |
+| 100 | 606 | 993 | 1506 | 0% |
+| 150 | 624 | 1151 | 1640 | 0% |
+| 200 | 4592 | 10672 | 14044 | 0.03% |
 
-| Users | Errors | `GET /leads` p50 / p95 / p99 |
-|---|---|---|
-| 200 | 0% | 577 / 649 / 712 ms |
-| 300 | 0% | 596 / 2081 / 3786 ms |
-| 500 | 54% | 632 / 9687 / 12397 ms |
-| 1000 | 75% | mostly failed |
+Job queue wait:
+
+| Users | p50 (s) | p95 (s) | p99 (s) | Submit to done p95 (s) | Jobs failed | Within limits |
+|---:|---:|---:|---:|---:|---:|:---:|
+| 50 | 1.4 | 3.1 | 3.6 | 37.4 | 0 | ✅ |
+| 75 | 1.3 | 3.7 | 3.9 | 38.6 | 0 | ✅ |
+| 100 | 2.1 | 5.2 | 6.5 | 41.7 | 0 | ✅ |
+| 150 | 1.7 | 4.4 | 4.7 | 41.8 | 0 | ✅ |
+| 200 | 5.5 | 23.7 | 27.4 | 58.6 | 0 | ❌ |
+
+**API stress** — no submits, to find where the API alone breaks. `GET /leads` latency:
+
+| Users | p50 (ms) | p95 (ms) | p99 (ms) | All-request errors |
+|---:|---:|---:|---:|---:|
+| 200 | 577 | 649 | 712 | 0% |
+| 300 | 596 | 2081 | 3786 | 0% |
+| 500 | 632 | 9687 | 12397 | 54% |
+| 750 | — | — | — | 80% |
+| 1000 | — | — | — | 75% |
+
+At 750–1000 users, most requests failed, so latency figures aren't meaningful.
 
 **Spike** — 10 users, jump to the peak in 10 s, hold 60 s, back to 10 for 3 minutes:
 
-| Peak | Phase | `GET /leads` p50 / p95 / p99 | Jobs | Queue wait p50 / p95 / p99 |
-|---|---|---|---|---|
-| 150 | before | 609 / 897 / 1208 ms | 10 | 1.0 / 3.9 / 3.9 s |
-| 150 | spike | 630 / 912 / 1030 ms | 140 | 22.0 / 59.8 / 61.5 s |
-| 150 | after | 612 / 696 / 730 ms | 0 | — |
-| 200 | before | 608 / 726 / 951 ms | 10 | 1.3 / 3.5 / 3.5 s |
-| 200 | spike | 6163 / 13533 / 17006 ms | 189 | 36.2 / 82.7 / 86.6 s |
-| 200 | after | 634 / 4218 / 8412 ms | 1 | 65.8 s |
+`GET /leads` latency:
+
+| Peak users | Phase | p50 (ms) | p95 (ms) | p99 (ms) |
+|---:|:---|---:|---:|---:|
+| 150 | before | 609 | 897 | 1208 |
+| 150 | spike | 630 | 912 | 1030 |
+| 150 | after | 612 | 696 | 730 |
+| 200 | before | 608 | 726 | 951 |
+| 200 | spike | 6163 | 13533 | 17006 |
+| 200 | after | 634 | 4218 | 8412 |
+
+Job queue wait:
+
+| Peak users | Phase | Jobs | p50 (s) | p95 (s) | p99 (s) |
+|---:|:---|---:|---:|---:|---:|
+| 150 | before | 10 | 1.0 | 3.9 | 3.9 |
+| 150 | spike | 140 | 22.0 | 59.8 | 61.5 |
+| 150 | after | 0 | — | — | — |
+| 200 | before | 10 | 1.3 | 3.5 | 3.5 |
+| 200 | spike | 189 | 36.2 | 82.7 | 86.6 |
+| 200 | after | 1 | 65.8 | 65.8 | 65.8 |
 
 Errors over the whole run: 0% for the 150 spike, 0.1% (3 of 3017 requests) for the 200 spike. No job failed in either.
 
