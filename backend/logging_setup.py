@@ -8,7 +8,7 @@ without threading extra parameters through function signatures.
 
 Scope: this instruments our own logger.info/warning/exception calls in
 backend.py/pipeline.py/worker.py. An agent's own step-by-step reasoning goes
-to the OTel traces in worker.py rather than through this
+to the OTel traces configured in tracing_setup.py rather than through this
 logging pipeline, and is out of scope here.
 """
 
@@ -26,8 +26,8 @@ _request_id_var: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVa
 def current_correlation_ids() -> dict:
     """The IDs bound to this context, for callers that need them outside logging.
 
-    Used by worker.py to copy the same job/lead IDs onto every OTEL span, so a
-    span and a log line for one job carry matching identifiers.
+    Used by worker.py and run_golden_eval.py to copy job/lead IDs onto OTEL
+    spans, so a span and a log line carry matching identifiers.
     """
     return {
         "job_id": _job_id_var.get(),
