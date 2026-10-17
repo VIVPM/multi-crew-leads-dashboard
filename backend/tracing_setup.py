@@ -20,13 +20,17 @@ def setup_langfuse_tracing(logger: logging.Logger):
         from openinference.instrumentation.langchain import LangChainInstrumentor
 
         class _CorrelationSpanProcessor(SpanProcessor):
-            """Add the current job and lead IDs to each Langfuse observation."""
+            """Add the current job and lead IDs to each Langfuse observation, and tag eval runs."""
 
             def on_start(self, span, parent_context=None):
-                for key, value in current_correlation_ids().items():
+                ids = current_correlation_ids()
+                for key, value in ids.items():
                     if value is not None:
                         span.set_attribute(f"langfuse.trace.metadata.{key}", value)
                         span.set_attribute(f"langfuse.observation.metadata.{key}", value)
+                job_id = ids.get("job_id")
+                if job_id and job_id.startswith("golden-eval-"):
+                    span.set_attribute("langfuse.trace.tags", ["eval"])
 
         provider = TracerProvider(resource=Resource.create({
             "service.name": os.getenv("OTEL_SERVICE_NAME", "sales-pipeline-backend"),
