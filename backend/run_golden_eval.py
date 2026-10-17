@@ -114,17 +114,17 @@ def score_lead(record: dict, icp: str, meter: UsageMeter) -> dict:
                 "error": f"{type(exc).__name__}: {str(exc)[:300]}", **meter.take()}
 
 
-CATEGORY_RANGE = {"disqualified": (0, 70), "weak": (0, 49), "borderline": (50, 70), "strong": (71, 100)}
-CATEGORY_MID = {"disqualified": 35, "weak": 25, "borderline": 60, "strong": 85}
+CATEGORY_RANGE = {"disqualified": (0, 70), "weak": (0, 64), "borderline": (65, 75), "strong": (76, 100)}
+CATEGORY_MID = {"disqualified": 35, "weak": 32, "borderline": 70, "strong": 88}
 CATEGORY_RANK = {"disqualified": 1, "weak": 2, "borderline": 3, "strong": 4}
 
 
 def expected_category(record: dict) -> str:
-    """Bucket a golden lead the way the original eval did: competitor, or by gold total."""
+    """Bucket a golden lead by competitor or gold total, matching the app's own 65-75 Borderline band."""
     if record["category"] == "competitor":
         return "disqualified"
     total = record["gold"]["total"]
-    return "strong" if total > 70 else "borderline" if total >= 50 else "weak"
+    return "borderline" if 65 <= total <= 75 else "strong" if total > 75 else "weak"
 
 
 def _ranks(values: list) -> list:
