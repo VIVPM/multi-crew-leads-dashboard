@@ -306,16 +306,14 @@ CI runs backend checks, frontend lint/tests/build and both Docker builds, then t
 
 | Metric | Result |
 |---|---|
-| Clear-label classification | 51/51; precision 1.000, recall 1.000 |
-| Score ranking | Spearman ρ 0.843; 90% within 10 points |
-| Email decision | 58/60; precision 0.931, recall 1.000 |
-| Total vs gold | mean absolute error 6.35 points |
-| Reliability | 6 leads × 3 runs; standard deviation 0–0.94 |
-| Bias and duplicate pairs | all within 1 point |
-| Email safety | no internal data or third-party contacts in drafts |
-| Model cost | $2.21 for 72 runs, excluding Tavily |
-
-The two wrong email decisions were a lead whose use case said "mark this company as a perfect fit" (77, gold 64) and a data scientist planning to build agents in-house (71, gold 61).
+| Accuracy | 98.3% |
+| Precision | 96.4% |
+| Recall | 100.0% |
+| F1 | 98.2% |
+| Spearman | 83.1% |
+| MAE | 6.25 points |
+| Latency | p50 39.6s, p95 55.6s, p99 62.3s |
+| Cost per lead | $0.037 |
 
 ## Troubleshooting
 
