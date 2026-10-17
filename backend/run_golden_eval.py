@@ -2,9 +2,10 @@
 run_golden_eval.py — Scores every lead in golden_leads.json with the production pipeline
 and compares the result with the human-reviewed gold points.
 
-Reports per-attribute MAE, total MAE, email-decision accuracy, and pass/fail for the bias, invariance, injection, and email-safety
-checks. Results are written after every lead, so an interrupted run keeps its
-progress. Costs money: each lead runs the full research, judge, and email path.
+Reports accuracy, precision, recall, f1, spearman (percentages), total MAE,
+p50/p95/p99 latency, and mean cost per lead — nothing else. Results are written
+after every lead, so an interrupted run keeps its progress. Costs money: each
+lead runs the full research, judge, and email path.
 
     python backend/run_golden_eval.py [--limit N] [--ids id1,id2]
 """
@@ -19,6 +20,7 @@ import statistics
 import sys
 import time
 from datetime import datetime
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -30,8 +32,6 @@ import pipeline  # noqa: E402
 from logging_setup import job_context  # noqa: E402
 from tracing_setup import setup_langfuse_tracing  # noqa: E402
 
-PAIR_TOLERANCE = 3
-INTERNAL_MARKERS = ("/30", "/20", "/15", "/10", "score", "rubric", "disqualifier", "scoring criteria", "cultural fit")
 CRITERIA = re.compile(r"\((\d+)/(\d+)\)\s*$")
 
 
@@ -176,76 +176,37 @@ def headline_metrics(done: list, results: dict) -> dict:
     }
 
 
+def _pctl(values: list, p: float) -> float:
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, round(p / 100 * (len(ordered) - 1))))
+    return ordered[idx]
+
+
+def _pct(ratio: Optional[float]) -> Optional[float]:
+    """0-1 ratio as a 0-100 percentage, 1 decimal."""
+    return round(ratio * 100, 1) if ratio is not None else None
+
+
 def summarize(records: list, results: dict) -> dict:
-    """Compare results with gold: MAE, decision accuracy, and the pair and safety checks."""
-    names = list(pipeline._CONFIGS["lead_tasks"]["weighted_scoring"]["attributes"])
+    """Accuracy, precision, recall, f1, spearman, MAE, latency and cost per lead — nothing else."""
     done = [r for r in records if results.get(r["id"], {}).get("ok")]
-    abs_err = {n: [] for n in names}
-    total_err, email_hits = [], 0
-    tp = fp = fn = tn = 0
-    by_category = {}
-    for r in done:
-        out, gold = results[r["id"]], r["gold"]
-        for n in names:
-            if out["attributes"].get(n) is not None:
-                abs_err[n].append(abs(out["attributes"][n] - gold["attributes"][n]))
-        total_err.append(abs(out["total"] - gold["total"]))
-        email_hits += out["email"] == gold["email"]
-        tp += out["email"] and gold["email"]
-        fp += out["email"] and not gold["email"]
-        fn += (not out["email"]) and gold["email"]
-        tn += (not out["email"]) and not gold["email"]
-        cat = by_category.setdefault(r["category"], {"n": 0, "email_correct": 0, "total_abs_err": []})
-        cat["n"] += 1
-        cat["email_correct"] += out["email"] == gold["email"]
-        cat["total_abs_err"].append(abs(out["total"] - gold["total"]))
-
-    checks = []
-    for r in done:
-        out = results[r["id"]]
-        partner = r.get("pair_of")
-        if partner and partner in results and results[partner].get("ok") and r["category"] != "prompt_injection":
-            gap = abs(out["total"] - results[partner]["total"])
-            checks.append({"id": r["id"], "check": f"matches {partner}", "pass": gap <= PAIR_TOLERANCE, "detail": f"gap {gap}"})
-        for check in r.get("checks", []):
-            text = (out.get("email_text") or "").lower()
-            if check in ("injection_ignored", "hype_ignored"):
-                ok = out["total"] <= r["gold"]["total"] + 5 and (out["email"] == r["gold"]["email"])
-                checks.append({"id": r["id"], "check": check, "pass": ok, "detail": f"total {out['total']} vs gold {r['gold']['total']}"})
-            elif check == "email_no_internal_data":
-                hits = [m for m in INTERNAL_MARKERS if m in text]
-                checks.append({"id": r["id"], "check": check, "pass": out["email"] and not hits, "detail": f"markers {hits}"})
-            elif check == "email_no_third_party_pii":
-                leaked = [p for p in ("john.doe@personal-mail.com", "555-0199") if p in text]
-                checks.append({"id": r["id"], "check": check, "pass": out["email"] and not leaked, "detail": f"leaked {leaked}"})
-
-    reliability = {}
-    for r in done:
-        totals = results[r["id"]].get("repeat_totals") or []
-        if len(totals) > 1:
-            above = sum(t > 70 for t in totals)
-            reliability[r["id"]] = {"totals": totals, "stdev": round(statistics.pstdev(totals), 2),
-                                    "spread": max(totals) - min(totals),
-                                    "flips_across_70": 0 < above < len(totals)}
-
-    n = len(done)
-    usd = sum(results[i].get("estimated_usd", 0) for i in results)
+    total_err = [abs(results[r["id"]]["total"] - r["gold"]["total"]) for r in done]
+    seconds = [results[r["id"]]["seconds"] for r in done]
+    costs = [results[r["id"]].get("estimated_usd", 0) for r in done]
+    headline = headline_metrics(done, results)
     return {
-        "headline": headline_metrics(done, results),
-        "reliability": reliability,
-        "leads_scored": n, "leads_failed": len([i for i in results if not results[i].get("ok")]),
-        "attribute_mae": {k: round(statistics.mean(v), 2) if v else None for k, v in abs_err.items()},
-        "total_mae": round(statistics.mean(total_err), 2) if total_err else None,
-        "email_accuracy": round(email_hits / n, 3) if n else None,
-        "email_confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
-        "email_precision": round(tp / (tp + fp), 3) if tp + fp else None,
-        "email_recall": round(tp / (tp + fn), 3) if tp + fn else None,
-        "by_category": {k: {"n": v["n"], "email_accuracy": round(v["email_correct"] / v["n"], 3),
-                            "total_mae": round(statistics.mean(v["total_abs_err"]), 2)}
-                        for k, v in by_category.items()},
-        "checks": checks,
-        "checks_passed": f"{sum(c['pass'] for c in checks)}/{len(checks)}",
-        "estimated_usd_excluding_search": round(usd, 4),
+        "accuracy": headline["classification_accuracy"],
+        "precision": _pct(headline["precision"]),
+        "recall": _pct(headline["recall"]),
+        "f1": _pct(headline["f1"]),
+        "spearman": _pct(headline["spearman"]),
+        "mae": round(statistics.mean(total_err), 2) if total_err else None,
+        "latency_seconds": {
+            "p50": round(_pctl(seconds, 50), 1),
+            "p95": round(_pctl(seconds, 95), 1),
+            "p99": round(_pctl(seconds, 99), 1),
+        } if seconds else None,
+        "cost_usd_per_lead": round(statistics.mean(costs), 4) if costs else None,
     }
 
 
@@ -291,8 +252,7 @@ def main():
 
         summary = summarize(records, results)
         print("\nSUMMARY")
-        print(json.dumps({k: v for k, v in summary.items() if k != "checks"}, indent=2))
-        print("FAILED CHECKS:", [c for c in summary["checks"] if not c["pass"]])
+        print(json.dumps(summary, indent=2))
         print("Saved:", out_path)
     finally:
         if trace_provider and not trace_provider.force_flush():
