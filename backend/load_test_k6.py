@@ -235,8 +235,8 @@ def main() -> None:
     ap.add_argument("--accounts", type=int, default=20)
     ap.add_argument("--seed-leads", type=int, default=25)
     ap.add_argument("--jobs-per-user", type=int, default=1, help="leads each virtual user submits per level")
-    ap.add_argument("--lead-seconds", type=float, default=41,
-                    help="stubbed pipeline time per lead; 41s is the golden evaluation's average")
+    ap.add_argument("--lead-seconds", type=float, default=23.4,
+                    help="stubbed pipeline time per lead; 23.4s is the golden evaluation's average")
     ap.add_argument("--drain-timeout", type=int, default=600)
     ap.add_argument("--stop-error-pct", type=float, default=25)
     ap.add_argument("--port", type=int, default=8011)
