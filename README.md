@@ -215,31 +215,49 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 
 ## Load Testing
 
-`backend/load_test_k6.py` runs [k6](https://k6.io) against a local copy of the real API, Supabase and workers, with the model call replaced by a 30 s sleep and fake keys, so it costs nothing. 30 s is one real lead's measured time, run ten times (mean 30.0 s, median 28.1 s). Each virtual user logs in once, loads the leads page with 5–15 s pauses, submits one lead and polls it. k6 times the requests; the script times queue wait and completion from the `jobs` table, since k6 never sees a job finish. All three runs below use **3 workers × 20 slots** on a 4-core, 8 GB laptop. Results are in `results/load_test/k6.json`.
+`backend/load_test_k6.py` runs [k6](https://k6.io) against a local copy of the real API, Supabase and workers, with the model call replaced by a wait and test keys, so it costs nothing. Every run waits 23.4 s per lead, the 60-lead evaluation's average job time. Each virtual user logs in once, loads the leads page with 5–15 s pauses, submits one lead and polls it. k6 times the requests; the script times queue wait and completion from the `jobs` table, since k6 never sees a job finish. Every run below uses **3 workers × 20 slots** on a 4-core, 8 GB laptop. Results are in `results/load_test/k6.json`.
 
-Limits, set before testing: reads p50/p95/p99 under 800/1500/3000 ms, submit under 2500/4000/6000 ms, queue wait under 5/30/60 s, errors under 1%, no failed jobs. They allow for the ~300 ms trip from the laptop to Supabase.
+Latency includes the ~300 ms trip from the laptop to Supabase.
 
-**Load and stress** — each level ramps for 30 s and holds for 3 minutes:
+**Load** — each level ramps for 30 s and holds for 3 minutes:
 
 `GET /leads` latency:
 
 | Users | p50 (ms) | p95 (ms) | p99 (ms) | All-request errors |
 |---:|---:|---:|---:|---:|
-| 50 | 599 | 697 | 841 | 0% |
-| 75 | 612 | 714 | 810 | 0% |
-| 100 | 606 | 993 | 1506 | 0% |
-| 150 | 624 | 1151 | 1640 | 0% |
-| 200 | 4592 | 10672 | 14044 | 0.03% |
+| 25 | 539 | 947 | 1076 | 0% |
+| 50 | 547 | 675 | 937 | 0% |
+| 75 | 557 | 741 | 964 | 0% |
+| 100 | 607 | 847 | 1126 | 0% |
+| 150 | 592 | 2062 | 3746 | 0% |
 
 Job queue wait:
 
-| Users | p50 (s) | p95 (s) | p99 (s) | Submit to done p95 (s) | Jobs failed | Within limits |
-|---:|---:|---:|---:|---:|---:|:---:|
-| 50 | 1.4 | 3.1 | 3.6 | 37.4 | 0 | ✅ |
-| 75 | 1.3 | 3.7 | 3.9 | 38.6 | 0 | ✅ |
-| 100 | 2.1 | 5.2 | 6.5 | 41.7 | 0 | ✅ |
-| 150 | 1.7 | 4.4 | 4.7 | 41.8 | 0 | ✅ |
-| 200 | 5.5 | 23.7 | 27.4 | 58.6 | 0 | ❌ |
+| Users | p50 (s) | p95 (s) | p99 (s) | Submit to done p95 (s) | Jobs failed |
+|---:|---:|---:|---:|---:|---:|
+| 25 | 1.4 | 2.8 | 3.1 | 29.4 | 0 |
+| 50 | 1.2 | 2.8 | 3.7 | 30.9 | 0 |
+| 75 | 1.1 | 4.0 | 4.4 | 32.9 | 0 |
+| 100 | 1.3 | 3.1 | 3.4 | 31.7 | 0 |
+| 150 | 1.6 | 3.4 | 4.1 | 34.1 | 0 |
+
+**Stress** — same users, same job length, from 200 users up; the run stops once errors pass 25%.
+
+Requests:
+
+| Users | Requests | All-request errors | `GET /leads` p50 (ms) | p95 (ms) | p99 (ms) | `POST /leads/process` p50 (ms) | p95 (ms) | p99 (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 200 | 6680 | 0.6% | 6655 | 12993 | 17787 | 4733 | 10397 | 14362 |
+| 400 | 9548 | 34.7% | 7301 | 27567 | 36246 | 7954 | 19201 | 23818 |
+
+Jobs:
+
+| Users | Submitted | Done | Failed | Queue wait p50 (s) | p95 (s) | p99 (s) | Submit to done p50 (s) | p95 (s) | p99 (s) |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 200 | 200 | 200 | 0 | 2.2 | 15.6 | 18.7 | 30.6 | 43.4 | 45.6 |
+| 400 | 400 | 400 | 0 | 34.2 | 97.0 | 110.2 | 63.4 | 125.3 | 138.6 |
+
+At 400 users almost every failed request is `connectex: No connection could be made because the target machine actively refused it`: the single API process stops accepting connections. There are no 500s. Every submit that got through was queued, and every queued job finished.
 
 **API stress** — no submits, to find where the API alone breaks. `GET /leads` latency:
 
@@ -259,39 +277,54 @@ At 750–1000 users, most requests failed, so latency figures aren't meaningful.
 
 | Peak users | Phase | p50 (ms) | p95 (ms) | p99 (ms) |
 |---:|:---|---:|---:|---:|
-| 150 | before | 609 | 897 | 1208 |
-| 150 | spike | 630 | 912 | 1030 |
-| 150 | after | 612 | 696 | 730 |
-| 200 | before | 608 | 726 | 951 |
-| 200 | spike | 6163 | 13533 | 17006 |
-| 200 | after | 634 | 4218 | 8412 |
+| 150 | before | 552 | 657 | 824 |
+| 150 | spike | 544 | 2153 | 6743 |
+| 150 | after | 641 | 8206 | 9764 |
+| 200 | before | 558 | 631 | 654 |
+| 200 | spike | 5251 | 15131 | 20963 |
+| 200 | after | 556 | 2633 | 9192 |
+| 400 | before | 521 | 592 | 637 |
+| 400 | spike | 6070 | 14895 | 17688 |
+| 400 | after | 576 | 2229 | 9363 |
 
 Job queue wait:
 
 | Peak users | Phase | Jobs | p50 (s) | p95 (s) | p99 (s) |
 |---:|:---|---:|---:|---:|---:|
-| 150 | before | 10 | 1.0 | 3.9 | 3.9 |
-| 150 | spike | 140 | 22.0 | 59.8 | 61.5 |
+| 150 | before | 10 | 0.6 | 2.2 | 2.2 |
+| 150 | spike | 140 | 12.1 | 42.6 | 46.1 |
 | 150 | after | 0 | — | — | — |
-| 200 | before | 10 | 1.3 | 3.5 | 3.5 |
-| 200 | spike | 189 | 36.2 | 82.7 | 86.6 |
-| 200 | after | 1 | 65.8 | 65.8 | 65.8 |
+| 200 | before | 10 | 1.7 | 3.1 | 3.1 |
+| 200 | spike | 186 | 32.0 | 74.0 | 75.7 |
+| 200 | after | 1 | 42.6 | 42.6 | 42.6 |
+| 400 | before | 10 | 1.0 | 3.4 | 3.4 |
+| 400 | spike | 360 | 83.6 | 180.8 | 190.7 |
+| 400 | after | 25 | 174.9 | 191.3 | 191.7 |
 
-Errors over the whole run: 0% for the 150 spike, 0.1% (3 of 3017 requests) for the 200 spike. No job failed in either.
+Errors over the whole run:
+
+| Peak users | Requests | All-request errors | Jobs | Jobs failed |
+|---:|---:|---:|---:|---:|
+| 150 | 3177 | 0% | 150 | 0 |
+| 200 | 2916 | 0% | 197 | 0 |
+| 400 | 4868 | 16.0% | 395 | 2 |
+
+At 400 users the request errors are `connectex: No connection could be made because the target machine actively refused it` (the single API process refusing connections), and both failed jobs hit `httpx.RemoteProtocolError: Server disconnected without sending a response` from Supabase.
 
 **What they show:**
 
-- **Up to 150 users everything holds**: a lead is done about 42 s after submitting, and no job fails at any level.
-- **Requests break first**: at 200 users the leads request p95 reaches 10.7 s, and with no submits the API alone breaks from 500 (Windows DNS lookups for Supabase fail, then the single API process refuses connections). On the laptop the API, three workers and k6 share four cores, so this is partly the machine's limit.
-- **A sudden rush to 150 doesn't slow requests at all**; the jobs queue for up to a minute and all finish. A rush to 200 overloads the laptop and the slowest requests are still recovering three minutes later, but nothing is lost.
-- **Capacity scales with workers × slots ÷ job time**: 3 × 20 ÷ 30 s ≈ 120 jobs a minute.
+- **No errors from 25 to 150 users, 0.6% at 200, and no failed jobs**: a lead is done within 29–34 s of submitting at p95 up to 150 users.
+- **Requests slow down first, then error**: at 150 users the leads request p95 reaches 2.1 s with no errors; errors appear at 200 users (0.6%) and jump at 400 (34.7%), when the single API process refuses connections. With no submits the API alone starts erroring at 500. Jobs failed only in the 400-user spike (2 of 395). On the laptop the API, three workers and k6 share four cores, so this is partly the machine's limit.
+- **Sudden rushes to 150 and 200 users give no errors and no failed jobs**; requests slow down during the rush and jobs queue for up to about 75 s at p95. A rush to 400 gives 16% request errors and 2 failed jobs out of 395.
+- **Capacity scales with workers × slots ÷ job time**: 3 × 20 ÷ 23.4 s ≈ 154 jobs a minute.
 
-Suspend any deployed worker that shares the Supabase project before running it, or that worker claims the test jobs and fails them on the fake keys.
+Suspend any deployed worker that shares the Supabase project before running it, or that worker claims the test jobs and fails them on the test keys.
 
 ```bash
-python backend/load_test_k6.py --workers 3 --levels 50,100,150   # load and stress
+python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --levels 25,50,75,100,150   # load
+python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --levels 200,400            # stress
 python backend/load_test_k6.py --jobs-per-user 0 --levels 200,500  # API only
-python backend/load_test_k6.py --workers 3 --spike 10,150          # spike
+python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --spike 10,400   # spike (also 10,150 and 10,200)
 ```
 
 `MAX_CONCURRENT_JOBS` in the environment sets slots per worker.
