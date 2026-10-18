@@ -80,6 +80,19 @@ START ─┬→ company ───────────┬→ scoring → emai
 | `scoring` | one extraction call + seven parallel judge calls | always |
 | `email` | model call | only when score > 70 |
 
+Time per stage for one strong-fit lead (score 92), taken from its Langfuse trace:
+
+| Stage | Time (s) |
+|---|---:|
+| `company` | 7.6 |
+| `personal_research` | 7.0 |
+| Research stage (both in parallel) | 7.6 |
+| `scoring` | 9.5 |
+| `email` | 10.3 |
+| **Total** | **27.4** |
+
+The two research nodes run in parallel, so the research stage takes as long as the slower one. Leads scoring 70 or below skip `email`.
+
 ## Project Structure
 
 ```text
