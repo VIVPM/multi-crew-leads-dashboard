@@ -66,13 +66,6 @@ company_research_cache · refresh_tokens · login_failures")]
     CTRL -.->|agent traces| OBS
 ```
 
-One graph run per lead:
-
-```text
-START ─┬→ company ───────────┬→ scoring → email → END
-       └→ personal_research ─┘          └──────→ END  (score ≤ 70)
-```
-
 | Node | Runtime | Runs when |
 |---|---|---|
 | `company` | `create_react_agent` + Tavily/scrape | unless a fresh `(company, ICP)` cache entry exists |
@@ -86,7 +79,6 @@ Time per stage for one strong-fit lead (score 92), taken from its Langfuse trace
 |---|---:|
 | `company` | 7.6 |
 | `personal_research` | 7.0 |
-| Research stage (both in parallel) | 7.6 |
 | `scoring` | 9.5 |
 | `email` | 10.3 |
 | **Total** | **27.4** |
@@ -222,41 +214,35 @@ Latency includes the ~300 ms trip from the laptop to Supabase.
 
 **Load** — each level ramps for 30 s and holds for 3 minutes:
 
-`GET /leads` latency:
+<table>
+<tr><th rowspan="2">Users</th><th colspan="3"><code>GET /leads</code> (ms)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Submit to done p95 (s)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>25</td><td>539</td><td>947</td><td>1076</td><td>1.4</td><td>2.8</td><td>3.1</td><td>29.4</td></tr>
+<tr align="right"><td>50</td><td>547</td><td>675</td><td>937</td><td>1.2</td><td>2.8</td><td>3.7</td><td>30.9</td></tr>
+<tr align="right"><td>75</td><td>557</td><td>741</td><td>964</td><td>1.1</td><td>4.0</td><td>4.4</td><td>32.9</td></tr>
+<tr align="right"><td>100</td><td>607</td><td>847</td><td>1126</td><td>1.3</td><td>3.1</td><td>3.4</td><td>31.7</td></tr>
+<tr align="right"><td>150</td><td>592</td><td>2062</td><td>3746</td><td>1.6</td><td>3.4</td><td>4.1</td><td>34.1</td></tr>
+</table>
 
-| Users | p50 (ms) | p95 (ms) | p99 (ms) | All-request errors |
-|---:|---:|---:|---:|---:|
-| 25 | 539 | 947 | 1076 | 0% |
-| 50 | 547 | 675 | 937 | 0% |
-| 75 | 557 | 741 | 964 | 0% |
-| 100 | 607 | 847 | 1126 | 0% |
-| 150 | 592 | 2062 | 3746 | 0% |
-
-Job queue wait:
-
-| Users | p50 (s) | p95 (s) | p99 (s) | Submit to done p95 (s) | Jobs failed |
-|---:|---:|---:|---:|---:|---:|
-| 25 | 1.4 | 2.8 | 3.1 | 29.4 | 0 |
-| 50 | 1.2 | 2.8 | 3.7 | 30.9 | 0 |
-| 75 | 1.1 | 4.0 | 4.4 | 32.9 | 0 |
-| 100 | 1.3 | 3.1 | 3.4 | 31.7 | 0 |
-| 150 | 1.6 | 3.4 | 4.1 | 34.1 | 0 |
+No request errors and no failed jobs at any level.
 
 **Stress** — same users, same job length, from 200 users up; the run stops once errors pass 25%.
 
-Requests:
+<table>
+<tr><th rowspan="2">Users</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th><th colspan="3"><code>GET /leads</code> (ms)</th><th colspan="3"><code>POST /leads/process</code> (ms)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>200</td><td>6680</td><td>0.6%</td><td>6655</td><td>12993</td><td>17787</td><td>4733</td><td>10397</td><td>14362</td></tr>
+<tr align="right"><td>400</td><td>9548</td><td>34.7%</td><td>7301</td><td>27567</td><td>36246</td><td>7954</td><td>19201</td><td>23818</td></tr>
+</table>
 
-| Users | Requests | All-request errors | `GET /leads` p50 (ms) | p95 (ms) | p99 (ms) | `POST /leads/process` p50 (ms) | p95 (ms) | p99 (ms) |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 200 | 6680 | 0.6% | 6655 | 12993 | 17787 | 4733 | 10397 | 14362 |
-| 400 | 9548 | 34.7% | 7301 | 27567 | 36246 | 7954 | 19201 | 23818 |
+Jobs (all submitted jobs finished; none failed):
 
-Jobs:
-
-| Users | Submitted | Done | Failed | Queue wait p50 (s) | p95 (s) | p99 (s) | Submit to done p50 (s) | p95 (s) | p99 (s) |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 200 | 200 | 200 | 0 | 2.2 | 15.6 | 18.7 | 30.6 | 43.4 | 45.6 |
-| 400 | 400 | 400 | 0 | 34.2 | 97.0 | 110.2 | 63.4 | 125.3 | 138.6 |
+<table>
+<tr><th rowspan="2">Users</th><th colspan="3">Queue wait (s)</th><th colspan="3">Submit to done (s)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>200</td><td>2.2</td><td>15.6</td><td>18.7</td><td>30.6</td><td>43.4</td><td>45.6</td></tr>
+<tr align="right"><td>400</td><td>34.2</td><td>97.0</td><td>110.2</td><td>63.4</td><td>125.3</td><td>138.6</td></tr>
+</table>
 
 At 400 users almost every failed request is `connectex: No connection could be made because the target machine actively refused it`: the single API process stops accepting connections. There are no 500s. Every submit that got through was queued, and every queued job finished.
 
@@ -274,41 +260,25 @@ At 750–1000 users, most requests failed, so latency figures aren't meaningful.
 
 **Spike** — 10 users, jump to the peak in 10 s, hold 60 s, back to 10 for 3 minutes:
 
-`GET /leads` latency:
+`GET /leads` latency (ms) and errors over the whole run:
 
-| Peak users | Phase | p50 (ms) | p95 (ms) | p99 (ms) |
-|---:|:---|---:|---:|---:|
-| 150 | before | 552 | 657 | 824 |
-| 150 | spike | 544 | 2153 | 6743 |
-| 150 | after | 641 | 8206 | 9764 |
-| 200 | before | 558 | 631 | 654 |
-| 200 | spike | 5251 | 15131 | 20963 |
-| 200 | after | 556 | 2633 | 9192 |
-| 400 | before | 521 | 592 | 637 |
-| 400 | spike | 6070 | 14895 | 17688 |
-| 400 | after | 576 | 2229 | 9363 |
+<table>
+<tr><th rowspan="2">Peak users</th><th colspan="3">Before</th><th colspan="3">Spike</th><th colspan="3">After</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>150</td><td>552</td><td>657</td><td>824</td><td>544</td><td>2153</td><td>6743</td><td>641</td><td>8206</td><td>9764</td><td>3177</td><td>0%</td></tr>
+<tr align="right"><td>200</td><td>558</td><td>631</td><td>654</td><td>5251</td><td>15131</td><td>20963</td><td>556</td><td>2633</td><td>9192</td><td>2916</td><td>0%</td></tr>
+<tr align="right"><td>400</td><td>521</td><td>592</td><td>637</td><td>6070</td><td>14895</td><td>17688</td><td>576</td><td>2229</td><td>9363</td><td>4868</td><td>16.0%</td></tr>
+</table>
 
-Job queue wait:
+Job queue wait (s) by submit phase:
 
-| Peak users | Phase | Jobs | p50 (s) | p95 (s) | p99 (s) |
-|---:|:---|---:|---:|---:|---:|
-| 150 | before | 10 | 0.6 | 2.2 | 2.2 |
-| 150 | spike | 140 | 12.1 | 42.6 | 46.1 |
-| 150 | after | 0 | — | — | — |
-| 200 | before | 10 | 1.7 | 3.1 | 3.1 |
-| 200 | spike | 186 | 32.0 | 74.0 | 75.7 |
-| 200 | after | 1 | 42.6 | 42.6 | 42.6 |
-| 400 | before | 10 | 1.0 | 3.4 | 3.4 |
-| 400 | spike | 360 | 83.6 | 180.8 | 190.7 |
-| 400 | after | 25 | 174.9 | 191.3 | 191.7 |
-
-Errors over the whole run:
-
-| Peak users | Requests | All-request errors | Jobs | Jobs failed |
-|---:|---:|---:|---:|---:|
-| 150 | 3177 | 0% | 150 | 0 |
-| 200 | 2916 | 0% | 197 | 0 |
-| 400 | 4868 | 16.0% | 395 | 2 |
+<table>
+<tr><th rowspan="2">Peak users</th><th colspan="4">Before</th><th colspan="4">Spike</th><th colspan="4">After</th><th rowspan="2">Jobs failed</th></tr>
+<tr><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>150</td><td>10</td><td>0.6</td><td>2.2</td><td>2.2</td><td>140</td><td>12.1</td><td>42.6</td><td>46.1</td><td>0</td><td>—</td><td>—</td><td>—</td><td>0</td></tr>
+<tr align="right"><td>200</td><td>10</td><td>1.7</td><td>3.1</td><td>3.1</td><td>186</td><td>32.0</td><td>74.0</td><td>75.7</td><td>1</td><td>42.6</td><td>42.6</td><td>42.6</td><td>0</td></tr>
+<tr align="right"><td>400</td><td>10</td><td>1.0</td><td>3.4</td><td>3.4</td><td>360</td><td>83.6</td><td>180.8</td><td>190.7</td><td>25</td><td>174.9</td><td>191.3</td><td>191.7</td><td>2</td></tr>
+</table>
 
 At 400 users the request errors are `connectex: No connection could be made because the target machine actively refused it` (the single API process refusing connections), and both failed jobs hit `httpx.RemoteProtocolError: Server disconnected without sending a response` from Supabase.
 
