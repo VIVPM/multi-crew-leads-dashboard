@@ -253,10 +253,6 @@ At 400 users almost every failed request is `connectex: No connection could be m
 | 200 | 577 | 649 | 712 | 0% |
 | 300 | 596 | 2081 | 3786 | 0% |
 | 500 | 632 | 9687 | 12397 | 54% |
-| 750 | — | — | — | 80% |
-| 1000 | — | — | — | 75% |
-
-At 750–1000 users, most requests failed, so latency figures aren't meaningful.
 
 **Spike** — 10 users, jump to the peak in 10 s, hold 60 s, back to 10 for 3 minutes:
 
@@ -317,9 +313,9 @@ CI runs backend checks, frontend lint/tests/build and both Docker builds, then t
 
 ## Scoring and Evaluation
 
-`backend/pipeline.py` scores seven attributes on fixed budgets: role relevance (15), seniority (5), company size (10), market presence (10), cultural fit (30), use-case specificity (20) and engagement (10), rolling up to demographic 20, firmographic 20 and behavioral 60. Each attribute is one judge call; up to five of its most likely score tokens are weighted by probability and rounded. Cultural fit follows the ICP's "Not a fit" line. `JUDGE_PROVIDER` picks the judge: Llama 3.3 70B on Hugging Face (Scaleway) or `gpt-oss-20b` on Cloudflare. Research uses Gemini 3.5 Flash-Lite; extraction and email use Gemini 3.6 Flash.
+`backend/pipeline.py` scores seven attributes, each with one judge call (probability-weighted over the top five score tokens): demographic 20 (role 15, seniority 5), firmographic 20 (company size 10, market presence 10), behavioral 60 (cultural fit 30, use case 20, engagement 10). `JUDGE_PROVIDER` picks Llama 3.3 70B on Hugging Face or `gpt-oss-20b` on Cloudflare. Research uses Gemini 3.5 Flash-Lite; extraction and email use Gemini 3.6 Flash.
 
-`backend/golden_leads.json` has 60 leads with gold points per attribute across strong fit, competitor, weak fit, unverifiable, wrong buyer, vague, bias pairs, prompt injection, adversarial and email-safety cases. Six repeat three times, so `backend/run_golden_eval.py` makes 72 runs. With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set, evaluation runs send LangChain traces to Langfuse tagged `eval`; filter trace metadata `job_id` by `golden-eval-` and the lead ID. Direct judge calls use the OpenAI client and don't appear as individual spans. `--ids` runs selected leads only (paid). Traces aren't embedded in the JSON report. [Results](results/eval/golden_eval.json), Hugging Face judge:
+`backend/run_golden_eval.py` makes 72 paid runs over the 60 leads in `backend/golden_leads.json` (six repeated three times), covering fit, competitor, wrong-buyer, bias, injection and email-safety cases. With Langfuse keys set, runs are traced under the `eval` tag; `--ids` runs selected leads only. [Results](results/eval/golden_eval.json), Hugging Face judge:
 
 | Metric | Result |
 |---|---|
