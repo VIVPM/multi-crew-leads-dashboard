@@ -42,6 +42,7 @@ jobs:
           python tests/test_audit.py
           python tests/test_observability.py
           python tests/test_eval_tracing.py
+          python tests/test_rate_limits.py
 
   frontend:
     runs-on: ubuntu-latest
