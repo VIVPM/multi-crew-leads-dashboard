@@ -211,6 +211,7 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 - **More workers** raise the job ceiling: throughput ≈ workers × slots ÷ job time.
 - **Stateless API** — HMAC access tokens and Supabase-stored refresh tokens, so API copies can scale behind a load balancer with a shared `SECRET_KEY`.
 - **Supabase connection pool** — both clients share `SUPABASE_POOL` (200 connections, 100 kept alive); httpx's default 100/20 ran out under stress.
+- **Request limits** — Supabase enforces them across API instances: signup 5 attempts/minute per username and 30/minute in total; login 30 requests/minute per username plus 5 failed attempts/15 minutes; token refresh 120 requests/minute per refresh token; lead processing 30 leads/minute/user, including user-funded runs; on-demand drafts 5/minute/user. Rejections return `429` with `Retry-After`. Apply the new block in the local `migrations.sql` before deploying the API or these routes return `503`.
 - **Polling backs off** from 3 s to 10 s while a job runs.
 
 ## Load Testing
@@ -333,7 +334,7 @@ python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --spike 10,400   
 
 | What | Command | CI |
 |---|---|---|
-| Unit tests | `python tests/test_security.py` · `test_settings.py` · `test_dashboard.py` | ✅ |
+| Unit tests | `python tests/test_security.py` · `test_settings.py` · `test_rate_limits.py` · `test_dashboard.py` | ✅ |
 | Graph wiring | `python tests/test_pipeline.py` | ✅ |
 | Claim fairness | `python tests/test_queue_policy.py` | ✅ |
 | CSV parser | `cd frontend && npm test` | ✅ |
