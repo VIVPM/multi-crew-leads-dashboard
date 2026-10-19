@@ -134,6 +134,14 @@ MAX_LEADS_PER_REQUEST = DAILY_LEAD_CAP
 MAX_BULK_IMPORT = 200
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 900
+RATE_LIMITS = {
+    "login": (30, 60),
+    "signup": (5, 60),
+    "signup_global": (30, 60),
+    "refresh": (120, 60),
+    "process": (30, 60),
+    "draft_email": (5, 60),
+}
 EMAIL_SEND_DAILY_CAP = int(os.getenv("EMAIL_SEND_DAILY_CAP", "80"))
 
 
@@ -304,37 +312,23 @@ def _clear_login_failures(username: str) -> None:
     supabase.table("login_failures").delete().eq("username", username).execute()
 
 
-SIGNUP_MAX_PER_IP = int(os.getenv("SIGNUP_MAX_PER_IP", "10"))
-SIGNUP_WINDOW_S = int(os.getenv("SIGNUP_WINDOW_S", "3600"))
-
-
-def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Behind Render (and most PaaS proxies) the real
-    client is the first entry in X-Forwarded-For; request.client.host would just
-    be the proxy. Spoofable if the app is ever reached directly instead of
-    through the proxy, so this is an abuse speed bump, not a hard identity."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
-def _recent_signup_count(ip: str) -> int:
-    """How many accounts this IP has created in the last SIGNUP_WINDOW_S.
-    Mirrors _recent_failure_count for login."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=SIGNUP_WINDOW_S)).isoformat()
-    resp = (
-        supabase.table("signup_attempts")
-        .select("id", count="exact")
-        .eq("ip", ip)
-        .gte("created_at", cutoff)
-        .execute()
-    )
-    return resp.count or 0
-
-
-def _record_signup_attempt(ip: str) -> None:
-    supabase.table("signup_attempts").insert({"ip": ip}).execute()
+def _enforce_rate_limit(scope: str, subject: str, cost: int = 1) -> None:
+    """Consume an atomic Supabase-backed allowance shared by every API process."""
+    maximum, window = RATE_LIMITS[scope]
+    try:
+        rows = supabase.rpc("consume_rate_limit", {
+            "p_scope": scope, "p_subject": subject, "p_max_hits": maximum,
+            "p_window_seconds": window, "p_hits": cost,
+        }).execute().data
+        retry = rows[0]["retry_after_seconds"]
+        if not isinstance(retry, int) or retry < 0:
+            raise ValueError("Invalid rate limit response")
+    except Exception as exc:
+        logger.exception("Rate limiter unavailable for %s", scope)
+        raise HTTPException(status_code=503, detail="Rate limiter unavailable. Try again shortly.") from exc
+    if retry:
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.",
+                            headers={"Retry-After": str(retry)})
 
 
 class SignupRequest(BaseModel):
@@ -342,8 +336,8 @@ class SignupRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=50)
+    password: str = Field(min_length=1, max_length=128)
 
 class LoginResponse(BaseModel):
     user_id: str
@@ -405,13 +399,8 @@ class ApiKeysRequest(BaseModel):
 
 @app.post("/auth/signup", response_model=LoginResponse)
 def signup(req: SignupRequest, request: Request):
-    ip = _client_ip(request)
-    if _recent_signup_count(ip) >= SIGNUP_MAX_PER_IP:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many sign-ups from your network. Please try again later.",
-            headers={"Retry-After": str(SIGNUP_WINDOW_S)},
-        )
+    _enforce_rate_limit("signup_global", "all")
+    _enforce_rate_limit("signup", req.username.lower())
     existing = supabase.table("users").select("id").eq("username", req.username).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Username already exists.")
@@ -427,7 +416,6 @@ def signup(req: SignupRequest, request: Request):
     row = created.data[0]
     uid = str(row["id"])
 
-    _record_signup_attempt(ip)
     logger.info("New user signed up: %s", req.username)
 
     response = LoginResponse(
@@ -441,6 +429,7 @@ def signup(req: SignupRequest, request: Request):
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(req: LoginRequest, request: Request):
+    _enforce_rate_limit("login", req.username.lower())
     recent_failures = _recent_failure_count(req.username)
     if recent_failures >= LOGIN_MAX_FAILURES:
         raise HTTPException(
@@ -481,6 +470,7 @@ def _issue_refresh_token(user_id) -> str:
 def refresh_access_token(req: RefreshRequest):
     """Exchange a valid (unexpired, unrevoked) refresh token for a new access
     token. The refresh token itself is unchanged and keeps its own expiry."""
+    _enforce_rate_limit("refresh", hash_refresh_token(req.refresh_token)[:64])
     now = datetime.now(timezone.utc).isoformat()
     resp = (
         supabase.table("refresh_tokens")
@@ -954,6 +944,7 @@ def draft_email_for_lead(lead_id: str, user_id: str = Depends(current_user)):
     company_context = (profile.data[0].get("company_context") if profile.data else None) or ""
     if not company_context.strip():
         raise HTTPException(status_code=400, detail="Set your company profile & ICP first.")
+    _enforce_rate_limit("draft_email", user_id)
 
     try:
         llm_key, _, _, own_llm = _resolve_api_keys(user_id)
@@ -1033,6 +1024,7 @@ def process_leads_endpoint(
             status_code=400,
             detail="Set your company profile & ICP before processing leads.",
         )
+    _enforce_rate_limit("process", user_id, len(req.leads))
 
     job = {
         "user_id": user_id,
