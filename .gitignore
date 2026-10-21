@@ -15,6 +15,7 @@ sample_leads_3.csv
 sample_leads_5.csv
 
 results/load_test/*.log
+results/load_test/*.txt
 
 results/load_test/*.json
 results/eval/*.json

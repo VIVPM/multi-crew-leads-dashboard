@@ -204,6 +204,7 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 - **Stateless API** — HMAC access tokens and Supabase-stored refresh tokens, so API copies can scale behind a load balancer with a shared `SECRET_KEY`.
 - **Supabase connection pool** — both clients share `SUPABASE_POOL` (200 connections, 100 kept alive); httpx's default 100/20 ran out under stress.
 - **Request limits** — Supabase enforces them across API instances: signup 5 attempts/minute per username and 30/minute in total; login 30 requests/minute per username plus 5 failed attempts/15 minutes; token refresh 120 requests/minute per refresh token; lead processing 30 leads/minute/user, including user-funded runs; on-demand drafts 5/minute/user. Rejections return `429` with `Retry-After`. Apply the new block in the local `migrations.sql` before deploying the API or these routes return `503`.
+- **Tavily search pacing** — one worker process reserves at most 90 searches per minute per API key (`TAVILY_RPM_LIMIT`, default 90), leaving room below a development key's 100 RPM cap. Searches wait for capacity; an explicit rate rejection waits 60 s and retries once, while credit exhaustion fails immediately. Use a higher setting only after confirming the key's limit. Multiple worker processes do not share this in-memory budget.
 - **Polling backs off** from 3 s to 10 s while a job runs.
 
 ## Load Testing
@@ -295,6 +296,57 @@ python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --spike 10,400   
 ```
 
 `MAX_CONCURRENT_JOBS` in the environment sets slots per worker.
+
+### Real-Agent Load Testing
+
+`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against a local copy of the real API, Supabase and worker, with real calls to Gemini, Tavily and the Hugging Face judge — this costs money. Each virtual user logs in, submits one lead with `force_refresh: true`, and polls `/jobs/{id}` to completion; `backend/real_agent_locust.py` is the Locust file it drives. It steps through levels in order and stops at the first level with any job error. Benchmark accounts, leads, jobs and cache rows are tagged and cleaned up after the run. The Tavily key comes from `backend/.env` (`TAVILY_API_KEY`), same as the running API; `--tavily-key-file` can override it from a one-shot file for a run using a different key, without touching `.env`.
+
+```bash
+python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
+python backend/run_real_agent_locust.py --smoke   # 1 user, stubbed model, no cost
+```
+
+**1, 2, 5, 10 users** (production models, `MAX_CONCURRENT_JOBS=10`, 18 golden leads total):
+
+| Users at once | Jobs done | Submit to result p50 / p95 / p99 (s) | Queue wait p50 / p95 / p99 (s) | Model cost (USD) |
+|---:|---:|---|---|---:|
+| 1  | 1/1   | 46.4 / 46.4 / 46.4 | 2.7 / 2.7 / 2.7   | 0.0336 |
+| 2  | 2/2   | 41.1 / 50.6 / 50.6 | 2.1 / 2.4 / 2.4   | 0.0946 |
+| 5  | 5/5   | 45.2 / 49.2 / 49.2 | 2.1 / 8.8 / 8.8   | 0.1952 |
+| 10 | 10/10 | 35.5 / 51.5 / 51.5 | 7.6 / 12.4 / 12.4 | 0.2419 |
+
+Total model cost: $0.57 for 18 leads (Tavily not included). No failed jobs, no request errors, no rate-limit 429s at any level.
+
+**20, 40, 80 users** (both Gemini models switched to `gemini-3.1-flash-lite` for cost, `MAX_CONCURRENT_JOBS=40`; 80-user level reuses the 60 golden leads with new names/emails for leads 61–80):
+
+| Users at once | Jobs done | Submit to result p50 / p95 / p99 (s) | Queue wait p50 / p95 / p99 (s) |
+|---:|---:|---|---|
+| 1 (check) | 1/1   | 29.9 / 29.9 / 29.9    | 3.2 / 3.2 / 3.2       |
+| 20        | 20/20 | 76.6 / 86.8 / 86.9    | 31.2 / 60.8 / 61.2    |
+| 40        | 40/40 | 117.8 / 143.7 / 147.1 | 48.7 / 104.2 / 105.3  |
+| 80        | 80/80 | 146.5 / 215.9 / 218.9 | 75.1 / 182.8 / 183.6  |
+
+About 16K tokens/lead, about 2.1 Tavily searches/lead. No failed jobs, no request errors, no rate-limit 429s.
+
+**160 users**, same model/slot setup, after moving the worker's Supabase calls off the asyncio event loop (synchronous calls were blocking it; moved to `asyncio.to_thread`):
+
+<table>
+<tr><th rowspan="2">Users</th><th rowspan="2">Done</th><th rowspan="2">Failed</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Throughput (jobs/min)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>160</td><td>160</td><td>0</td><td>154.5</td><td>317.9</td><td>322.2</td><td>131.8</td><td>296.1</td><td>301.4</td><td>28.7</td></tr>
+</table>
+
+Worker claim-to-done median/p95 was 19.0/28.0 s; the highest number of claimed, unfinished jobs was 14, below the 40-slot ceiling. One `GET /jobs/{id}` returned HTTP 500 from a Supabase 502; the job finished anyway.
+
+**250 users**, same model/slot setup, after adding Tavily request pacing (90 requests/minute/key, below the Tavily development key's 100 RPM cap):
+
+<table>
+<tr><th rowspan="2">Users</th><th rowspan="2">Done</th><th rowspan="2">Failed</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Throughput (jobs/min)</th></tr>
+<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
+<tr align="right"><td>250</td><td>235</td><td>15</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>24.5</td></tr>
+</table>
+
+Zero Tavily failures occurred. The 15 failures were a different provider limit — the Hugging Face/Scaleway judge's own requests-per-minute quota (429 INSUFFICIENT QUOTA), not yet paced — plus 10 Supabase-timeout 500s and one idempotency replay (HTTP 200) that the harness counted as an error even though the job finished. Worker claim-to-done: median/p95/p99 22.0/52.0/78.0 s; peak claimed-unfinished jobs 35, below the 40-slot ceiling. Recorded model cost for the 234 completed jobs: $4.29 (app's cost constants use the post-2027 doubled Gemini price; real current cost is roughly half, ~$2.14 — about ₹189–378 either way). No 500-user run has been attempted.
 
 ## Testing & CI/CD
 

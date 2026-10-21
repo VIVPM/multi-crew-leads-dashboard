@@ -40,7 +40,9 @@ import socket
 import time
 import types
 import yaml
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from urllib.parse import urljoin, urlparse
 from typing import Callable, Dict, List, Optional, TypedDict
 
@@ -54,12 +56,20 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import create_react_agent
-from tavily import TavilyClient
+from tavily import TavilyClient, UsageLimitExceededError
 
 from logging_setup import lead_context
 
 
 EMAIL_SCORE_THRESHOLD = 70
+TAVILY_RPM_LIMIT = int(os.getenv("TAVILY_RPM_LIMIT", "90"))
+if TAVILY_RPM_LIMIT < 1:
+    raise RuntimeError("TAVILY_RPM_LIMIT must be at least 1")
+TAVILY_WINDOW_S = 60
+TAVILY_RETRY_S = 60
+_TAVILY_LOCK = Lock()
+_TAVILY_CALLS: dict[bytes, deque] = {}
+_TAVILY_BLOCKED_UNTIL: dict[bytes, float] = {}
 
 
 TOOL_LOOP_LIMIT = 25
@@ -99,14 +109,48 @@ def _memoize_tool(fn, cache: dict, name: str):
     return wrapper
 
 
+def _wait_for_tavily_capacity(api_key: str) -> bytes:
+    """Reserve one search in a per-key rolling window shared by this process's threads."""
+    key_id = hashlib.sha256(api_key.encode()).digest()
+    while True:
+        with _TAVILY_LOCK:
+            now = time.monotonic()
+            calls = _TAVILY_CALLS.setdefault(key_id, deque())
+            while calls and now - calls[0] >= TAVILY_WINDOW_S:
+                calls.popleft()
+            blocked = _TAVILY_BLOCKED_UNTIL.get(key_id, 0) - now
+            if blocked <= 0 and len(calls) < TAVILY_RPM_LIMIT:
+                calls.append(now)
+                return key_id
+            wait = max(blocked, calls[0] + TAVILY_WINDOW_S - now
+                       if len(calls) >= TAVILY_RPM_LIMIT else 0, 0.01)
+        time.sleep(wait)
+
+
+def _pause_tavily_key(key_id: bytes) -> None:
+    """Make concurrent searches on this key wait after a provider rate rejection."""
+    with _TAVILY_LOCK:
+        _TAVILY_BLOCKED_UNTIL[key_id] = max(
+            _TAVILY_BLOCKED_UNTIL.get(key_id, 0), time.monotonic() + TAVILY_RETRY_S,
+        )
+
+
 def make_tavily_tool(tavily_key: str, cache: Optional[dict] = None):
     """Build a Tavily search tool bound to this caller's key (no global state)."""
     call_cache = cache if cache is not None else {}
 
     def _search(query: str) -> str:
         client = TavilyClient(api_key=tavily_key)
-        result = client.search(query, max_results=5)
-        return str(result)
+        for attempt in range(2):
+            key_id = _wait_for_tavily_capacity(tavily_key)
+            try:
+                return str(client.search(query, max_results=5))
+            except UsageLimitExceededError as exc:
+                if attempt or "excessive requests" not in str(exc).lower():
+                    raise
+                logger.warning("Tavily rate-limited; waiting before one retry")
+                _pause_tavily_key(key_id)
+        raise RuntimeError("Tavily search retry exhausted")
 
     memoized = _memoize_tool(_search, call_cache, "tavily_web_search")
 
