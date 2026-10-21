@@ -201,7 +201,6 @@ python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
 ```
 
 <table>
-<caption>20–160 costs: rough $0.008/lead estimates. Other costs: app-recorded estimates, not billed amounts.</caption>
 <tr><th rowspan="2">Users</th><th rowspan="2">Jobs done</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Estimated model cost (USD)</th></tr>
 <tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
 <tr align="right"><td>1</td><td>1/1</td><td>46.4</td><td>46.4</td><td>46.4</td><td>2.7</td><td>2.7</td><td>2.7</td><td>0.0336</td></tr>
