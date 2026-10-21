@@ -13,6 +13,7 @@ for name, value in {
     "DAILY_LEAD_CAP": "5",
     "LLM_MODEL": "GEMINI",
     "GEMINI_API_KEY": "test-gemini",
+    "TAVILY_API_KEY": "test-tavily",
     "ALLOWED_ORIGINS": "http://localhost:5173",
 }.items():
     os.environ.setdefault(name, value)
