@@ -201,20 +201,19 @@ python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
 ```
 
 <table>
+<caption>20–160 costs: rough $0.008/lead estimates. Other costs: app-recorded estimates, not billed amounts.</caption>
 <tr><th rowspan="2">Users</th><th rowspan="2">Jobs done</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Estimated model cost (USD)</th></tr>
 <tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
 <tr align="right"><td>1</td><td>1/1</td><td>46.4</td><td>46.4</td><td>46.4</td><td>2.7</td><td>2.7</td><td>2.7</td><td>0.0336</td></tr>
 <tr align="right"><td>2</td><td>2/2</td><td>41.1</td><td>50.6</td><td>50.6</td><td>2.1</td><td>2.4</td><td>2.4</td><td>0.0946</td></tr>
 <tr align="right"><td>5</td><td>5/5</td><td>45.2</td><td>49.2</td><td>49.2</td><td>2.1</td><td>8.8</td><td>8.8</td><td>0.1952</td></tr>
 <tr align="right"><td>10</td><td>10/10</td><td>35.5</td><td>51.5</td><td>51.5</td><td>7.6</td><td>12.4</td><td>12.4</td><td>0.2419</td></tr>
-<tr align="right"><td>20</td><td>20/20</td><td>76.6</td><td>86.8</td><td>86.9</td><td>31.2</td><td>60.8</td><td>61.2</td><td>—</td></tr>
-<tr align="right"><td>40</td><td>40/40</td><td>117.8</td><td>143.7</td><td>147.1</td><td>48.7</td><td>104.2</td><td>105.3</td><td>—</td></tr>
-<tr align="right"><td>80</td><td>80/80</td><td>146.5</td><td>215.9</td><td>218.9</td><td>75.1</td><td>182.8</td><td>183.6</td><td>—</td></tr>
-<tr align="right"><td>160</td><td>160/160</td><td>154.5</td><td>317.9</td><td>322.2</td><td>131.8</td><td>296.1</td><td>301.4</td><td>—</td></tr>
-<tr align="right"><td>250</td><td>235/250</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>4.2862†</td></tr>
+<tr align="right"><td>20</td><td>20/20</td><td>76.6</td><td>86.8</td><td>86.9</td><td>31.2</td><td>60.8</td><td>61.2</td><td>~0.16</td></tr>
+<tr align="right"><td>40</td><td>40/40</td><td>117.8</td><td>143.7</td><td>147.1</td><td>48.7</td><td>104.2</td><td>105.3</td><td>~0.32</td></tr>
+<tr align="right"><td>80</td><td>80/80</td><td>146.5</td><td>215.9</td><td>218.9</td><td>75.1</td><td>182.8</td><td>183.6</td><td>~0.64</td></tr>
+<tr align="right"><td>160</td><td>160/160</td><td>154.5</td><td>317.9</td><td>322.2</td><td>131.8</td><td>296.1</td><td>301.4</td><td>~1.28</td></tr>
+<tr align="right"><td>250</td><td>235/250</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>4.2862 (234 jobs)</td></tr>
 </table>
-
-`gemini-3.1-flash-lite` was used for both Gemini calls in the 20–250-user load tests to keep costs down. The earlier 1–10-user runs used production models, so their timings are not directly comparable. The test model change was temporary; current code uses production models. Each lead bypassed the company cache. Latencies cover successful user workflows; 224 of 250 completed without client errors. A dash means no cost total was recorded. † The 250-user estimate covers 234 analysis records, excludes Tavily, and uses production-model pricing rather than the test model's actual billed rates. No 500-user real-agent run was performed.
 
 
 ## Testing & CI/CD
