@@ -2,10 +2,9 @@
 
 Usage:
     python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
-    python backend/run_real_agent_locust.py --smoke
     python backend/run_real_agent_locust.py --levels 250 --tavily-key-file key.txt
 
-Stops at the first level with any job error or non-done status. Each level's
+Stops after the first level with a request error, failed job or unfinished job. Each level's
 run output (per-job cost/stage data joined from Supabase) is printed as one
 JSON line: {"users": <level>, "jobs": [...]}.
 """
@@ -37,19 +36,14 @@ from security import hash_password  # noqa: E402
 from pipeline import normalize_company_key  # noqa: E402
 
 
-def launch(port, smoke, log_path, env):
+def launch(port, log_path, env):
     """Start only a local server owned by this run."""
     with socket.socket() as sock:
         if sock.connect_ex(("127.0.0.1", port)) == 0:
             raise RuntimeError(f"Port {port} is already in use")
-    if smoke:
-        cmd = [sys.executable, str(BACKEND / "load_test_api.py"), "--serve", "--port", str(port),
-               "--lead-seconds", "0.1"]
-        env = {k: v for k, v in env.items() if k not in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")}
-    else:
-        cmd = [sys.executable, "-m", "uvicorn", "backend.backend:app", "--host", "127.0.0.1",
-               "--port", str(port)]
-        env["RUN_WORKER_IN_PROCESS"] = "1"
+    cmd = [sys.executable, "-m", "uvicorn", "backend.backend:app", "--host", "127.0.0.1",
+           "--port", str(port)]
+    env["RUN_WORKER_IN_PROCESS"] = "1"
     handle = log_path.open("w", encoding="utf-8")
     server = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
     for _ in range(80):
@@ -83,13 +77,12 @@ def clean_test_data(db, accounts, marker, fixture):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--levels", default="1,2,5,10")
     parser.add_argument("--tavily-key-file", type=Path)
     args = parser.parse_args()
     db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     fixture = json.loads((BACKEND / "golden_leads.json").read_text(encoding="utf-8"))["leads"]
-    levels = [1] if args.smoke else [int(x) for x in args.levels.split(",")]
+    levels = [int(x) for x in args.levels.split(",")]
     base = fixture
     fixture = []
     for i in range(sum(levels)):
@@ -103,7 +96,7 @@ def main():
     icp = (ROOT / "company_icp.txt").read_text(encoding="utf-8") + f"\nBenchmark reference: {tag}."
     password = secrets.token_urlsafe(24)
     accounts = []
-    port = 8013 if args.smoke else 8012
+    port = 8012
     server = handle = None
     with tempfile.TemporaryDirectory(prefix="real-agent-") as folder:
         folder = Path(folder)
@@ -114,7 +107,7 @@ def main():
                 args.tavily_key_file.unlink()
                 if not server_env["TAVILY_API_KEY"]:
                     raise ValueError("Tavily key file is empty")
-            server, handle = launch(port, args.smoke, folder / "api.log", server_env)
+            server, handle = launch(port, folder / "api.log", server_env)
             hashed_password = hash_password(password)
             rows = [{"username": f"{tag}-{i}", "password": hashed_password,
                      "company_context": icp} for i in range(len(fixture))]
@@ -157,7 +150,7 @@ def main():
                         entry["status"] = job["status"]
                         entry["queue_wait_s"] = (datetime.fromisoformat(job["started_at"]) -
                                                    datetime.fromisoformat(job["created_at"])).total_seconds() if job["started_at"] else None
-                        if entry["lead_id"] and job["status"] == "done" and not args.smoke:
+                        if entry["lead_id"] and job["status"] == "done":
                             analysis = db.table("analysis_runs").select("total_cost,duration_seconds,agents_data").eq(
                                 "lead_id", entry["lead_id"]).execute().data
                             if analysis:

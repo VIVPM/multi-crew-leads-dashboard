@@ -5,7 +5,3 @@ line-length = 120
 ignore = [
     "E402",
 ]
-
-[lint.per-file-ignores]
-"backend/load_test.py" = ["E501"]
-"backend/load_test_api.py" = ["E501"]

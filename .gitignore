@@ -20,7 +20,6 @@ results/load_test/*.txt
 results/load_test/*.json
 results/eval/*.json
 !results/eval/golden_eval.json
-!results/load_test/k6.json
 results/adversarial/*.json
 v0-v1-v2.txt
 brag-output/
