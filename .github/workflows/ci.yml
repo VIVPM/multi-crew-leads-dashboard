@@ -43,6 +43,8 @@ jobs:
           python tests/test_observability.py
           python tests/test_eval_tracing.py
           python tests/test_rate_limits.py
+          python tests/test_worker_io.py
+          python tests/test_tavily_rate_limit.py
 
   frontend:
     runs-on: ubuntu-latest

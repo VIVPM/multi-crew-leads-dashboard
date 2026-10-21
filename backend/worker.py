@@ -320,7 +320,7 @@ async def run_job(job: dict) -> list:
         cloudflare_account_id=cloudflare_account_id,
     )
     elapsed = round(time.time() - start, 1)
-    return persist_results(leads, scores, emails, agent_times, cache_hits, elapsed)
+    return await asyncio.to_thread(persist_results, leads, scores, emails, agent_times, cache_hits, elapsed)
 
 
 def finish_job(job_id: str, **fields):
@@ -335,12 +335,12 @@ async def process_one_job(job: dict) -> None:
         logger.info("Claimed job (%d lead(s))", len(job["leads"]))
         try:
             results = await run_job(job)
-            finish_job(job["id"], status="done", results=results)
+            await asyncio.to_thread(finish_job, job["id"], status="done", results=results)
             logger.info("Job done")
             _record_job_outcome(None)
         except Exception as exc:
             logger.exception("Job failed")
-            finish_job(job["id"], status="failed", error=str(exc)[:500])
+            await asyncio.to_thread(finish_job, job["id"], status="failed", error=str(exc)[:500])
             _record_job_outcome(exc)
 
 
@@ -384,7 +384,7 @@ async def main():
 
 
         try:
-            depth = pending_depth()
+            depth = await asyncio.to_thread(pending_depth)
         except Exception:
             logger.exception("Failed to read queue depth; holding concurrency at %d", target)
             depth = None
@@ -402,7 +402,7 @@ async def main():
 
         while not _stopping and not _breaker_is_open() and len(in_flight) < target:
             try:
-                job = claim_next_job()
+                job = await asyncio.to_thread(claim_next_job)
             except Exception:
                 logger.exception("Failed to poll jobs table; retrying")
                 break
