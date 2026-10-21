@@ -99,10 +99,8 @@ The two research nodes run in parallel, so the research stage takes as long as t
 │   ├── adversarial_testing.py # red-team suite
 │   ├── run_golden_eval.py     # golden-set evaluation
 │   ├── golden_leads.json      # 60 leads with gold points per attribute
-│   ├── load_test_k6.py        # k6 load, stress and spike tests
-│   ├── load_test_k6.js        # k6 virtual-user script
-│   ├── load_test.py           # stub worker and multi-worker safety
-│   ├── load_test_api.py       # stub API server
+│   ├── run_real_agent_locust.py # real-provider Locust runner
+│   ├── real_agent_locust.py     # Locust virtual-user flow
 │   └── config/                # agent and task prompt YAML
 ├── frontend/                  # React + Vite dashboard
 ├── tests/                     # security, settings, dashboard, pipeline, queue, persistence
@@ -199,111 +197,22 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 ## Scaling Notes
 
 - **Workers pull jobs.** Each worker checks the queue every 3 s and claims the oldest waiting job across users in turn while it has a free slot.
-- **Slots autoscale.** A worker runs between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` jobs; slots double as soon as one job waits and halve after `SCALE_COOLDOWN_S` once the queue is empty, never cancelling a running job.
-- **More workers** raise the job ceiling: throughput ≈ workers × slots ÷ job time.
+- **Slots autoscale.** A worker runs between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` jobs; at each queue check, waiting jobs can double its slots. After `SCALE_COOLDOWN_S` with an empty queue, slots halve without cancelling running jobs.
+- **More workers** raise the job ceiling, but actual throughput also depends on provider quotas and database capacity.
 - **Stateless API** — HMAC access tokens and Supabase-stored refresh tokens, so API copies can scale behind a load balancer with a shared `SECRET_KEY`.
 - **Supabase connection pool** — both clients share `SUPABASE_POOL` (200 connections, 100 kept alive); httpx's default 100/20 ran out under stress.
 - **Request limits** — Supabase enforces them across API instances: signup 5 attempts/minute per username and 30/minute in total; login 30 requests/minute per username plus 5 failed attempts/15 minutes; token refresh 120 requests/minute per refresh token; lead processing 30 leads/minute/user, including user-funded runs; on-demand drafts 5/minute/user. Rejections return `429` with `Retry-After`. Apply the new block in the local `migrations.sql` before deploying the API or these routes return `503`.
 - **Tavily search pacing** — one worker process reserves at most 90 searches per minute per API key (`TAVILY_RPM_LIMIT`, default 90), leaving room below a development key's 100 RPM cap. Searches wait for capacity; an explicit rate rejection waits 60 s and retries once, while credit exhaustion fails immediately. Use a higher setting only after confirming the key's limit. Multiple worker processes do not share this in-memory budget.
 - **Polling backs off** from 3 s to 10 s while a job runs.
 
-## Load Testing
+## Real-Agent Load Testing
 
-`backend/load_test_k6.py` runs [k6](https://k6.io) against a local copy of the real API, Supabase and workers, with the model call replaced by a wait and test keys, so it costs nothing. Every run waits 23.4 s per lead, the 60-lead evaluation's average job time. Each virtual user logs in once, loads the leads page with 5–15 s pauses, submits one lead and polls it. k6 times the requests; the script times queue wait and completion from the `jobs` table, since k6 never sees a job finish. Every run below uses **3 workers × 20 slots** on a 4-core, 8 GB laptop. Results are in `results/load_test/k6.json`.
+`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against a local copy of the real API, Supabase and worker, with real calls to Gemini, Tavily and the Hugging Face judge — this costs money. Each virtual user logs in, submits one lead with `force_refresh: true`, and polls `/jobs/{id}` to completion; `backend/real_agent_locust.py` defines that user flow. The runner starts each user level in order and stops after the first level with a request error, failed job or unfinished job. It deletes the tagged benchmark accounts, leads, jobs and cache rows afterward. The Tavily key comes from `backend/.env` (`TAVILY_API_KEY`); `--tavily-key-file` can supply a different key for one run without changing `.env`.
 
-Latency includes the ~300 ms trip from the laptop to Supabase.
-
-**Load** — each level ramps for 30 s and holds for 3 minutes:
-
-<table>
-<tr><th rowspan="2">Users</th><th colspan="3"><code>GET /leads</code> (ms)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Submit to done p95 (s)</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>25</td><td>539</td><td>947</td><td>1076</td><td>1.4</td><td>2.8</td><td>3.1</td><td>29.4</td></tr>
-<tr align="right"><td>50</td><td>547</td><td>675</td><td>937</td><td>1.2</td><td>2.8</td><td>3.7</td><td>30.9</td></tr>
-<tr align="right"><td>75</td><td>557</td><td>741</td><td>964</td><td>1.1</td><td>4.0</td><td>4.4</td><td>32.9</td></tr>
-<tr align="right"><td>100</td><td>607</td><td>847</td><td>1126</td><td>1.3</td><td>3.1</td><td>3.4</td><td>31.7</td></tr>
-<tr align="right"><td>150</td><td>592</td><td>2062</td><td>3746</td><td>1.6</td><td>3.4</td><td>4.1</td><td>34.1</td></tr>
-</table>
-
-No request errors and no failed jobs at any level.
-
-**Stress** — same users, same job length, from 200 users up; the run stops once errors pass 25%.
-
-<table>
-<tr><th rowspan="2">Users</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th><th colspan="3"><code>GET /leads</code> (ms)</th><th colspan="3"><code>POST /leads/process</code> (ms)</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>200</td><td>6680</td><td>0.6%</td><td>6655</td><td>12993</td><td>17787</td><td>4733</td><td>10397</td><td>14362</td></tr>
-<tr align="right"><td>400</td><td>9548</td><td>34.7%</td><td>7301</td><td>27567</td><td>36246</td><td>7954</td><td>19201</td><td>23818</td></tr>
-</table>
-
-Jobs (all submitted jobs finished; none failed):
-
-<table>
-<tr><th rowspan="2">Users</th><th colspan="3">Queue wait (s)</th><th colspan="3">Submit to done (s)</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>200</td><td>2.2</td><td>15.6</td><td>18.7</td><td>30.6</td><td>43.4</td><td>45.6</td></tr>
-<tr align="right"><td>400</td><td>34.2</td><td>97.0</td><td>110.2</td><td>63.4</td><td>125.3</td><td>138.6</td></tr>
-</table>
-
-At 400 users almost every failed request is `connectex: No connection could be made because the target machine actively refused it`: the single API process stops accepting connections. There are no 500s. Every submit that got through was queued, and every queued job finished.
-
-**API stress** — no submits, to find where the API alone breaks. `GET /leads` latency:
-
-| Users | p50 (ms) | p95 (ms) | p99 (ms) | All-request errors |
-|---:|---:|---:|---:|---:|
-| 200 | 577 | 649 | 712 | 0% |
-| 300 | 596 | 2081 | 3786 | 0% |
-| 500 | 632 | 9687 | 12397 | 54% |
-
-**Spike** — 10 users, jump to the peak in 10 s, hold 60 s, back to 10 for 3 minutes:
-
-`GET /leads` latency (ms) and errors over the whole run:
-
-<table>
-<tr><th rowspan="2">Peak users</th><th colspan="3">Before</th><th colspan="3">Spike</th><th colspan="3">After</th><th rowspan="2">Requests</th><th rowspan="2">Errors</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>150</td><td>552</td><td>657</td><td>824</td><td>544</td><td>2153</td><td>6743</td><td>641</td><td>8206</td><td>9764</td><td>3177</td><td>0%</td></tr>
-<tr align="right"><td>200</td><td>558</td><td>631</td><td>654</td><td>5251</td><td>15131</td><td>20963</td><td>556</td><td>2633</td><td>9192</td><td>2916</td><td>0%</td></tr>
-<tr align="right"><td>400</td><td>521</td><td>592</td><td>637</td><td>6070</td><td>14895</td><td>17688</td><td>576</td><td>2229</td><td>9363</td><td>4868</td><td>16.0%</td></tr>
-</table>
-
-Job queue wait (s) by submit phase:
-
-<table>
-<tr><th rowspan="2">Peak users</th><th colspan="4">Before</th><th colspan="4">Spike</th><th colspan="4">After</th><th rowspan="2">Jobs failed</th></tr>
-<tr><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th><th>Jobs</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>150</td><td>10</td><td>0.6</td><td>2.2</td><td>2.2</td><td>140</td><td>12.1</td><td>42.6</td><td>46.1</td><td>0</td><td>—</td><td>—</td><td>—</td><td>0</td></tr>
-<tr align="right"><td>200</td><td>10</td><td>1.7</td><td>3.1</td><td>3.1</td><td>186</td><td>32.0</td><td>74.0</td><td>75.7</td><td>1</td><td>42.6</td><td>42.6</td><td>42.6</td><td>0</td></tr>
-<tr align="right"><td>400</td><td>10</td><td>1.0</td><td>3.4</td><td>3.4</td><td>360</td><td>83.6</td><td>180.8</td><td>190.7</td><td>25</td><td>174.9</td><td>191.3</td><td>191.7</td><td>2</td></tr>
-</table>
-
-At 400 users the request errors are `connectex: No connection could be made because the target machine actively refused it` (the single API process refusing connections), and both failed jobs hit `httpx.RemoteProtocolError: Server disconnected without sending a response` from Supabase.
-
-**What they show:**
-
-- **No errors from 25 to 150 users, 0.6% at 200, and no failed jobs**: a lead is done within 29–34 s of submitting at p95 up to 150 users.
-- **Requests slow down first, then error**: at 150 users the leads request p95 reaches 2.1 s with no errors; errors appear at 200 users (0.6%) and jump at 400 (34.7%), when the single API process refuses connections. With no submits the API alone starts erroring at 500. Jobs failed only in the 400-user spike (2 of 395). On the laptop the API, three workers and k6 share four cores, so this is partly the machine's limit.
-- **Sudden rushes to 150 and 200 users give no errors and no failed jobs**; requests slow down during the rush and jobs queue for up to about 75 s at p95. A rush to 400 gives 16% request errors and 2 failed jobs out of 395.
-- **Capacity scales with workers × slots ÷ job time**: 3 × 20 ÷ 23.4 s ≈ 154 jobs a minute.
-
-Suspend any deployed worker that shares the Supabase project before running it, or that worker claims the test jobs and fails them on the test keys.
-
-```bash
-python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --levels 25,50,75,100,150   # load
-python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --levels 200,400            # stress
-python backend/load_test_k6.py --jobs-per-user 0 --levels 200,500  # API only
-python backend/load_test_k6.py --workers 3 --lead-seconds 23.4 --spike 10,400   # spike (also 10,150 and 10,200)
-```
-
-`MAX_CONCURRENT_JOBS` in the environment sets slots per worker.
-
-### Real-Agent Load Testing
-
-`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against a local copy of the real API, Supabase and worker, with real calls to Gemini, Tavily and the Hugging Face judge — this costs money. Each virtual user logs in, submits one lead with `force_refresh: true`, and polls `/jobs/{id}` to completion; `backend/real_agent_locust.py` is the Locust file it drives. It steps through levels in order and stops at the first level with any job error. Benchmark accounts, leads, jobs and cache rows are tagged and cleaned up after the run. The Tavily key comes from `backend/.env` (`TAVILY_API_KEY`), same as the running API; `--tavily-key-file` can override it from a one-shot file for a run using a different key, without touching `.env`.
+Suspend any deployed worker sharing the Supabase project before running this test; otherwise that worker may claim benchmark jobs.
 
 ```bash
 python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
-python backend/run_real_agent_locust.py --smoke   # 1 user, stubbed model, no cost
 ```
 
 **1, 2, 5, 10 users** (production models, `MAX_CONCURRENT_JOBS=10`, 18 golden leads total):
@@ -317,7 +226,7 @@ python backend/run_real_agent_locust.py --smoke   # 1 user, stubbed model, no co
 
 Total model cost: $0.57 for 18 leads (Tavily not included). No failed jobs, no request errors, no rate-limit 429s at any level.
 
-**20, 40, 80 users** (both Gemini models switched to `gemini-3.1-flash-lite` for cost, `MAX_CONCURRENT_JOBS=40`; 80-user level reuses the 60 golden leads with new names/emails for leads 61–80):
+**20, 40, 80 users** (`MAX_CONCURRENT_JOBS=40`). Both Gemini models were temporarily switched to `gemini-3.1-flash-lite` for these runs; the current code uses production models again. The 80-user level reuses the 60 golden leads with new names/emails for leads 61–80.
 
 | Users at once | Jobs done | Submit to result p50 / p95 / p99 (s) | Queue wait p50 / p95 / p99 (s) |
 |---:|---:|---|---|
@@ -346,7 +255,7 @@ Worker claim-to-done median/p95 was 19.0/28.0 s; the highest number of claimed, 
 <tr align="right"><td>250</td><td>235</td><td>15</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>24.5</td></tr>
 </table>
 
-Zero Tavily failures occurred. The 15 failures were a different provider limit — the Hugging Face/Scaleway judge's own requests-per-minute quota (429 INSUFFICIENT QUOTA), not yet paced — plus 10 Supabase-timeout 500s and one idempotency replay (HTTP 200) that the harness counted as an error even though the job finished. Worker claim-to-done: median/p95/p99 22.0/52.0/78.0 s; peak claimed-unfinished jobs 35, below the 40-slot ceiling. Recorded model cost for the 234 completed jobs: $4.29 (app's cost constants use the post-2027 doubled Gemini price; real current cost is roughly half, ~$2.14 — about ₹189–378 either way). No 500-user run has been attempted.
+Zero Tavily failures occurred. The 15 failed jobs hit the Hugging Face/Scaleway judge's separate requests-per-minute quota (`429 INSUFFICIENT QUOTA`); that quota is not yet paced. Ten job-status polls returned HTTP 500 after Supabase timeouts, and one submission returned an idempotent replay (HTTP 200) that the harness counted as a client error although its job finished. These request errors are not additional failed jobs. Worker claim-to-done: median/p95/p99 22.0/52.0/78.0 s; peak claimed-unfinished jobs 35, below the 40-slot ceiling. Analysis records for 234 completed jobs estimated $4.29 in model cost; the estimate uses production-model rates rather than the `gemini-3.1-flash-lite` model used for this test, so it is not the billed amount. No 500-user real-agent run has been attempted.
 
 ## Testing & CI/CD
 
