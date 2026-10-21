@@ -127,29 +127,14 @@ source .venv/bin/activate     # Linux/macOS
 pip install -r requirements.txt
 ```
 
-Create `backend/.env`:
+Copy the example from the repository root, then fill in your real keys and settings in the gitignored `backend/.env`:
 
-```dotenv
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_service_key
-SECRET_KEY=any_long_random_string
-
-LLM_MODEL=GEMINI                     # GEMINI or CLOUDFLARE
-GEMINI_API_KEY=your_gemini_key       # for GEMINI
-CLOUDFLARE_ACCOUNT_ID=               # for CLOUDFLARE, or JUDGE_PROVIDER=CLOUDFLARE
-CLOUDFLARE_API_TOKEN=
-JUDGE_PROVIDER=HUGGING_FACE          # HUGGING_FACE or CLOUDFLARE
-HUGGINGFACE_API_KEY=                 # for HUGGING_FACE
-TAVILY_API_KEY=your_tavily_key
-
-DAILY_LEAD_CAP=5
-ALLOWED_ORIGINS=https://your-frontend.example.com,http://localhost:5173
-RUN_WORKER_IN_PROCESS=1              # 1 runs the worker inside the API; 0 for separate workers
-
-LANGFUSE_PUBLIC_KEY=                 # optional tracing
-LANGFUSE_SECRET_KEY=
-LANGFUSE_HOST=
+```bash
+cp backend/.env.example backend/.env
 ```
+
+Use `Copy-Item backend/.env.example backend/.env` in PowerShell. Keep `backend/.env.example` free of real credentials.
+
 
 Run from the repository root:
 
@@ -215,47 +200,22 @@ Suspend any deployed worker sharing the Supabase project before running this tes
 python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
 ```
 
-**1, 2, 5, 10 users** (production models, `MAX_CONCURRENT_JOBS=10`, 18 golden leads total):
-
-| Users at once | Jobs done | Submit to result p50 / p95 / p99 (s) | Queue wait p50 / p95 / p99 (s) | Model cost (USD) |
-|---:|---:|---|---|---:|
-| 1  | 1/1   | 46.4 / 46.4 / 46.4 | 2.7 / 2.7 / 2.7   | 0.0336 |
-| 2  | 2/2   | 41.1 / 50.6 / 50.6 | 2.1 / 2.4 / 2.4   | 0.0946 |
-| 5  | 5/5   | 45.2 / 49.2 / 49.2 | 2.1 / 8.8 / 8.8   | 0.1952 |
-| 10 | 10/10 | 35.5 / 51.5 / 51.5 | 7.6 / 12.4 / 12.4 | 0.2419 |
-
-Total model cost: $0.57 for 18 leads (Tavily not included). No failed jobs, no request errors, no rate-limit 429s at any level.
-
-**20, 40, 80 users** (`MAX_CONCURRENT_JOBS=40`). Both Gemini models were temporarily switched to `gemini-3.1-flash-lite` for these runs; the current code uses production models again. The 80-user level reuses the 60 golden leads with new names/emails for leads 61–80.
-
-| Users at once | Jobs done | Submit to result p50 / p95 / p99 (s) | Queue wait p50 / p95 / p99 (s) |
-|---:|---:|---|---|
-| 1 (check) | 1/1   | 29.9 / 29.9 / 29.9    | 3.2 / 3.2 / 3.2       |
-| 20        | 20/20 | 76.6 / 86.8 / 86.9    | 31.2 / 60.8 / 61.2    |
-| 40        | 40/40 | 117.8 / 143.7 / 147.1 | 48.7 / 104.2 / 105.3  |
-| 80        | 80/80 | 146.5 / 215.9 / 218.9 | 75.1 / 182.8 / 183.6  |
-
-About 16K tokens/lead, about 2.1 Tavily searches/lead. No failed jobs, no request errors, no rate-limit 429s.
-
-**160 users**, same model/slot setup, after moving the worker's Supabase calls off the asyncio event loop (synchronous calls were blocking it; moved to `asyncio.to_thread`):
-
 <table>
-<tr><th rowspan="2">Users</th><th rowspan="2">Done</th><th rowspan="2">Failed</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Throughput (jobs/min)</th></tr>
+<tr><th rowspan="2">Users</th><th rowspan="2">Jobs done</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Estimated model cost (USD)</th></tr>
 <tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>160</td><td>160</td><td>0</td><td>154.5</td><td>317.9</td><td>322.2</td><td>131.8</td><td>296.1</td><td>301.4</td><td>28.7</td></tr>
+<tr align="right"><td>1</td><td>1/1</td><td>46.4</td><td>46.4</td><td>46.4</td><td>2.7</td><td>2.7</td><td>2.7</td><td>0.0336</td></tr>
+<tr align="right"><td>2</td><td>2/2</td><td>41.1</td><td>50.6</td><td>50.6</td><td>2.1</td><td>2.4</td><td>2.4</td><td>0.0946</td></tr>
+<tr align="right"><td>5</td><td>5/5</td><td>45.2</td><td>49.2</td><td>49.2</td><td>2.1</td><td>8.8</td><td>8.8</td><td>0.1952</td></tr>
+<tr align="right"><td>10</td><td>10/10</td><td>35.5</td><td>51.5</td><td>51.5</td><td>7.6</td><td>12.4</td><td>12.4</td><td>0.2419</td></tr>
+<tr align="right"><td>20</td><td>20/20</td><td>76.6</td><td>86.8</td><td>86.9</td><td>31.2</td><td>60.8</td><td>61.2</td><td>—</td></tr>
+<tr align="right"><td>40</td><td>40/40</td><td>117.8</td><td>143.7</td><td>147.1</td><td>48.7</td><td>104.2</td><td>105.3</td><td>—</td></tr>
+<tr align="right"><td>80</td><td>80/80</td><td>146.5</td><td>215.9</td><td>218.9</td><td>75.1</td><td>182.8</td><td>183.6</td><td>—</td></tr>
+<tr align="right"><td>160</td><td>160/160</td><td>154.5</td><td>317.9</td><td>322.2</td><td>131.8</td><td>296.1</td><td>301.4</td><td>—</td></tr>
+<tr align="right"><td>250</td><td>235/250</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>4.2862†</td></tr>
 </table>
 
-Worker claim-to-done median/p95 was 19.0/28.0 s; the highest number of claimed, unfinished jobs was 14, below the 40-slot ceiling. One `GET /jobs/{id}` returned HTTP 500 from a Supabase 502; the job finished anyway.
+`gemini-3.1-flash-lite` was used for both Gemini calls in the 20–250-user load tests to keep costs down. The earlier 1–10-user runs used production models, so their timings are not directly comparable. The test model change was temporary; current code uses production models. Each lead bypassed the company cache. Latencies cover successful user workflows; 224 of 250 completed without client errors. A dash means no cost total was recorded. † The 250-user estimate covers 234 analysis records, excludes Tavily, and uses production-model pricing rather than the test model's actual billed rates. No 500-user real-agent run was performed.
 
-**250 users**, same model/slot setup, after adding Tavily request pacing (90 requests/minute/key, below the Tavily development key's 100 RPM cap):
-
-<table>
-<tr><th rowspan="2">Users</th><th rowspan="2">Done</th><th rowspan="2">Failed</th><th colspan="3">Submit to result (s)</th><th colspan="3">Queue wait (s)</th><th rowspan="2">Throughput (jobs/min)</th></tr>
-<tr><th>p50</th><th>p95</th><th>p99</th><th>p50</th><th>p95</th><th>p99</th></tr>
-<tr align="right"><td>250</td><td>235</td><td>15</td><td>394.9</td><td>522.8</td><td>536.9</td><td>346.8</td><td>475.0</td><td>476.1</td><td>24.5</td></tr>
-</table>
-
-Zero Tavily failures occurred. The 15 failed jobs hit the Hugging Face/Scaleway judge's separate requests-per-minute quota (`429 INSUFFICIENT QUOTA`); that quota is not yet paced. Ten job-status polls returned HTTP 500 after Supabase timeouts, and one submission returned an idempotent replay (HTTP 200) that the harness counted as a client error although its job finished. These request errors are not additional failed jobs. Worker claim-to-done: median/p95/p99 22.0/52.0/78.0 s; peak claimed-unfinished jobs 35, below the 40-slot ceiling. Analysis records for 234 completed jobs estimated $4.29 in model cost; the estimate uses production-model rates rather than the `gemini-3.1-flash-lite` model used for this test, so it is not the billed amount. No 500-user real-agent run has been attempted.
 
 ## Testing & CI/CD
 
