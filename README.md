@@ -133,9 +133,6 @@ Copy the example from the repository root, then fill in your real keys and setti
 cp backend/.env.example backend/.env
 ```
 
-Use `Copy-Item backend/.env.example backend/.env` in PowerShell. Keep `backend/.env.example` free of real credentials.
-
-
 Run from the repository root:
 
 ```bash
@@ -168,7 +165,7 @@ Operator keys in `backend/.env` work by default. Under **Settings → API keys**
 
 ### Cloudflare Workers AI
 
-`gpt-oss-20b` needs a few workarounds, all inside the model wrapper: a 4096-token reply limit (the default `CLOUDFLARE_MAX_TOKENS`) so reasoning doesn't use up the reply, the JSON schema in the prompt because native structured output fails, `content: null` coerced to `""`, and streaming off because it double-counts tokens. Gemini and Workers AI can score the same lead differently.
+Uses `gpt-oss-20b`; set `CLOUDFLARE_MAX_TOKENS` (default 4096) if replies get cut off. Gemini and Workers AI can score the same lead differently.
 
 ## How to Use
 
@@ -185,14 +182,14 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 - **Slots autoscale.** A worker runs between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` jobs; at each queue check, waiting jobs can double its slots. After `SCALE_COOLDOWN_S` with an empty queue, slots halve without cancelling running jobs.
 - **More workers** raise the job ceiling, but actual throughput also depends on provider quotas and database capacity.
 - **Stateless API** — HMAC access tokens and Supabase-stored refresh tokens, so API copies can scale behind a load balancer with a shared `SECRET_KEY`.
-- **Supabase connection pool** — both clients share `SUPABASE_POOL` (200 connections, 100 kept alive); httpx's default 100/20 ran out under stress.
-- **Request limits** — Supabase enforces them across API instances: signup 5 attempts/minute per username and 30/minute in total; login 30 requests/minute per username plus 5 failed attempts/15 minutes; token refresh 120 requests/minute per refresh token; lead processing 30 leads/minute/user, including user-funded runs; on-demand drafts 5/minute/user. Rejections return `429` with `Retry-After`. Apply the new block in the local `migrations.sql` before deploying the API or these routes return `503`.
-- **Tavily search pacing** — one worker process reserves at most 90 searches per minute per API key (`TAVILY_RPM_LIMIT`, default 90), leaving room below a development key's 100 RPM cap. Searches wait for capacity; an explicit rate rejection waits 60 s and retries once, while credit exhaustion fails immediately. Use a higher setting only after confirming the key's limit. Multiple worker processes do not share this in-memory budget.
+- **Supabase connection pool** — both clients share `SUPABASE_POOL` (200 connections, 100 kept alive).
+- **Request limits** — stored in Supabase so they hold across API instances; covers signup, login, token refresh, lead processing (30/minute/user) and drafts. Rejections return `429` with `Retry-After`.
+- **Tavily search pacing** — each worker process caps searches at `TAVILY_RPM_LIMIT` per minute per key (default 90).
 - **Polling backs off** from 3 s to 10 s while a job runs.
 
 ## Real-Agent Load Testing
 
-`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against a local copy of the real API, Supabase and worker, with real calls to Gemini, Tavily and the Hugging Face judge — this costs money. Each virtual user logs in, submits one lead with `force_refresh: true`, and polls `/jobs/{id}` to completion; `backend/real_agent_locust.py` defines that user flow. The runner starts each user level in order and stops after the first level with a request error, failed job or unfinished job. It deletes the tagged benchmark accounts, leads, jobs and cache rows afterward. The Tavily key comes from `backend/.env` (`TAVILY_API_KEY`); `--tavily-key-file` can supply a different key for one run without changing `.env`.
+`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against the real API, Supabase and worker, with real Gemini, Tavily and judge calls, so it costs money. Each virtual user submits one lead and waits for the result; the run stops at the first level with a failure and deletes its test data afterward.
 
 Suspend any deployed worker sharing the Supabase project before running this test; otherwise that worker may claim benchmark jobs.
 
