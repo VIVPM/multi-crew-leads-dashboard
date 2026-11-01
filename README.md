@@ -8,7 +8,7 @@ Multi-agent sales pipeline: **React** dashboard → **FastAPI** → **LangGraph*
 
 - **LangGraph pipeline** — company and personal research in parallel → scoring (seven judge calls at once) → email for leads above 70
 - **Async job queue** — `POST /leads/process` returns `202`; workers pull jobs and the UI shows live per-agent progress
-- **Reliable execution** — idempotent submissions, tenant-fair claims, transport-only retries, graceful shutdown and a circuit breaker
+- **Reliable execution** — idempotent submissions, per-worker round-robin claims, bounded pipeline retries for transport and unknown failures, graceful shutdown and a circuit breaker
 - **Bounded spend** — operator keys with a required `DAILY_LEAD_CAP`; users can bring their own Gemini or Cloudflare credentials plus a Tavily key to run without the cap
 - **Company cache** — keyed by `(company, ICP)` with a TTL, atomic claim and force refresh
 - **Secure accounts** — bcrypt, 60-minute access tokens, rotating 14-day refresh tokens, ownership checks, login/signup rate limits; saved keys and SMTP passwords are encrypted
@@ -33,14 +33,14 @@ graph TD
     end
 
     subgraph CTRL ["3 · Workers — worker.py"]
-        Claim["claim jobs · round-robin · autoscaled slots · company cache"]
+        Claim["claim jobs · per-worker round-robin · autoscaled slots · company cache"]
     end
 
     subgraph AI ["4 · Agents — LangGraph · StateGraph per lead"]
         direction LR
         A2["🏢 Company + Fit"] --> A3["🏆 Score"]
         A1["🔎 Personal"] --> A3
-        C[("📦 Company research cache")] -.->|cache hit: skip research| A3
+        C[("📦 Company research cache")] -.->|cache hit: skip company research| A3
         A3 -->|score > 70| E1["✍️ Email"]
     end
 
@@ -51,6 +51,7 @@ company_research_cache · refresh_tokens · login_failures")]
 
     subgraph EXT ["6 · External AI"]
         LLM["☁️ Gemini 3.5 Flash-Lite / 3.6 Flash · Workers AI"]
+        Judge["⚖️ Judge · Hugging Face Llama 3.3 70B / Workers AI gpt-oss-20b"]
         Tavily["🔍 Tavily web search"]
     end
 
@@ -65,6 +66,8 @@ company_research_cache · refresh_tokens · login_failures")]
     CTRL -->|read cache · write results| DATA
     CTRL -.->|agent traces| OBS
 ```
+
+Only the research nodes use ReAct agents; scoring and email are fixed graph nodes, with no supervisor or agent delegation. Company research also uses a structured extraction call on cache misses.
 
 | Node | Runtime | Runs when |
 |---|---|---|
@@ -96,11 +99,13 @@ The two research nodes run in parallel, so the research stage takes as long as t
 │   ├── pipeline.py            # LangGraph graph and weighted scoring
 │   ├── security.py            # bcrypt, tokens, encrypted credentials
 │   ├── logging_setup.py       # JSON logs and correlation IDs
-│   ├── adversarial_testing.py # red-team suite
-│   ├── run_golden_eval.py     # golden-set evaluation
+│   ├── tracing_setup.py       # optional Langfuse / OpenTelemetry setup
 │   ├── golden_leads.json      # 60 leads with gold points per attribute
-│   ├── run_real_agent_locust.py # real-provider Locust runner
-│   ├── real_agent_locust.py     # Locust virtual-user flow
+│   ├── tools/                 # offline evaluation and paid load testing
+│   │   ├── adversarial_testing.py
+│   │   ├── run_golden_eval.py
+│   │   ├── run_real_agent_locust.py
+│   │   └── real_agent_locust.py
 │   └── config/                # agent and task prompt YAML
 ├── frontend/                  # React + Vite dashboard
 ├── tests/                     # security, settings, dashboard, pipeline, queue, persistence
@@ -178,7 +183,7 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 
 ## Scaling Notes
 
-- **Workers pull jobs.** Each worker checks the queue every 3 s and claims the oldest waiting job across users in turn while it has a free slot.
+- **Workers pull jobs.** Each worker checks the queue every 3 s while it has a free slot, selecting tenants round-robin within its oldest pending-job window and keeping each tenant FIFO. The round-robin cursor is per worker, not globally coordinated.
 - **Slots autoscale.** A worker runs between `WORKER_MIN_CONCURRENCY` (2) and `MAX_CONCURRENT_JOBS` jobs; at each queue check, waiting jobs can double its slots. After `SCALE_COOLDOWN_S` with an empty queue, slots halve without cancelling running jobs.
 - **More workers** raise the job ceiling, but actual throughput also depends on provider quotas and database capacity.
 - **Stateless API** — HMAC access tokens and Supabase-stored refresh tokens, so API copies can scale behind a load balancer with a shared `SECRET_KEY`.
@@ -189,12 +194,12 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 
 ## Real-Agent Load Testing
 
-`backend/run_real_agent_locust.py` runs [Locust](https://locust.io) against the real API, Supabase and worker, with real Gemini, Tavily and judge calls, so it costs money. Each virtual user submits one lead and waits for the result; the run stops at the first level with a failure and deletes its test data afterward.
+`backend/tools/run_real_agent_locust.py` runs [Locust](https://locust.io) against the real API, Supabase and worker, with real Gemini, Tavily and judge calls, so it costs money. Each virtual user submits one lead and waits for the result; the run stops at the first level with a failure and deletes its test data afterward.
 
 Suspend any deployed worker sharing the Supabase project before running this test; otherwise that worker may claim benchmark jobs.
 
 ```bash
-python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
+python backend/tools/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
 ```
 
 <table>
@@ -222,8 +227,8 @@ python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
 | CSV parser | `cd frontend && npm test` | ✅ |
 | Persistence | `python tests/test_persist_results.py` | needs Supabase |
 | Lint | `ruff check backend/ tests/` · `npm run lint` | ✅ |
-| Red team | `python backend/adversarial_testing.py` | real LLM |
-| Golden evaluation | `python backend/run_golden_eval.py` | 72 paid runs |
+| Red team | `python backend/tools/adversarial_testing.py` | real LLM |
+| Golden evaluation | `python backend/tools/run_golden_eval.py` | 72 paid runs |
 
 CI runs backend checks, frontend lint/tests/build and both Docker builds, then triggers the Render deploy hooks on `main` (`RENDER_DEPLOY_HOOK_BACKEND`, `RENDER_DEPLOY_HOOK_FRONTEND`; turn off Render auto-deploy so CI is the gate).
 
@@ -231,7 +236,7 @@ CI runs backend checks, frontend lint/tests/build and both Docker builds, then t
 
 `backend/pipeline.py` scores seven attributes, each with one judge call (probability-weighted over the top five score tokens): demographic 20 (role 15, seniority 5), firmographic 20 (company size 10, market presence 10), behavioral 60 (cultural fit 30, use case 20, engagement 10). `JUDGE_PROVIDER` picks Llama 3.3 70B on Hugging Face or `gpt-oss-20b` on Cloudflare. Research uses Gemini 3.5 Flash-Lite; extraction and email use Gemini 3.6 Flash.
 
-`backend/run_golden_eval.py` makes 72 paid runs over the 60 leads in `backend/golden_leads.json` (six repeated three times), covering fit, competitor, wrong-buyer, bias, injection and email-safety cases. With Langfuse keys set, runs are traced under the `eval` tag; `--ids` runs selected leads only. [Results](results/eval/golden_eval.json), Hugging Face judge:
+`backend/tools/run_golden_eval.py` makes 72 paid runs over the 60 leads in `backend/golden_leads.json` (six repeated three times), covering fit, competitor, wrong-buyer, bias, injection and email-safety cases. With Langfuse keys set, runs are traced under the `eval` tag; `--ids` runs selected leads only. [Results](results/eval/golden_eval.json), Hugging Face judge:
 
 | Metric | Result |
 |---|---|

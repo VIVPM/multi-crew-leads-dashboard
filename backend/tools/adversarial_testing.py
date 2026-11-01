@@ -24,8 +24,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 warnings.filterwarnings("ignore")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.insert(0, BASE_DIR)
 
 try:
     from dotenv import load_dotenv

@@ -7,7 +7,7 @@ p50/p95/p99 latency, and mean cost per lead — nothing else. Results are writte
 after every lead, so an interrupted run keeps its progress. Costs money: each
 lead runs the full research, judge, and email path.
 
-    python backend/run_golden_eval.py [--limit N] [--ids id1,id2]
+    python backend/tools/run_golden_eval.py [--limit N] [--ids id1,id2]
 """
 
 import argparse
@@ -24,7 +24,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE, ".env"))
 sys.path.insert(0, BASE)
 

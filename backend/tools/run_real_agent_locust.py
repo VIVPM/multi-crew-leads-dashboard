@@ -1,8 +1,8 @@
 """Run bounded Locust real-AI stages with owned test accounts and cleanup.
 
 Usage:
-    python backend/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
-    python backend/run_real_agent_locust.py --levels 250 --tavily-key-file key.txt
+    python backend/tools/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
+    python backend/tools/run_real_agent_locust.py --levels 250 --tavily-key-file key.txt
 
 Stops after the first level with a request error, failed job or unfinished job. Each level's
 run output (per-job cost/stage data joined from Supabase) is printed as one
@@ -28,8 +28,8 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-BACKEND = HERE
+BACKEND = HERE.parent
+ROOT = BACKEND.parent
 load_dotenv(BACKEND / ".env")
 sys.path.insert(0, str(BACKEND))
 from security import hash_password  # noqa: E402
@@ -132,7 +132,7 @@ def main():
                            REAL_AGENT_OUTPUT_FILE=str(results_file), REAL_AGENT_TIMEOUT_S="1200")
                 print(f"Starting {level} concurrent real-agent users", flush=True)
                 cmd = [uvx, "--from", "locust>=2.40,<3", "locust", "-f",
-                       str(BACKEND / "real_agent_locust.py"), "--headless", "-u", str(level),
+                       str(HERE / "real_agent_locust.py"), "--headless", "-u", str(level),
                        "-r", str(level), "--run-time", "20m", "--stop-timeout", "120s",
                        "--host", f"http://127.0.0.1:{port}", "--only-summary", "--loglevel", "ERROR"]
                 with (folder / f"locust-{level}.log").open("w", encoding="utf-8") as locust_log:
