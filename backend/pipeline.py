@@ -709,7 +709,7 @@ def _build_llms(llm_key: str, provider: Optional[str] = None, cloudflare_account
     )
 
 
-HF_JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct:scaleway"
+HF_JUDGE_MODEL = os.getenv("HF_JUDGE_MODEL", "meta-llama/Llama-3.3-70B-Instruct:scaleway")
 _JUDGE_PROVIDERS = ("HUGGING_FACE", "CLOUDFLARE")
 
 

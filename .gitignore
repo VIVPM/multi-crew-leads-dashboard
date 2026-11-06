@@ -4,6 +4,8 @@ frontend/.env
 backend/.venv
 frontend/node_modules
 frontend/dist
+results/seeded_demo_accounts_*.json
+results/seed_*.log
 __pycache__/
 .code-review-graph/
 .claude
