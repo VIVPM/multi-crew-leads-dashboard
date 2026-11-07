@@ -20,6 +20,7 @@ results/load_test/*.log
 results/load_test/*.txt
 
 results/load_test/*.json
+!results/load_test/real-agent-*.json
 results/eval/*.json
 !results/eval/golden_eval.json
 results/adversarial/*.json

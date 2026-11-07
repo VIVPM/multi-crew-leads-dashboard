@@ -196,6 +196,8 @@ Jobs move `pending → running → done | failed`. Queued and successful leads u
 
 `backend/tools/run_real_agent_locust.py` runs [Locust](https://locust.io) against the real API, Supabase and worker, with real Gemini, Tavily and judge calls, so it costs money. Each virtual user submits one lead and waits for the result; the run stops at the first level with a failure and deletes its test data afterward.
 
+Future runs save a sanitized JSON report under `results/load_test/` (or `--report-out PATH`) before temporary files and test accounts are cleaned up. These reports are eligible for Git tracking when a run should be retained. The report keeps per-job status, HTTP status codes, queue wait, submit-to-result time, failure category, and aggregate counts. Virtual users are concurrent client workflows; `worker_slots_max` is a configured limit, not measured simultaneous worker activity. Completed jobs and error-free client workflows are counted separately. The 160/160 and 235/250 figures below are historical documented results; their original Locust logs and per-job records are no longer available.
+
 Suspend any deployed worker sharing the Supabase project before running this test; otherwise that worker may claim benchmark jobs.
 
 ```bash

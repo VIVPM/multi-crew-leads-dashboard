@@ -23,6 +23,7 @@ class LeadUser(HttpUser):
         self.index = next(next_index)
         self.item = items[self.index] if self.index < len(items) else None
         self.token = None
+        self.http_errors = []
         if self.item is None:
             return
         response = self.client.post("/auth/login", json={
@@ -30,6 +31,8 @@ class LeadUser(HttpUser):
         }, name="POST /auth/login")
         if response.status_code == 200:
             self.token = response.json()["token"]
+        else:
+            self.http_errors.append({"step": "login", "status": response.status_code})
 
     @task
     def process_one(self):
@@ -41,6 +44,8 @@ class LeadUser(HttpUser):
         job_id = None
         lead_id = None
         error = None
+        worker_error = None
+        job_status = None
         started = time.monotonic()
         try:
             if not self.token:
@@ -48,6 +53,7 @@ class LeadUser(HttpUser):
             headers = {"Authorization": f"Bearer {self.token}"}
             lead = self.client.post("/leads", json=item["lead"], headers=headers, name="POST /leads")
             if lead.status_code != 200:
+                self.http_errors.append({"step": "create_lead", "status": lead.status_code})
                 raise RuntimeError(f"create lead HTTP {lead.status_code}")
             lead_body = lead.json()
             lead_id = lead_body["id"]
@@ -56,16 +62,20 @@ class LeadUser(HttpUser):
                 "leads": [lead_body], "force_refresh": True,
             }, headers={**headers, "Idempotency-Key": f"real-ai-{item['id']}"}, name="POST /leads/process")
             if queued.status_code != 202:
+                self.http_errors.append({"step": "enqueue", "status": queued.status_code})
                 raise RuntimeError(f"enqueue HTTP {queued.status_code}")
             job_id = queued.json()["job_id"]
             while time.monotonic() - started < max_wait_s:
                 status = self.client.get(f"/jobs/{job_id}", headers=headers, name="GET /jobs/{id}")
                 if status.status_code != 200:
+                    self.http_errors.append({"step": "job_status", "status": status.status_code})
                     raise RuntimeError(f"job status HTTP {status.status_code}")
                 state = status.json()
+                job_status = state["status"]
                 if state["status"] == "done":
                     break
                 if state["status"] == "failed":
+                    worker_error = state.get("error", "")
                     raise RuntimeError(f"worker failed: {state.get('error', '')[:160]}")
                 sleep(3)
             else:
@@ -79,7 +89,9 @@ class LeadUser(HttpUser):
         )
         with output.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"id": item["id"], "lead_id": lead_id, "job_id": job_id,
-                                "elapsed_s": round(elapsed_ms / 1000, 1), "error": error}) + "\n")
+                                "elapsed_s": round(elapsed_ms / 1000, 1), "error": error,
+                                "http_errors": self.http_errors, "worker_error": worker_error,
+                                "status": job_status}) + "\n")
         completed += 1
         if completed >= len(items):
             self.environment.runner.quit()

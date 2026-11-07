@@ -4,9 +4,8 @@ Usage:
     python backend/tools/run_real_agent_locust.py --levels 1,2,5,10,20,40,80,160,250
     python backend/tools/run_real_agent_locust.py --levels 250 --tavily-key-file key.txt
 
-Stops after the first level with a request error, failed job or unfinished job. Each level's
-run output (per-job cost/stage data joined from Supabase) is printed as one
-JSON line: {"users": <level>, "jobs": [...]}.
+Stops after the first level with a request error, failed job or unfinished job.
+An allowlisted aggregate/per-job report is retained in results/load_test before cleanup.
 """
 
 import argparse
@@ -20,7 +19,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -34,6 +33,7 @@ load_dotenv(BACKEND / ".env")
 sys.path.insert(0, str(BACKEND))
 from security import hash_password  # noqa: E402
 from pipeline import normalize_company_key  # noqa: E402
+from locust_report import save_report  # noqa: E402
 
 
 def launch(port, log_path, env):
@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--levels", default="1,2,5,10")
     parser.add_argument("--tavily-key-file", type=Path)
+    parser.add_argument("--report-out", type=Path, help="Persistent sanitized JSON report path")
     args = parser.parse_args()
     db = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     fixture = json.loads((BACKEND / "golden_leads.json").read_text(encoding="utf-8"))["leads"]
@@ -93,15 +94,36 @@ def main():
             lead["email"] = f"copy{i}-{lead['email']}"
         fixture.append({"id": f"{record['id']}-{i}", "lead": lead})
     tag = "real-agent-" + uuid.uuid4().hex[:10]
+    report_path = args.report_out or (ROOT / "results" / "load_test" /
+                                     f"{tag}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json")
     icp = (ROOT / "company_icp.txt").read_text(encoding="utf-8") + f"\nBenchmark reference: {tag}."
     password = secrets.token_urlsafe(24)
     accounts = []
     port = 8012
     server = handle = None
+    level_reports = []
+    active_level = None
+    run_status = "incomplete"
     with tempfile.TemporaryDirectory(prefix="real-agent-") as folder:
         folder = Path(folder)
         try:
             server_env = dict(os.environ)
+            workload = {
+                "virtual_users_per_level": levels,
+                "spawn_rate_virtual_users_per_s": "equal to each level's virtual_users",
+                "leads_per_virtual_user": 1,
+                "distinct_test_accounts_per_level": True,
+                "force_refresh": True,
+                "client_job_wait_limit_s": 1200,
+                "locust_run_time_s": 1200,
+                "locust_stop_timeout_s": 120,
+                "worker_mode": "in_process",
+                "worker_slots_min": int(server_env.get("WORKER_MIN_CONCURRENCY", "2")),
+                "worker_slots_max": int(server_env.get("MAX_CONCURRENT_JOBS", "10")),
+                "worker_slots_note": "Configured per-process limits, not measured simultaneous jobs",
+                "llm_provider": server_env.get("LLM_MODEL", "GEMINI"),
+                "judge_provider": server_env.get("JUDGE_PROVIDER"),
+            }
             if args.tavily_key_file:
                 server_env["TAVILY_API_KEY"] = args.tavily_key_file.read_text(encoding="utf-8").strip()
                 args.tavily_key_file.unlink()
@@ -128,6 +150,7 @@ def main():
                 users_file.write_text(json.dumps(items), encoding="utf-8")
                 results_file = folder / "results.jsonl"
                 results_file.write_text("", encoding="utf-8")
+                active_level = level
                 env = dict(os.environ, REAL_AGENT_USERS_FILE=str(users_file),
                            REAL_AGENT_OUTPUT_FILE=str(results_file), REAL_AGENT_TIMEOUT_S="1200")
                 print(f"Starting {level} concurrent real-agent users", flush=True)
@@ -139,15 +162,18 @@ def main():
                     result = subprocess.run(cmd, cwd=ROOT, env=env, stdout=locust_log,
                                             stderr=subprocess.STDOUT, timeout=1350)
                 entries = [json.loads(line) for line in results_file.read_text(encoding="utf-8").splitlines()]
+                level_reports.append({"virtual_users": level, "locust_exit_code": result.returncode,
+                                      "jobs": entries})
+                active_level = None
                 if len(entries) != level:
                     raise RuntimeError(f"{level} users produced {len(entries)} results, exit {result.returncode}; "
                                        f"see {folder / f'locust-{level}.log'}")
-                details = []
                 for entry in entries:
                     if entry["job_id"]:
                         job = db.table("jobs").select("status,error,started_at,created_at").eq(
                             "id", entry["job_id"]).execute().data[0]
                         entry["status"] = job["status"]
+                        entry["worker_error"] = job.get("error")
                         entry["queue_wait_s"] = (datetime.fromisoformat(job["started_at"]) -
                                                    datetime.fromisoformat(job["created_at"])).total_seconds() if job["started_at"] else None
                         if entry["lead_id"] and job["status"] == "done":
@@ -156,18 +182,34 @@ def main():
                             if analysis:
                                 entry["model_cost_usd"] = analysis[0]["total_cost"]
                                 entry["stages"] = analysis[0]["agents_data"]
-                    details.append(entry)
-                print(json.dumps({"users": level, "jobs": details}, default=str), flush=True)
+                save_report(report_path, workload, level_reports, run_status="in_progress")
+                print(f"Saved sanitized load report: {report_path}", flush=True)
                 if result.returncode or any(entry["error"] or entry.get("status") != "done" for entry in entries):
                     print("Stopped at first failed level", flush=True)
+                    run_status = "stopped_on_failure"
                     break
+            else:
+                run_status = "completed_all_levels"
         finally:
-            if server is not None:
-                server.terminate()
-                server.wait(timeout=35)
-            if handle is not None:
-                handle.close()
-            clean_test_data(db, accounts, icp, fixture)
+            if active_level is not None and results_file.exists():
+                partial = []
+                for line in results_file.read_text(encoding="utf-8").splitlines():
+                    try:
+                        partial.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+                level_reports.append({"virtual_users": active_level, "jobs": partial})
+            try:
+                if level_reports:
+                    save_report(report_path, workload, level_reports, run_status=run_status)
+                    print(f"Saved sanitized load report: {report_path}", flush=True)
+            finally:
+                if server is not None:
+                    server.terminate()
+                    server.wait(timeout=35)
+                if handle is not None:
+                    handle.close()
+                clean_test_data(db, accounts, icp, fixture)
 
 
 if __name__ == "__main__":
